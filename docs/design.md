@@ -227,6 +227,7 @@ The simulator is ours, so its behaviour is a design decision. Downstream code mu
 | D-ENG-17 | **Redis ACL users** from the ACL file in [S1](research/S1-gate2-spikes.md) S3, written by `make up` from `.env` (sha256 password hashes, file gitignored), default user off, per-key command selectors: `api` (write `tc:NYX-*`, `cmdlock:*`; read `ui:events`, `hb:*`), `sim` (read `tc:NYX-*`; write `tm:NYX-*`, `tcack:NYX-*`), `ingest` (read/ack/claim `tm:NYX-*`, `tcack:NYX-*`; write `tm:dlq`, `ui:events`, `hb:*`), `health` (`PING`, `+client\|setinfo`), `admin` (tests and ops only). Healthcheck `redis-cli --no-auth-warning --user health --pass "$$REDIS_HEALTH_PW" ping \| grep -q PONG`. Keys scoped to `tm:NYX-*` so the spec's `tm:dlq` name stays and `sim` can't write it. The simulator rejects `tc` entries without `cmd_id` and `issued_by`; `commands.yaml` bounds every arg (`vent_cabin.duration_s` ≤ 10). Residual risk (Redis admin can still write; Lua `EVAL` untested) in README | Command safety must not live only in the API (RV-18). S3 verified all four permission checks; `redis-cli` exits 0 even on a wrong password, hence `grep -q PONG` | No auth; `tm:*` patterns (would let `sim` write the DLQ); renaming the DLQ (spec names `tm:dlq`) | CMD-03, 04 | RV-18, [S1](research/S1-gate2-spikes.md) S3 |
 | D-ENG-18 | **One time formatter** `gs.common.time.iso_z()` (`YYYY-MM-DDTHH:MM:SS.ffffffZ`) for API JSON, CSV, report and logs; Postgres timestamps are never serialized raw; tests assert `Z` in CSV and API output | Postgres text output has no `T`/`Z`; UI-08 covers every output, not just the UI (RV-20) | Per-module formatting | UI-08 | RV-20 |
 | D-ENG-19 | **Evidence logs**: `docs/bug-log.md` (date · failing test · what it caught · fix commit), appended whenever a test catches a real bug; `docs/ai-usage.md` (what AI did: research agents with source links, independent design review, code drafts; how each was checked: sources, spikes with raw numbers, tests, CI, reading every diff) | Review-board Q16 and Q17 need facts collected during the build, not memory afterwards | Reconstructing them at Gate 5 | ENG-08 | review Q16/Q17 |
+| D-ENG-20 | **Automated checks for inspection items** (graph trace check found 10 requirements proven only by inspection or a manual run): `tests/meta/test_add_parameter.py` (copy `limits.yaml`, add a parameter, run `gs-migrate`, send a frame carrying it → stored and limit-checked; ENG-06), `scripts/check_commits.py` in CI (conventional-commit subjects on the branch; ENG-07), `tests/meta/test_readme_sections.py` (README has run, architecture, decisions, limitations, next steps; ENG-08), `tests/meta/test_no_host_literals.py` (no `localhost`/IP literals in `src/`; ENG-09), `tests/meta/test_stack.py` (Python package + `ui/package.json` with react and typescript; ENG-10), `tests/unit/test_perf_stats.py` (the nearest-rank p95 and the CSV writers used by `perf/`; D-ENG-14 says test tooling is tested too). The manual inspections stay as the acceptance evidence; the checks keep them from silently breaking | The owner's rule is that everything built is tested; an inspection-only requirement can regress without anyone noticing until Gate 5 | Inspection only | ENG-06, 07, 08, 09, 10, ENG-03 | owner rule, graph trace |
 
 ### 2.9 Measurement (method A requirements)
 
@@ -545,14 +546,14 @@ Buffer: 0.25 + 0.5 + 0.15 + 0.5 + 0.25 = 1.65 h.
 | DAT-06 | D-REP-01..06 · D-ALM-10 · D-DB-09 · D-UI-16 · D-ALM-14, D-ENG-16 |
 | ENG-01 | D-ENG-02, 03, 09 · D-ENG-12, 13 |
 | ENG-02 | D-ING-07, 08 · D-SIM-05 · D-ENG-03, 11 · D-ING-24 |
-| ENG-03 | D-ENG-05 · D-SIM-09 · D-ENG-14, 15 |
+| ENG-03 | D-ENG-05 · D-SIM-09 · D-ENG-14, 15 · D-ENG-20 |
 | ENG-04 | D-ENG-06 · D-ENG-15 |
 | ENG-05 | D-ENG-07 · D-ARC-10, D-ING-25 |
-| ENG-06 | D-DB-03 · D-ING-18, 19, 20 · D-CMD-09 · D-DB-11 |
-| ENG-07 | D-ENG-10 |
-| ENG-08 | §6 deliverables: README, this file, requirements trace, ATP report, guides (no research needed) · D-ENG-19 |
-| ENG-09 | D-ENG-04, 09 · D-ARC-08 · D-ENG-12 |
-| ENG-10 | D-ENG-01 · D-UI-12 |
+| ENG-06 | D-DB-03 · D-ING-18, 19, 20 · D-CMD-09 · D-DB-11 · D-ENG-20 |
+| ENG-07 | D-ENG-10 · D-ENG-20 |
+| ENG-08 | §6 deliverables: README, this file, requirements trace, ATP report, guides (no research needed) · D-ENG-19 · D-ENG-20 |
+| ENG-09 | D-ENG-04, 09 · D-ARC-08 · D-ENG-12 · D-ENG-20 |
+| ENG-10 | D-ENG-01 · D-UI-12 · D-ENG-20 |
 
 ---
 

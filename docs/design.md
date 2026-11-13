@@ -483,53 +483,20 @@ The archiver uses `health` for its Redis check (D-ARC-10). `api` needs `+watch`/
 
 ---
 
-## 5. Effort, cut order and build order
+## 5. Scope and build order
 
-### 5.1 Effort estimate (hours; fill **Actual** at each gate)
+**Scope rule (owner decision, 2026-11-14):** the spec's ~25 h time box no longer limits scope. Every decision in this document is built, including former cut-list and v1+ items (replay page, FROZEN detector, versioned late archive objects D-ARC-06, report refreeze, live alarms on the replay page, server-side sessions, steal hold-off, limits hot reload, the 100 Hz run). There is no schedule NCR. Hours are logged per gate for information only (Gate 1 actual included).
 
-All estimates include writing the tests for that work (D-ENG-14). **Like with like (R2-03):** spec §8 gives gates 2–5 **6 + 12 + 4 + 3 = 25 h**. Gate 1 (2 h in the spec) is reported as an actual next to that figure, never mixed into the comparison. The earlier "≈ 26.7 h, inside the ~27 h" compared gates 2–5 with all five gates and was wrong.
+**Order rule:** the 47 spec requirements come first and must pass before any extension (§11) is built, so the core is never at risk. Nothing on a must-requirement's pass condition is ever weakened to make room for something else; the former "never cut" list stands as "never weaken": D-ING-02/04/09–13/24/26, D-ALM-11/14, D-REP-01/03/05, D-CMD-05/06/08, D-UI-15/18/19.
 
-Arithmetic: enhancement round 1 left **26.7 h** for gates 2–5 (§9) + D-ENG-20, never costed, **0.5** + design review 2 fixes **6.7** (per finding in §10) = **33.9 h** against 25 h, i.e. **8.9 h (36 %) over**. The cuts in §5.2 touch no pass condition and save at most **2.2 h**, so the worst case is **31.7 h, still 6.7 h over**. That remainder goes into `docs/ncr/NCR-000-schedule.md`, opened at Gate 2 with the measured Gate 1 hours (not "only if actuals still overrun"). No must-requirement is cut to pay for it.
-
-Rebalance (R2-03): the operator guide and the dev guide (1.0 h) describe Gate 3 features, so they are written alongside Gate 3; perf run N (0.25 h) runs at the end of Gate 3. That moves 1.25 h from Gate 4 to Gate 3 day 3.
-
-Per gate (round-1 figure + D-ENG-20 + review 2 fixes ± moves = new; spec; over):
-
-- Gate 2: 5.75 + 0.15 + 1.4 = **7.3**; 6; +1.3
-- Gate 3 day 2: 6.15 + 0.2 + 2.2 = **8.55**; Gate 3 day 3: 5.55 + 0 + 2.1 + 1.25 = **8.9**; Gate 3 = **17.45**; 12; +5.45
-- Gate 4: 6.25 + 0.15 + 1.0 − 1.25 = **6.15**; 4; +2.15
-- Gate 5: **3.0**; 3; 0
-- Gates 2–5: 7.3 + 17.45 + 6.15 + 3.0 = **33.9**; 25; **+8.9**
-
-| Gate | Work | Spec | Est. | Actual |
-| --- | --- | --- | --- | --- |
-| 1 – Requirements review | research (12 notes), assumptions, design, design reviews 1–2, enhancement round 1, six spikes | 2 | — (actual only, outside the 25 h) | record (well above 2 h; goes into NCR-000) |
-| 2 – Design review | repo, compose with `init: true`, TCP DB readiness, `.env` never rewritten, ports on 127.0.0.1, per-service secrets, Makefile, initdb SQL + `00-roles.sh`, final Redis ACL + scoping test (1.25 + R2-07 0.15 + R2-16 0.25 + R2-09 0.25 + R2-19 0.5 = 2.4) · CI with coverage gate, `integration/` / `system/` split (0.5 + R2-15 0.25) · meta checks: commits, stack, host literals (D-ENG-20 0.15) · simulator v0 + buffer (1.0) · thin worker: validate, store, ack, `ui:events` (1.5) · API SSE + login + live table (1.0) · prove-early checks (0.5) | 6 | 7.3 | |
-| 3 – day 2 | seq tracker, DLQ, poison isolation, 30 s reclaim, FROZEN detector (1.75) · ownership: blocking lock, hand-back, `idle` steal (1.15) · Postgres error classes, ACK savepoints (R2-01 0.5) · reclaim + heartbeat inside the read loop, watchdog (R2-05 0.25) · pre-read fence (R2-06 0.15) · steal hold-off after a Redis reconnect (R2-23 0.1) · LOS/AOS events (R2-11 0.25) · alarm engine + `engine_state` snapshot (2.25) · deadband floor (R2-17 0.25) · limits reload + start fallback (0.5) + un-migrated fallback (R2-18 0.25) · simulator faults incl. `pause`, `hold_exec`, `step` (0.5) + two-way dropout, `SIM_SEED` (R2-26 0.05) · thresholds from env, deterministic negative control, hook list (R2-20 0.25) · `maxmemory`, `used_memory` (R2-21 0.05) · `test_add_parameter` on a throwaway DB (D-ENG-20 0.2 + R2-24 0.1) | 12 (days 2 + 3) | 8.55 | |
-| 3 – day 3 | commanding: API, guarded transitions, tracker with `decide()` in its own transaction, interlock, audit (1.95) · confirm token (R2-02 0.25) · `outcome` with late evidence (R2-04 0.25) · lock release on SEND_ERROR (R2-25 0.1) · simulator command effects (0.5) · ACK path (0.25) + position, PENDING, superseded (R2-10 0.25) · console: alarm list, ack, timeline, STALE/LOS, GROUND PROCESSING DOWN, audio, snapshot reconnect + resync (1.75) · snapshot order, `tm` guard, beep set in `sessionStorage` (R2-08 0.25) · BROKER banner (R2-12 0.25) · alarm text, hash prefix, event strip D-UI-19 (R2-13 0.5) · login: session id, rate limit, LOGIN_FAILED/LOGOUT (R2-19 0.25) · sessions + report freeze (0.5) · Playwright ATP-02/03/04 (0.6) · operator guide + dev guide (1.0, from Gate 4) · perf run N (0.25, from Gate 4) | | 8.9 | |
-| 4 – Test readiness | archiver + test controls (1.0) · backfill into `NYX-TA9` (R2-14 0.25) · replay generator + page (1.0) · replay-time STALE/LOS, dropout at 10× (R2-11 0.25) · live alarms on the replay page (R2-27 0.25) · report refreeze (R2-22 0.25) · charts (1.0) · run P + scaling note (0.5) · docs: README, CHANGELOG, `docs/atp/` (1.5) · meta checks: README sections, perf stats (D-ENG-20 0.15) · start the 2 h ATP-01 soak unattended at the end | 4 | 6.15 | |
-| 5 – Acceptance | fresh clone, all ATPs (soak already done), ATP report, NCRs, demo recording, review answers | 3 | 3.0 | |
-| **Gates 2–5** | | **25** | **33.9** (31.7 after every cut) | |
-
-### 5.2 Cut order (cut from the top when a gate's actuals run over; each cut → one NCR)
-
-Report sign-off, the ARCHIVE_BACKLOG banner and the FRAMES REJECTED banner are not built (§4, SR-02). GROUND PROCESSING DOWN (D-UI-15) is no longer a cut: it is what tells a broker or worker fault apart from loss of signal (Q1, OPS-4, R2-12). Design review 2 added cuts 4–7; each is an accepted fix that touches no pass condition. None of cuts 1–7 touches a pass condition. Cuts 8–9 use the whole should budget (≥ 5 of 7 must pass), so ALM-04, CMD-05, ENG-05, ENG-06 and ENG-07 must then pass.
-
-| # | Cut | Saves | What remains | Prio hit |
-| --- | --- | --- | --- | --- |
-| 1 | Replay page (D-UI-16) | 0.5 | replay started via API, console shows the stream with banner | none |
-| 2 | Versioned late objects (D-ARC-06, already v1+, not in the estimate) | — | late rows stay hot + alert | none |
-| 3 | FROZEN detector (D-ING-21) | 0.15 | `freeze` documented as a known limitation (OPS-3 risk) | none |
-| 4 | Report refreeze (D-DB-10, R2-22) | 0.25 | a report frozen as "incomplete" stays incomplete; README limitation | none |
-| 5 | Live alarms on the replay page (D-UI-16, R2-27) | 0.25 | operator guide: keep a live console open while replaying | none |
-| 6 | Server-side session id + login rate limit (D-ENG-08, R2-19) | 0.2 | signed cookie (12 h, not revocable); README limitation, Q14 | none |
-| 7 | Steal hold-off after a Redis reconnect (D-ING-12, R2-23) | 0.1 | after a Redis outage > 30 s a healthy owner may be stolen once (fenced, costs one restart) | none |
-| 8 | Limits hot reload → reload on restart; hash still stored with every alarm (ALM-08) | 0.5 | Q6 still answerable | **S** 1 of 2 |
-| 9 | ING-10 100 Hz run → run once, publish numbers, NCR if lag ≥ 1 s | 0.25 | ING-09 at 10 Hz unaffected | **S** 2 of 2 |
-
-Buffer: 0.5 + 0.15 + 0.25 + 0.25 + 0.2 + 0.1 + 0.5 + 0.25 = 2.2 h. With every cut taken the estimate is 31.7 h, 6.7 h over the 25 h; that overrun is the schedule NCR, never a cut must.
-
-**Never cut**: anything on a must-requirement's pass condition, including D-ING-09/10/11 (ING-06/07 ownership and takeover), D-ING-12/26 (ING-08), D-ALM-11 (`engine_state`, ING-07) and D-REP-01/03/05 (DAT-06); D-ING-02/13 (frame loss); D-ING-04/24 (error classes: no write without the lock, data errors isolated, tracker errors never exit); D-CMD-05 tracker isolation (CMD-02); D-CMD-06 (hazardous commands, confirm token); D-CMD-08 (audit); D-ALM-14 (ack path); D-UI-18 (resync); D-UI-15 (Q1); D-UI-19 (ING-04 "GAP count shown").
+| Gate | Hours logged (information only) |
+| --- | --- |
+| 1 – Requirements review | |
+| 2 – Design review | |
+| 3 – Implementation | |
+| 4 – Test readiness | |
+| 5 – Acceptance | |
+| Extensions (§11) | |
 
 ### 5.3 Build order (gates from spec §8)
 
@@ -539,7 +506,7 @@ Buffer: 0.5 + 0.15 + 0.25 + 0.25 + 0.2 + 0.1 + 0.5 + 0.25 = 2.2 h. With every cu
 | **3 – Implementation** day 2 | ingest depth (D-ING-04..26: blocking lock, hand-back, `idle` steal with pre-read fence, Postgres error classes, reclaim + heartbeat inside the read loop, watchdog, LOS/AOS events), alarm engine with `engine_state` snapshot (D-ALM-*), deadband floor, limits reload incl. un-migrated fallback, simulator faults (D-SIM-07/08/11), test hooks and env thresholds (D-ENG-16) | the blocking lock returns at once when the owner's session ends and `pg_locks` shows the home worker waiting; `XINFO CONSUMERS` `idle` on Redis 8.10 behaves as A-E1-1 says; ATP-04, ATP-05 pass |
 | **3 – Implementation** day 3 | commanding with tracker `decide()`, confirm token and late-evidence `outcome` (D-CMD-*, D-SIM-06/10), ACK path with fixed position and PENDING state (D-ALM-14), console incl. BROKER banner and event strip (D-UI-*), login hardening (D-ENG-08), sessions + report (D-DB-06/07/10), operator guide + dev guide, perf run N | ATP-01 (short), 02, 03, 06 pass |
 | **4 – Test readiness** | archiver + test controls incl. backfill into `NYX-TA9` (D-ARC-*, D-ENG-16), replay of recorded transitions on replay time + determinism test (D-REP-*), live alarms on the replay page, report refreeze, perf run P + scaling (D-PERF-*), remaining §6 docs, ATP-01 2 h soak | ATP-07, ATP-08; every requirement has a test or inspection note ([requirements.md](requirements.md)) |
-| **5 – Acceptance** | fresh clone, all ATPs, `atp-report.md`, NCRs (incl. cuts taken and the schedule NCR opened at Gate 2), demo recording, review answers | acceptance rule met or gaps documented |
+| **5 – Acceptance** | fresh clone, all ATPs, `atp-report.md`, NCRs (only for real failures), demo recording, review answers | acceptance rule met or gaps documented |
 
 ---
 

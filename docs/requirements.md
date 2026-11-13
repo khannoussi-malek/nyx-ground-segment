@@ -10,14 +10,14 @@ Test locations: `tests/unit/` (pure functions), `tests/integration/` (real Redis
 
 | ID | One sentence | M | P | Decisions | Planned evidence | ATP | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| ING-01 | Two test articles stream in parallel for 2 h with zero frames lost. | T, D | M | D-ING-01, D-SIM-05 | `integration/test_ingest_store.py::test_two_vehicles_no_loss` (distinct seq = sent); 2 h soak in ATP-01 | 01 | |
+| ING-01 | Two test articles stream in parallel for 2 h with zero frames lost. | T, D | M | D-ING-01, D-SIM-05 | `integration/test_ingest_store.py::test_two_vehicles_no_loss`; `perf/soak_count.py` (sent vs stored per `(epoch, seq)`) over the 2 h ATP-01 soak | 01 | |
 | ING-02 | A malformed frame goes to `tm:dlq` with its reason and ingest carries on. | T | M | D-ING-05, 18–20 | `unit/test_frame_model.py` (NaN, `"5"`, naive time, bad UUID, broken JSON); `integration/test_dlq.py::test_malformed_to_dlq_and_continue` | 05 | |
 | ING-03 | A duplicated frame is stored once. | T | M | D-ING-13, 14 | `unit/test_seq_tracker.py::T3`; `integration/test_ingest_store.py::test_duplicate_stored_once` | 05 | |
 | ING-04 | A 10 s dropout produces one GAP event with 100 ± 1 lost frames. | T | M | D-ING-14–16 | `unit/test_seq_tracker.py::T2,T4,T8`; `e2e/atp04-los.spec.ts` (GAP count shown) | 04 | |
 | ING-05 | A simulator restart resumes ingest within 2 s and logs SEQ_RESET, losing nothing. | T | M | D-ING-13–15, D-SIM-03 | `unit/test_seq_tracker.py::T6,T7`; `integration/test_seq_reset.py` (restart sim container, time to first new frame < 2 s) | 05 | |
 | ING-06 | Two workers in one group share the load and keep per-vehicle order. | T, A | M | D-ING-01, 09–11 | `integration/test_ownership.py::test_two_workers_share_and_keep_order` (+ naive negative control must fail); README "how order is kept" | 05 | |
 | ING-07 | A frame is acked only after it is stored, so killing a worker loses nothing. | T | M | D-ING-02, 03, 06, 07, 13, 17, 22, 24, D-ENG-11 | `integration/test_ownership.py::test_kill_owner_mid_stream[before_commit, after_commit_before_ack, docker_kill]` | 05 | |
-| ING-08 | Entries idle > 30 s are reclaimed and a frame failing 3× goes to the DLQ. | T | M | D-ING-04, 05, 12 | `integration/test_dlq.py::test_poison_after_3`, `::test_reclaim_idle_30s` | 05 | |
+| ING-08 | Entries idle > 30 s are reclaimed and a frame failing 3× goes to the DLQ. | T | M | D-ING-04, 05, 12, 26 | `integration/test_dlq.py::test_poison_after_3`, `::test_crash_every_time_frame_to_dlq` (other vehicle keeps flowing); `integration/test_ownership.py::test_reclaim_idle_30s` (ghost consumer), `::test_hung_owner_is_stolen` (SIGSTOP) | 05 | |
 | ING-09 | p95 from `t_onboard` to stored is under 200 ms at 2 × 10 Hz. | A | M | D-ING-22, 23, D-PERF-01, 05, 07 | `perf/run_n.py` → `docs/perf/run-n-*.csv`, table in atp-report | 08 | |
 | ING-10 | At 2 × 100 Hz for 5 min the lag stays under 1 s. | A | S | D-PERF-05, 06 | `perf/run_p.py` → `docs/perf/run-p-*.csv` | 08 | |
 
@@ -26,47 +26,47 @@ Test locations: `tests/unit/` (pure functions), `tests/integration/` (real Redis
 | ID | One sentence | M | P | Decisions | Planned evidence | ATP | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | ALM-01 | Each value is classed nominal / yellow / red, with on-limit values going to the worse band. | T | M | D-ALM-01, D-SIM-11 | `unit/test_checks_limit.py::test_boundaries` (the 16-row table in R8) | 02 | |
-| ALM-02 | Hysteresis turns ±1 % noise around a limit into one alarm. | T | M | D-ALM-02, D-SIM-11 | `unit/test_checks_limit.py::test_noise_one_alarm` | 02 | |
+| ALM-02 | Hysteresis turns ±1 % noise around a limit into one alarm (one RAISE). | T | M | D-ALM-02, D-SIM-11 | `unit/test_checks_limit.py::test_noise_one_alarm[pct_of_span, pct_of_limit]` (passes under both readings) | 02 | |
 | ALM-03 | A single-frame spike does not alarm when persistence N = 3. | T | M | D-ALM-03, 04 | `unit/test_engine.py::test_spike_no_alarm`, `::test_gap_resets_counters_not_alarm` | 02 | |
 | ALM-04 | A 0.4 kPa/s leak alarms on rate of change before the absolute limit. | T | S | D-ALM-05, D-SIM-08 | `unit/test_checks_roc.py::test_leak_alarms_before_yellow` | 02 | |
-| ALM-05 | An alarm is raised within 300 ms (p95) of its triggering frame. | A | M | D-PERF-01, 04, 05 | `perf/alarm_latency.py` (60 alarms, report 20 and 60) | 08 | |
-| ALM-06 | Every ACTIVE → ACKED → CLEARED transition stores who, when and the note. | T | M | D-ALM-06–08, D-ING-17, D-SIM-10 | `unit/test_alarm_lifecycle.py` (state table incl. RTN_UNACK and re-alarm on escalation); `integration/test_alarm_ack_api.py` | 02 | |
+| ALM-05 | An alarm is raised within 300 ms (p95) of its triggering frame. | A | M | D-PERF-01, 04, 05, D-SIM-07 | `perf/alarm_latency.py` (sim `step` → 120 alarms in run N; report 20 and 60+) | 08 | |
+| ALM-06 | Every ACTIVE → ACKED → CLEARED transition stores who, when and the note. | T | M | D-ALM-06–08, 14, D-ING-17, D-SIM-10 | `unit/test_alarm_lifecycle.py` (state table incl. RTN_UNACK, re-alarm on escalation); `integration/test_alarm_ack_api.py::test_ack_then_rtn_is_cleared`, `::test_ack_after_seq_is_owner_seq` | 02 | |
 | ALM-07 | A new check type is one new class plus registration, with no worker edit. | I | M | D-ALM-10 | Inspection: README section + `unit/test_check_registry.py::test_new_check_file_is_registered` | INSP | |
-| ALM-08 | An edited limits file is live within 5 s and alarms carry its hash. | T | S | D-ALM-12, D-DB-09, 11 | `integration/test_limits_reload.py` | 02 | |
+| ALM-08 | An edited limits file is live within 5 s and alarms carry its hash. | T | S | D-ALM-12, D-DB-09, 11 | `integration/test_limits_reload.py` (incl. invalid file at start → fallback); limits edit step inside `e2e/atp02-leak.spec.ts` | 02 | |
 
 ## 4.3 Commanding
 
 | ID | One sentence | M | P | Decisions | Planned evidence | ATP | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | CMD-01 | Every command is tracked QUEUED → SENT → RECEIVED → VERIFIED. | T | M | D-CMD-01, 05, D-SIM-06, 10 | `unit/test_command_state.py`; `integration/test_commands_api.py::test_isolate_valve_verified` | 02 | |
-| CMD-02 | No receipt in 5 s or no verification in 15 s marks the command FAILED with a reason. | T | M | D-CMD-02–05, D-SIM-06, 07, 10 | `integration/test_commands_api.py::test_not_received_5s`, `::test_not_verified_15s` (expects FAILED then LATE_VERIFICATION) | 03 | |
+| CMD-02 | No receipt in 5 s or no verification in 15 s marks the command FAILED with a reason. | T | M | D-CMD-02–05, 11, D-SIM-06, 07, 10 | `integration/test_commands_api.py::test_not_received_5s` (sim `pause 6`), `::test_not_verified_15s` (sim `hold_exec 16`), both expecting FAILED then LATE_VERIFICATION; `::test_monotonic_transitions` | 03 | |
 | CMD-03 | A hazardous command can't be sent without a second confirmation and a reason. | T, D | M | D-CMD-06, 09, 10 | `integration/test_commands_api.py::test_hazardous_requires_confirm_and_reason`, `::test_confirm_hash_mismatch`; `e2e/hazardous.spec.ts` | 06 | |
-| CMD-04 | Every command and ack is in an append-only audit log with user, time and reason. | I, T | M | D-CMD-08, D-ENG-08, D-DB-10 | `integration/test_audit_append_only.py` (UPDATE/DELETE/TRUNCATE all fail); inspection of grants | 06 | |
-| CMD-05 | The same command from two operators within 2 s rejects the second with a message. | T | S | D-CMD-07, D-ENG-13 | `integration/test_commands_api.py::test_duplicate_within_2s` (users `fc1`, `fc2`) | 06 | |
+| CMD-04 | Every command and ack is in an append-only audit log with user, time and reason. | I, T | M | D-CMD-08, D-ENG-08, 17, D-DB-10 | `integration/test_audit_append_only.py` (UPDATE/DELETE/TRUNCATE fail); `::test_audit_complete` (N commands + M acks → exact rows); `integration/test_redis_acl.py::test_direct_tc_write_denied` | 06 | |
+| CMD-05 | The same command from two operators within 2 s rejects the second with a message. | T | S | D-CMD-07, D-ENG-13 | `integration/test_commands_api.py::test_duplicate_within_2s` (users `fc1`, `fc2`), `::test_hazardous_lock_ignores_args` | 06 | |
 
 ## 4.4 Operator console
 
 | ID | One sentence | M | P | Decisions | Planned evidence | ATP | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | UI-01 | Live values appear within 1 s (p95) of the frame. | A | M | D-UI-01, 12, 14, D-PERF-02 | `perf/ui_latency.spec.ts` (in-page probe + offset ping) | 08 | |
-| UI-02 | Values go STALE at 2 s ± 0.5 s, the vehicle shows LOS, and both recover on their own. | T | M | D-UI-04–06, 15, D-ING-21, 25, D-ALM-04, D-SIM-07 | `e2e/atp04-los.spec.ts` (STALE timing on every row, LOS, recovery); `e2e/freeze.spec.ts` (FROZEN) | 04 | |
+| UI-02 | Values go STALE at 2 s ± 0.5 s, the vehicle shows LOS, and both recover on their own. | T | M | D-UI-04–06, 15, D-ING-21, 25, D-ALM-04, D-SIM-07 | `e2e/atp04-los.spec.ts` (STALE timing on every row, LOS, recovery); `e2e/backlog-stale.spec.ts` (after a Redis stop no row shows OK with `t_onboard` older than 2 s); `e2e/freeze.spec.ts` | 04 | |
 | UI-03 | No state is shown by colour alone, nominal is grey, contrast passes WCAG AA. | I | M | D-UI-06, 07 | Inspection + `ui/src/palette.test.ts` (contrast ratios computed) | INSP | |
 | UI-04 | Any parameter charts from 2 min to 24 h; 24 h loads in < 2 s with a min/max band. | T, A | M | D-UI-11, D-DB-02, 04, D-ARC-05 | `integration/test_downsample.py::test_24h_under_2s`; `e2e/chart.spec.ts` | 07 | |
-| UI-05 | The alarm list supports ack and filters, and a new red alerts once. | T | M | D-UI-08, 09, D-ALM-06, 08, 09 | `e2e/atp02-leak.spec.ts` (leak → yellow → red → ack → clear, `alerts === 1`) | 02 | |
+| UI-05 | The alarm list supports ack and filters, and a new red alerts once. | T | M | D-UI-08, 09, 18, D-ALM-06, 08, 09, 14 | `e2e/atp02-leak.spec.ts` (leak → yellow → red → ack → clear, `alerts === 1`); `integration/test_resync.py::test_resync_after_crash` (crash after COMMIT before publish → alarm and beep still delivered) | 02 | |
 | UI-06 | Each command shows its state timeline with all four times. | D | M | D-UI-10, D-CMD-02, 08 | `e2e/atp02-leak.spec.ts` (timeline step) + demo | 02 | |
-| UI-07 | After an API restart the UI recovers in < 5 s and shows a banner while disconnected. | T | M | D-UI-01–04, 15 | `e2e/reconnect.spec.ts` (restart api container, measure) | 05 | |
-| UI-08 | All times are UTC with `Z`. | I | M | D-UI-13, 16, D-SIM-02 | Inspection + `ui/src/time.test.ts`; grep check in CI for `toLocale` | INSP | |
+| UI-07 | After an API restart the UI recovers in < 5 s and shows a banner while disconnected. | T | M | D-UI-01–04, 15, 18 | `e2e/reconnect.spec.ts` (from `docker compose restart api` to data flowing < 5 s; banner seen from the first `error`) | 05 | |
+| UI-08 | All times are UTC with `Z`. | I | M | D-UI-13, 16, D-SIM-02, D-ENG-18 | `unit/test_time_format.py` (API JSON, CSV, report, logs all end in `Z`); `ui/src/time.test.ts`; CI grep for `toLocale` | INSP | |
 
 ## 4.5 Test sessions, data and archive
 
 | ID | One sentence | M | P | Decisions | Planned evidence | ATP | Status |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | DAT-01 | Named sessions start and stop per vehicle and store conductor, start and end. | T | M | D-DB-07, D-UI-17 | `integration/test_sessions.py::test_start_stop`, `::test_one_active_per_vehicle` | 01 | |
-| DAT-02 | A session report gives duration, min/max/avg per parameter, alarms, commands, gaps and a CSV. | T | M | D-DB-06, 10, D-ING-16, D-UI-17 | `integration/test_sessions.py::test_report_contents`, `::test_report_frozen_and_signed` | 01 | |
+| DAT-02 | A session report gives duration, min/max/avg per parameter, alarms, commands, gaps and a CSV. | T | M | D-DB-06, 10, D-ING-16, D-UI-17 | `integration/test_sessions.py::test_report_contents`, `::test_report_pending_until_watermark`, `::test_report_frozen` | 01 | |
 | DAT-03 | 24 h of hot data; 1 h of one parameter returns in < 300 ms. | A | M | D-DB-01, 02, 05 | `perf/query_time.py` (API round trip) | 08 | |
-| DAT-04 | Each vehicle-hour is archived to MinIO as Parquet + `.sha256`. | T | M | D-ARC-01, 03, 06, 07, 09 | `integration/test_archiver.py::test_hour_archived_with_sidecar` | 07 | |
-| DAT-05 | Hot data is deleted only after the archive re-read matches; a killed upload loses nothing. | T | M | D-ARC-02–05, 10 | `integration/test_archiver.py::test_kill_mid_upload_then_resume`, `::test_delete_only_after_verify`, `::test_row_count_mismatch_rolls_back` | 07 | |
-| DAT-06 | Any past window replays at 1× or 10× with the same alarms as live and a REPLAY banner. | T, D | M | D-REP-01–06, D-ALM-11, D-DB-09, D-UI-16 | `integration/test_replay_equality.py` (alarm keys live == replay); `e2e/replay.spec.ts` (banner, speed) | 07 | |
+| DAT-04 | Each vehicle-hour is archived to MinIO as Parquet + `.sha256`. | T | M | D-ARC-01, 03, 06, 07, 09, D-ENG-16 | `integration/test_archiver.py::test_hour_archived_with_sidecar` (backfilled hour, injected clock) | 07 | |
+| DAT-05 | Hot data is deleted only after the archive re-read matches; a killed upload loses nothing. | T | M | D-ARC-02–05, 10, D-ENG-16 | `integration/test_archiver.py::test_kill_mid_upload_then_resume` (`CRASH_AT=upload`), `::test_delete_only_after_verify` (`HOT_RETENTION_H=0`), `::test_row_count_mismatch_rolls_back` | 07 | |
+| DAT-06 | Any past window replays at 1× or 10× with the same alarms as live and a REPLAY banner. | T, D | M | D-REP-01–06, D-ALM-04, 11, 14, D-DB-09, D-UI-16, D-ENG-16 | `integration/test_replay_equality.py` (alarm keys live == replay, incl. an ack-then-escalate window and a data-STALE window); `e2e/replay.spec.ts` (banner, speed) | 07 | |
 
 ## 4.6 Engineering, delivery and maintainability
 

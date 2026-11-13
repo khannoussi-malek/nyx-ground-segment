@@ -3,6 +3,7 @@
 Spec §4, one row per requirement. **Decisions** point to [design.md](design.md); **Planned evidence** is the test (or inspection) that will prove it, named now so it gets written next to the feature, not at Gate 4. **Status** is filled at Gate 5 (PASS / FAIL / PARTIAL + link) and mirrored in `docs/atp-report.md`.
 
 Method: T test · D demonstration · I inspection · A analysis. Prio: M must · S should.
+**Rule (D-ENG-14):** anything we build ships with its test in the same commit, including code that serves no single requirement (simulator, migrations, health checks); CI fails under 80 % coverage (D-ENG-15).
 Test locations: `tests/unit/` (pure functions), `tests/integration/` (real Redis + Postgres + MinIO from the compose file), `e2e/` (Playwright, TypeScript), `perf/` (measurement scripts, raw CSV to `docs/perf/`).
 
 ## 4.1 Ingest and processing

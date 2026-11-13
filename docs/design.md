@@ -217,6 +217,8 @@ The simulator is ours, so its behaviour is a design decision. Downstream code mu
 | D-ENG-11 | Kill-a-worker tests: `docker compose kill ingest-1` proves **takeover** by the other worker; `kill -9 1` inside the container proves **self-restart** | `docker kill` does not trigger the restart policy; a crash inside the container does | Assuming both behave the same | ING-07, ENG-02 | R11 (A-R11-6) |
 | D-ENG-12 | **Migrations** = numbered `migrations/NNN_*.sql`, applied in order by `gs-migrate` as `gs_owner`, one transaction each, recorded in `schema_migrations(version, sha256, applied_at)`; refuses to run if an applied file changed; then adds registry columns (D-DB-11) | ~30 lines; with no ORM, Alembic adds nothing | Alembic; `CREATE IF NOT EXISTS` scattered across services | ENG-01, 09 | `lead` |
 | D-ENG-13 | **Demo users**: `make up` copies `users.example.yaml` → `users.yaml` if missing (`conductor`, `fc1`, `fc2`), generates one password into `.env` and prints it once | CMD-05 needs two operators at once; ENG-01 "demo works first try" | Manual user setup | ENG-01, CMD-05 | `lead` |
+| D-ENG-14 | **Definition of done: nothing is merged without a test.** Every new function, endpoint, state machine, migration, simulator fault/command and UI behaviour ships with its test in the same commit, at the lowest level that can prove it: pure logic → unit; anything touching Redis/Postgres/MinIO → integration against the compose services; operator flows → Playwright. Bug fixes start with a failing test that reproduces the bug. Test infrastructure (simulator, perf scripts, migrations runner) is tested too, because the ATPs trust it | The owner's rule for this project; untested code can't be accepted under §5 anyway, and tests written later get skipped when time runs out | "Tests at the end" (Gate 4) | ENG-03, all | owner rule |
+| D-ENG-15 | **CI coverage gate**: `pytest --cov=gs --cov-fail-under=80` over unit + integration; Vitest coverage ≥ 80 % for `ui/src` logic (stores, formatters, palette, freshness clock); every E2E spec mapped to an ATP in [requirements.md](requirements.md). Coverage is a floor, not the goal: each requirement row still names the test that proves its pass condition | Makes "untested code" a red build instead of a review comment | Coverage as a report only | ENG-03, ENG-04 | owner rule |
 
 ### 2.9 Measurement (method A requirements)
 
@@ -383,7 +385,7 @@ Playwright timeout for the whole flow: 60 s.
 
 ### 5.1 Effort estimate (hours; fill **Actual** at each gate)
 
-The spec's gates add up to ~27 h ("about 25"). This design estimates **≈ 30.5 h**, so about 4–6 h must come from the cut list below. Estimates are judgment, not measured; the Actual column is how we learn.
+The spec's gates add up to ~27 h ("about 25"). This design estimates **≈ 30.5 h**, so about 4–6 h must come from the cut list below. Estimates are judgment, not measured; the Actual column is how we learn. **All estimates include writing the tests for that work (D-ENG-14); a feature without its test is not done and its hours are not finished.**
 
 | Gate | Work | Est. | Actual |
 | --- | --- | --- | --- |
@@ -463,8 +465,8 @@ The spec's gates add up to ~27 h ("about 25"). This design estimates **≈ 30.5 
 | DAT-06 | D-REP-01..06 · D-ALM-11 · D-DB-09 · D-UI-16 |
 | ENG-01 | D-ENG-02, 03, 09 · D-ENG-12, 13 |
 | ENG-02 | D-ING-07, 08 · D-SIM-05 · D-ENG-03, 11 · D-ING-24 |
-| ENG-03 | D-ENG-05 · D-SIM-09 |
-| ENG-04 | D-ENG-06 |
+| ENG-03 | D-ENG-05 · D-SIM-09 · D-ENG-14, 15 |
+| ENG-04 | D-ENG-06 · D-ENG-15 |
 | ENG-05 | D-ENG-07 · D-ARC-10, D-ING-25 |
 | ENG-06 | D-DB-03 · D-ING-18, 19, 20 · D-CMD-09 · D-DB-11 |
 | ENG-07 | D-ENG-10 |

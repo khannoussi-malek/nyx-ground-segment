@@ -1,9 +1,12 @@
 import hashlib
+import re
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from gs.common.missiondb import (
+    NAME_RE,
     RESERVED_NAMES,
     LimitCheck,
     MissionDbError,
@@ -108,6 +111,12 @@ def test_reserved_name_rejected(name: str) -> None:  # EX-06
         "parameters.yaml", parameters=SHIPPED_P + f"  {name}: {{unit: x, type: float}}\n".encode()
     )
     assert "reserved" in err.message
+
+
+def test_reserved_names_cover_every_basemodel_attribute() -> None:
+    clashing = {n for n in dir(BaseModel) if re.fullmatch(NAME_RE, n)}
+    assert {"model_dump", "json", "copy", "dict", "schema", "validate"} <= clashing
+    assert clashing <= RESERVED_NAMES
 
 
 @pytest.mark.parametrize("name", ["Cabin", "1x", "a" * 64, "x-y"])

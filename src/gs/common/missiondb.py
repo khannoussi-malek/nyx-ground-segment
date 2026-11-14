@@ -15,7 +15,10 @@ import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 NAME_RE = r"^[a-z][a-z0-9_]{0,62}$"
-RESERVED_NAMES = frozenset({"vehicle", "seq", "t_onboard", "t_received", "mode", "last_cmd_id"})
+# frame fields, plus every BaseModel attribute: build_frame_model makes parameters model fields
+RESERVED_NAMES = frozenset({"vehicle", "seq", "t_onboard", "t_received", "mode", "last_cmd_id"}) | {
+    n for n in dir(BaseModel) if re.fullmatch(NAME_RE, n)
+}
 MAX_FILE_BYTES = 256 * 1024
 RECEIVE_TIMEOUT_MAX_S = 5.0
 VERIFY_TIMEOUT_MAX_S = 15.0

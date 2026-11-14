@@ -148,6 +148,7 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.users = load_users(settings.users_file)
         app.state.mission = load_dir(settings.mission_db)
         app.state.vehicles = settings.vehicles
+        # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
         # no client-side retry: connection errors reach our own handling (R28)
         app.state.redis = redis.asyncio.Redis.from_url(
             settings.redis_url,

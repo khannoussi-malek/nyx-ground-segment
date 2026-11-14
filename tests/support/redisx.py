@@ -11,6 +11,8 @@ from typing import Any
 
 import redis.asyncio
 from redis.asyncio.retry import Retry
+from redis.backoff import NoBackoff
+from redis.retry import Retry as SyncRetry
 
 import redis
 from gs.simulator.frames import make_frame
@@ -27,12 +29,19 @@ def _creds(user: str) -> tuple[int, str]:
 
 def client(user: str, decode: bool = True) -> redis.Redis:
     port, pw = _creds(user)
-    return redis.Redis(host=HOST, port=port, username=user, password=pw, decode_responses=decode)
+    return redis.Redis(
+        host=HOST,
+        port=port,
+        username=user,
+        password=pw,
+        decode_responses=decode,
+        retry=SyncRetry(NoBackoff(), 0),  # retry OFF like the services; Redis() defaults to 10
+    )
 
 
 def aclient(user: str, decode: bool = True, retry: Retry | None = None) -> redis.asyncio.Redis:
     port, pw = _creds(user)
-    extra: dict[str, Any] = {"retry": retry} if retry else {}
+    extra: dict[str, Any] = {"retry": retry or Retry(NoBackoff(), 0)}  # OFF unless a test asks
     return redis.asyncio.Redis(
         host=HOST,
         port=port,

@@ -10,7 +10,7 @@ import redis.asyncio
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
-from gs.common.config import require
+from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import State, serve_health
 from gs.simulator.buffer import FrameBuffer, send_loop
 from gs.simulator.frames import tick_loop
@@ -31,10 +31,10 @@ class SimSettings:
     def from_env(cls) -> SimSettings:
         return cls(
             redis_url=require("REDIS_URL"),
-            vehicles=tuple(v for v in require("SIM_VEHICLES").split(",") if v),
+            vehicles=vehicle_list(require("SIM_VEHICLES"), "SIM_VEHICLES"),
             seed=require("SIM_SEED"),
             bind_host=require("BIND_HOST"),
-            health_port=int(require("HEALTH_PORT")),
+            health_port=require_int("HEALTH_PORT"),
         )
 
 
@@ -51,6 +51,7 @@ def sim_status(buf: FrameBuffer) -> tuple[State, dict[str, object]]:
 
 async def run(s: SimSettings, stop: asyncio.Event) -> None:
     buf = FrameBuffer()
+    # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
     r = redis.asyncio.Redis.from_url(
         s.redis_url,
         socket_timeout=2,

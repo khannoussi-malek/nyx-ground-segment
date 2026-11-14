@@ -16,6 +16,7 @@ from gs.common.missiondb import MissionDb
 from gs.ingest.events import alarm_id_for, transition_key
 
 SYSTEM_USER = "system"
+LIMITS_CHANGED = "LIMITS_CHANGED"
 
 
 @dataclass(frozen=True)
@@ -152,9 +153,9 @@ def _rise(
 
 
 def _fall(
-    f: _Frame, param: str, a: Alarm, sev: Level, trig: Slot
+    f: _Frame, param: str, a: Alarm, sev: Level, trig: Slot | None
 ) -> tuple[Alarm | None, Transition]:
-    if sev > Level.NOMINAL:
+    if sev > Level.NOMINAL and trig is not None:
         new = replace(a, severity=sev, side=trig.side, trigger_check=trig.kind)
         return new, _transition(f, param, "DEESCALATE", new, sev, trig, False)
     if a.state == "ACKED":
@@ -162,6 +163,26 @@ def _fall(
         return None, _transition(f, param, "CLEAR", cleared, sev, None, False, closed=True)
     rtn = replace(a, state="RTN_UNACK")
     return rtn, _transition(f, param, "RTN", rtn, sev, None, False)
+
+
+def _judge(f: _Frame, param: str, alarms: dict[str, Alarm], slots: list[Slot]) -> Transition | None:
+    """At most one transition from the param's slot levels; updates `alarms`, a local copy."""
+    sev = max((s.level for s in slots), default=Level.NOMINAL)
+    trig = next((s for s in slots if s.level == sev), None)  # first at that level, file order
+    a = alarms.get(param)
+    cur = Level.NOMINAL if a is None or a.state == "RTN_UNACK" else a.severity
+    alarm: Alarm | None
+    if sev > cur and trig is not None:
+        alarm, tr = _rise(f, param, a, sev, trig)
+    elif sev < cur and a is not None:
+        alarm, tr = _fall(f, param, a, sev, trig)
+    else:
+        return None
+    if alarm is None:
+        alarms.pop(param)
+    else:
+        alarms[param] = alarm
+    return tr
 
 
 def step(
@@ -185,22 +206,9 @@ def step(
         sample = None if v is None else Sample(seq, t.timestamp(), v, period_s)
         new = [_slot_step(slots[(param, c.kind)], c, n, sample, reset) for c, n in checks]
         slots.update({(param, s.kind): s for s in new})
-        sev = max(s.level for s in new)
-        trig = next(s for s in new if s.level == sev)  # first slot at that level, file order
-        a = alarms.get(param)
-        alarm: Alarm | None
-        cur = Level.NOMINAL if a is None or a.state == "RTN_UNACK" else a.severity
-        if sev > cur:
-            alarm, tr = _rise(f, param, a, sev, trig)
-        elif sev < cur and a is not None:
-            alarm, tr = _fall(f, param, a, sev, trig)
-        else:
-            continue
-        out.append(tr)
-        if alarm is None:
-            alarms.pop(param)
-        else:
-            alarms[param] = alarm
+        tr = _judge(f, param, alarms, new)
+        if tr is not None:
+            out.append(tr)
     return EngineState(slots, alarms), tuple(out)
 
 
@@ -239,3 +247,34 @@ def ack(
         closed_at=t if clears else None,
     )
     return EngineState(state.slots, alarms), tr
+
+
+def switch_set(
+    state: EngineState,
+    old: CompiledSet,
+    new: CompiledSet,
+    vehicle: str,
+    epoch: datetime,
+    seq: int,
+    t: datetime,
+) -> tuple[EngineState, tuple[Transition, ...]]:
+    """Apply a new mission-db set per slot (param, kind) (D-ALM-12, D-EXT-06, R8 7-8).
+
+    In both sets: keep level, side and check state, reset the ring. Only in old: dropped, so its
+    contribution is NOMINAL. Only in new: `initial()`. Resulting transitions say LIMITS_CHANGED.
+    """
+    f = _Frame(vehicle, epoch, seq, t)
+    slots: dict[tuple[str, str], Slot] = {}
+    for param, checks in new.checks.items():
+        for chk, _ in checks:
+            kept = state.slots.get((param, chk.kind))
+            fresh = Slot(chk.kind, Level.NOMINAL, None, (), chk.initial())
+            slots[(param, chk.kind)] = replace(kept, ring=()) if kept else fresh
+    alarms = dict(state.alarms)
+    out: list[Transition] = []
+    for param in sorted(set(old.checks) | set(new.checks)):
+        mine = [slots[(param, c.kind)] for c, _ in new.checks.get(param, ())]
+        tr = _judge(f, param, alarms, mine)
+        if tr is not None:
+            out.append(replace(tr, note=LIMITS_CHANGED))
+    return EngineState(slots, alarms), tuple(out)

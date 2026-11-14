@@ -6,6 +6,10 @@ import sys
 import time
 import urllib.request
 
+import pytest
+
+import gs.ingest.main as main_mod
+from gs.ingest.errors import OperationalDbError
 from tests.support.env import REPO, dotenv, vid
 
 CODE = "from gs.ingest.main import main; main()"
@@ -60,3 +64,15 @@ def test_task_error_exits_nonzero() -> None:  # crash-only: a DB failure ends th
     finally:
         if p.poll() is None:
             p.kill()
+
+
+def test_operational_error_exits_one(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:  # D-ING-24: a vehicle task's OperationalDbError ends the process with 1
+    async def failing() -> None:
+        raise ExceptionGroup("task group", [OperationalDbError("25006: read-only")])
+
+    monkeypatch.setattr(main_mod, "_main", failing)
+    with pytest.raises(SystemExit) as e:
+        main_mod.main()
+    assert e.value.code == 1 and "25006: read-only" in caplog.text

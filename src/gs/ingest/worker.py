@@ -16,11 +16,12 @@ import redis.asyncio
 import redis.exceptions
 
 from gs.common.interfaces import DlqRecord, FrameHeader, Tm
-from gs.ingest.events import GroundEvent, reset_key
+from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
+from gs.ingest.events import GroundEvent, poison_key, reset_key
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
 from gs.ingest.link import STALE_S, on_silence
 from gs.ingest.store import insert_frames, load_engine_row, load_seq_state, write_outcome
-from gs.ingest.validate import FieldStats, classify
+from gs.ingest.validate import FieldStats, classify, poison
 
 log = logging.getLogger(__name__)
 
@@ -33,6 +34,7 @@ DLQ = "tm:dlq"
 BACKOFF_START_S = 0.5
 BACKOFF_MAX_S = 5.0
 Entry = tuple[str, dict[bytes, bytes]]
+Item = tuple[str, dict[bytes, bytes], int, FrameHeader]  # entry id, fields, deliveries, frame
 
 
 @dataclass(frozen=True)
@@ -76,25 +78,54 @@ async def process_batch(
     extra: Sequence[GroundEvent] = (),
 ) -> tuple[VehicleState, int]:
     """One frame transaction (D-ING-22); returns the new state and the frames newly stored.
-    `extra` events (ENGINE_STATE_RESET at start) ride in the same transaction.
-    Any error propagates with nothing acked and the caller's state unchanged."""
+    `extra` events (ENGINE_STATE_RESET at start) ride in the same transaction. Data errors are
+    isolated per frame (D-ING-04); an operational Postgres error rolls back, resets the batch's
+    delivery counts and raises OperationalDbError (D-ING-24). Nothing is acked on any error."""
     if not entries:
         return vs, 0
+    try:
+        return await _process(ctx, conn, stream, entries, vs, extra)
+    except psycopg.Error as e:  # data errors never get here: _process isolates them
+        await _reset_deliveries(ctx, stream, entries)
+        raise OperationalDbError(_why(e)) from e
+    except asyncio.CancelledError:  # a sibling vehicle's exit; this batch is not at fault
+        await _reset_deliveries(ctx, stream, entries)
+        raise
+
+
+async def _process(
+    ctx: Ctx,
+    conn: psycopg.AsyncConnection,
+    stream: str,
+    entries: list[Entry],
+    vs: VehicleState,
+    extra: Sequence[GroundEvent],
+) -> tuple[VehicleState, int]:
     vehicle = stream.removeprefix("tm:")
     deliveries = await _deliveries(ctx, stream, entries)  # before classify (R8)
     now = datetime.now(UTC)
-    results = [
-        classify(fields, stream, eid, n, ctx.model, now)
-        for (eid, fields), n in zip(entries, deliveries, strict=True)
-    ]
-    frames = [r for r in results if isinstance(r, FrameHeader)]
-    for f in frames:
-        ctx.stats.observe(f, ctx.params)
-    nvs, out = fold(vs, vehicle, frames, ctx.params)
-    out = Outcome(out.new_frames, (*extra, *out.events), out.dup_or_late)
-    async with conn.transaction():  # COMMIT
-        inserted = await insert_frames(conn, frames, ctx.params)  # LATE frames still insert
-        await write_outcome(conn, vehicle, nvs, out)
+    dlq: list[DlqRecord] = []
+    events = list(extra)
+    items: list[Item] = []
+    for (eid, fields), n in zip(entries, deliveries, strict=True):
+        if n > POISON_DELIVERIES:  # D-ING-04: not processed again
+            dlq.append(poison(fields, stream, eid, n, f"delivered {n} times", now))
+            events.append(_poison_event(stream, vehicle, eid, n))
+            continue
+        r = classify(fields, stream, eid, n, ctx.model, now)
+        if isinstance(r, DlqRecord):
+            dlq.append(r)
+        else:
+            ctx.stats.observe(r, ctx.params)
+            items.append((eid, fields, n, r))
+    try:
+        nvs, dup, inserted = await _commit(ctx, conn, vehicle, [i[3] for i in items], vs, events)
+    except Exception as e:  # noqa: BLE001  D-ING-04: a processing exception is the frame's fault
+        if _operational(e):
+            raise
+        log.warning("data error in a batch of %s (%s); isolating frames", stream, _why(e))
+        nvs, dup, inserted, bad = await _isolate(ctx, conn, stream, items, vs, events, now)
+        dlq += bad
     if inserted:  # publish only what this commit stored; a redelivery publishes nothing
         pub = ctx.redis.pipeline(transaction=False)
         for f in inserted:
@@ -106,13 +137,91 @@ async def process_batch(
             )
         await pub.execute()
     ack = ctx.redis.pipeline(transaction=True)  # one MULTI: DLQ records + XACK
-    for r in results:
-        if isinstance(r, DlqRecord):
-            ack.xadd(DLQ, {"data": r.model_dump_json()})
+    for rec in dlq:
+        ack.xadd(DLQ, {"data": rec.model_dump_json()})
     ack.xack(stream, GROUP, *(eid for eid, _ in entries))
     await ack.execute()
-    ctx.dup_or_late[vehicle] += out.dup_or_late
+    ctx.dup_or_late[vehicle] += dup
     return nvs, len(inserted)
+
+
+async def _commit(
+    ctx: Ctx,
+    conn: psycopg.AsyncConnection,
+    vehicle: str,
+    frames: list[FrameHeader],
+    vs: VehicleState,
+    events: Sequence[GroundEvent],
+) -> tuple[VehicleState, int, list[FrameHeader]]:
+    """fold + one transaction: frames (LATE frames still insert), then seq/link/events/state."""
+    nvs, out = fold(vs, vehicle, frames, ctx.params)
+    out = Outcome(out.new_frames, (*events, *out.events), out.dup_or_late)
+    async with conn.transaction():  # COMMIT
+        inserted = await insert_frames(conn, frames, ctx.params)
+        await write_outcome(conn, vehicle, nvs, out)
+    return nvs, out.dup_or_late, inserted
+
+
+async def _isolate(
+    ctx: Ctx,
+    conn: psycopg.AsyncConnection,
+    stream: str,
+    items: list[Item],
+    vs: VehicleState,
+    events: list[GroundEvent],
+    now: datetime,
+) -> tuple[VehicleState, int, list[FrameHeader], list[DlqRecord]]:
+    """Re-run one frame per transaction from the pre-batch state; a frame failing RETRIES times
+    goes to the DLQ as poison, the rest commit (D-ING-04). Operational errors propagate."""
+    vehicle = stream.removeprefix("tm:")
+    dup = 0
+    inserted: list[FrameHeader] = []
+    bad: list[DlqRecord] = []
+    for eid, fields, n, frame in items:
+        why = ""
+        for _ in range(RETRIES):
+            try:
+                vs, d, ins = await _commit(ctx, conn, vehicle, [frame], vs, ())
+            except Exception as e:  # noqa: BLE001  D-ING-04: a processing exception is the frame's fault
+                if _operational(e):
+                    raise
+                why = _why(e)
+                continue
+            dup, inserted = dup + d, inserted + ins
+            break
+        else:
+            log.error("frame %s of %s failed %d times (%s); to DLQ", eid, stream, RETRIES, why)
+            bad.append(poison(fields, stream, eid, n, why, now))
+            events = [*events, _poison_event(stream, vehicle, eid, n)]
+    if events:  # extra + POISON events, which the failed batch transaction did not keep
+        async with conn.transaction():
+            await write_outcome(conn, vehicle, vs, Outcome((), tuple(events), 0))
+    return vs, dup, inserted, bad
+
+
+def _poison_event(stream: str, vehicle: str, eid: str, n: int) -> GroundEvent:
+    details = {"stream": stream, "entry_id": eid, "deliveries": n}
+    return GroundEvent(poison_key(stream, eid), vehicle, "POISON", None, details)
+
+
+def _operational(e: Exception) -> bool:
+    return isinstance(e, psycopg.Error) and pg_error_class(e.sqlstate) == "operational"
+
+
+def _why(e: Exception) -> str:
+    code = e.sqlstate if isinstance(e, psycopg.Error) and e.sqlstate else type(e).__name__
+    return f"{code}: {e}"
+
+
+async def _reset_deliveries(ctx: Ctx, stream: str, entries: list[Entry]) -> None:
+    """XCLAIM … 0 <ids> RETRYCOUNT 0 JUSTID (D-ING-24, R15 E1): times_delivered counts frames
+    that kill us, not database failures while they were in flight."""
+    try:
+        await ctx.redis.xclaim(
+            stream, GROUP, ctx.consumer, 0, [eid for eid, _ in entries], retrycount=0, justid=True
+        )
+    except redis.exceptions.RedisError as e:
+        log.warning("could not reset delivery counts of %s (%s)", stream, e)
 
 
 async def load_state(
@@ -154,6 +263,13 @@ async def _ensure_group(r: redis.asyncio.Redis, stream: str) -> None:
 
 
 async def run_vehicle(ctx: Ctx, vehicle: str, dsn: str, stop: asyncio.Event) -> None:
+    try:
+        await _run_vehicle(ctx, vehicle, dsn, stop)
+    except psycopg.Error as e:  # connect, load, silence: no batch in flight, nothing to reset
+        raise OperationalDbError(_why(e)) from e
+
+
+async def _run_vehicle(ctx: Ctx, vehicle: str, dsn: str, stop: asyncio.Event) -> None:
     stream = f"tm:{vehicle}"
     backlog, ready, backoff = True, False, BACKOFF_START_S
     async with await psycopg.AsyncConnection.connect(
@@ -172,7 +288,7 @@ async def run_vehicle(ctx: Ctx, vehicle: str, dsn: str, stop: asyncio.Event) -> 
                     GROUP,
                     ctx.consumer,
                     {stream: "0" if backlog else ">"},
-                    count=COUNT,
+                    count=1 if backlog else COUNT,  # redelivery one at a time (Review Focus 2)
                     block=None if backlog else BLOCK_MS,
                 )
                 entries: list[Entry] = [

@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import signal
+import sys
 import time
 from collections import Counter
 from dataclasses import dataclass
@@ -17,6 +18,7 @@ from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import State, serve_health
 from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
+from gs.ingest.errors import OperationalDbError
 from gs.ingest.events import insert_set
 from gs.ingest.validate import FieldStats
 from gs.ingest.worker import Ctx, run_vehicle
@@ -98,6 +100,13 @@ async def _main() -> None:
     await run(IngestSettings.from_env(), stop)
 
 
+log = logging.getLogger(__name__)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
-    asyncio.run(_main())
+    try:
+        asyncio.run(_main())
+    except* OperationalDbError as eg:  # D-ING-24: exit; locks free, restart re-reads our PEL
+        log.error("operational database error, exiting: %s", eg.exceptions[0])
+        sys.exit(1)

@@ -57,7 +57,8 @@ async def run(s: SimSettings, stop: asyncio.Event) -> None:
     r = redis.asyncio.Redis.from_url(
         s.redis_url,
         socket_timeout=2,
-        # retry OFF: send_loop owns retries, so an XADD is never silently re-sent (D-SIM-05)
+        # retry OFF: send_loop owns retries (D-SIM-05). At-least-once: a timed-out XADD may
+        # have landed and is re-sent; ingest's idempotent key dedups it (G30)
         retry=Retry(NoBackoff(), 0),
     )
 

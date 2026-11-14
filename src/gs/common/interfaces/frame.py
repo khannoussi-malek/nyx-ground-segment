@@ -1,9 +1,8 @@
 from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Self
 from uuid import UUID
 
-from pydantic import ConfigDict, ValidationInfo, create_model, model_validator
+from pydantic import ConfigDict, ValidationInfo, create_model, field_validator
 from pydantic_core import PydanticCustomError
 
 from gs.common.interfaces.base import U32, Mode, StrictModel, UtcTime, VehicleId
@@ -21,25 +20,31 @@ class FrameHeader(StrictModel):
     mode: Mode
     last_cmd_id: UUID | None
 
-    @model_validator(mode="after")
-    def _runtime_checks(self, info: ValidationInfo) -> Self:
+    # Field-level (not model-level) so these still fire when another field fails the schema:
+    # classify() needs vehicle_mismatch / t_onboard_range to outrank "schema" (D-ING-18).
+    @field_validator("vehicle")
+    @classmethod
+    def _vehicle_matches_stream(cls, v: str, info: ValidationInfo) -> str:
         ctx = info.context
-        if not ctx:  # no context: pure shape validation
-            return self
-        if self.vehicle != ctx["stream_vehicle"]:
+        if ctx and v != ctx["stream_vehicle"]:
             raise PydanticCustomError(
                 "vehicle_mismatch",
                 "vehicle {vehicle} does not match stream vehicle {stream}",
-                {"vehicle": self.vehicle, "stream": ctx["stream_vehicle"]},
+                {"vehicle": v, "stream": ctx["stream_vehicle"]},
             )
-        now: datetime = ctx["now"]
-        if not now - T_ONBOARD_PAST <= self.t_onboard <= now + T_ONBOARD_FUTURE:
+        return v
+
+    @field_validator("t_onboard")
+    @classmethod
+    def _t_onboard_in_window(cls, v: datetime, info: ValidationInfo) -> datetime:
+        ctx = info.context
+        if ctx and not ctx["now"] - T_ONBOARD_PAST <= v <= ctx["now"] + T_ONBOARD_FUTURE:
             raise PydanticCustomError(
                 "t_onboard_range",
                 "t_onboard {t} outside [now-7d, now+5min]",
-                {"t": self.t_onboard.isoformat()},
+                {"t": v.isoformat()},
             )
-        return self
+        return v
 
 
 def build_frame_model(params: Sequence[str]) -> type[FrameHeader]:

@@ -5,6 +5,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from tests.support.env import REPO
 
 BAD = "def f():\n    try:\n        g()\n    except Exception:\n        pass\n# TODO later\n"
@@ -22,7 +24,10 @@ def ruff_codes(path: Path) -> set[str]:
         text=True,
         check=False,
     )
-    return {d["code"] for d in json.loads(out.stdout)}
+    try:
+        return {d["code"] for d in json.loads(out.stdout)}
+    except json.JSONDecodeError:
+        pytest.fail(f"ruff exited {out.returncode}, not JSON: {out.stderr}")
 
 
 def test_ruff_flags_blind_except_pass_and_todo(tmp_path: Path) -> None:

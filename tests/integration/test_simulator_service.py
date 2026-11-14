@@ -30,9 +30,16 @@ def test_healthy_and_health_endpoint_on_env_port() -> None:
 @pytest.mark.usefixtures("up")
 def test_stream_grows() -> None:
     r = client("admin")
-    a = r.xlen("tm:NYX-TA1")
+
+    def newest() -> tuple[int, int]:  # XLEN stalls once the ~MAXLEN trim cap is reached
+        rows = r.xrevrange("tm:NYX-TA1", "+", "-", count=1)
+        assert rows
+        ms, seq = str(rows[0][0]).split("-")
+        return int(ms), int(seq)
+
+    a = newest()
     time.sleep(1)
-    assert r.xlen("tm:NYX-TA1") > a
+    assert newest() > a
 
 
 @pytest.mark.usefixtures("up")

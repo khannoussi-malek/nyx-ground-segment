@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
 import { ParamRow, type ParamView } from "./ParamRow";
+import type { ParamState } from "./status";
 import { VehicleCard, type VehicleCardProps } from "./VehicleCard";
 
 const T = "2026-11-14T10:00:00.000000Z";
@@ -131,4 +132,51 @@ test("LiveTable from a real store + mission db: labels and gauges, no state mark
   for (const mark of ['class="summary"', 'class="badge"', 'class="acq"', "data-level", "data-acq"]) {
     expect(html).not.toContain(mark);
   }
+});
+
+const active = (html: string) => html.match(/data-kind="\w+" data-side="\w+" data-active="true"/g) ?? [];
+
+const limit = (level: "RED" | "YELLOW", side: "LOW" | "HIGH", acq: ParamState["acq"] = "OK"): ParamState =>
+  ({ acq, level, side, check_kind: "limit" });
+
+test("a live limit alarm fills exactly the zone of its level and side (G26)", () => {
+  expect(active(row({ ...cabin, value: 94.2, state: limit("RED", "LOW") }))).toEqual([
+    'data-kind="red" data-side="LOW" data-active="true"',
+  ]);
+  expect(active(row({ ...cabin, value: 107, state: limit("RED", "HIGH") }))).toEqual([
+    'data-kind="red" data-side="HIGH" data-active="true"',
+  ]);
+  expect(active(row({ ...cabin, value: 104.5, state: limit("YELLOW", "HIGH") }))).toEqual([
+    'data-kind="yellow" data-side="HIGH" data-active="true"',
+  ]);
+});
+
+test("the fill follows the engine, not the pointer: RED HIGH held in the deadband stays filled", () => {
+  // the value is back in the yellow range, the engine has not cleared RED yet (deadband)
+  expect(active(row({ ...cabin, value: 105.2, state: limit("RED", "HIGH") }))).toEqual([
+    'data-kind="red" data-side="HIGH" data-active="true"',
+  ]);
+});
+
+test("no fill for a rate alarm, even with a side: only a limit check names a position zone", () => {
+  expect(active(row({ ...cabin, state: { acq: "OK", level: "RED", side: "HIGH", check_kind: "roc" } }))).toEqual([]);
+  expect(active(row({ ...cabin, state: { acq: "OK", level: "YELLOW", side: "LOW" } }))).toEqual([]); // kind unknown
+});
+
+test("no fill when unwired, nominal or not fresh", () => {
+  expect(active(row(cabin))).toEqual([]);
+  expect(active(row({ ...cabin, state: { acq: "OK", level: "NOMINAL", check_kind: "limit" } }))).toEqual([]);
+  for (const acq of ["STALE", "FROZEN", "NO_DATA"] as const) {
+    expect(active(row({ ...cabin, state: limit("RED", "LOW", acq) }))).toEqual([]);
+  }
+});
+
+test("an off-scale value marks its pointer with the edge it is pinned to", () => {
+  expect(row({ ...cabin, value: 200 })).toContain('class="gauge-pointer" data-clamped="1"');
+  expect(row({ ...cabin, value: -50 })).toContain('class="gauge-pointer" data-clamped="-1"');
+  expect(row(cabin)).not.toContain("data-clamped");
+});
+
+test("every hyphen in a printed limit becomes a true minus (exponents too)", () => {
+  expect(row({ ...cabin, limits: { red_low: -1e-7, red_high: 1 } })).toContain(">−1e−7<");
 });

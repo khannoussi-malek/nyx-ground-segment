@@ -27,15 +27,19 @@ const nominal = [
   row("rate_z_dps", -0.01), row("tank_pressure_bar", 19.98),
 ];
 const mixed = [
-  row("bus_current_a", 8.6, { acq: "OK", level: "YELLOW", side: "HIGH" }),
+  row("bus_current_a", 8.6, { acq: "OK", level: "YELLOW", side: "HIGH", check_kind: "limit" }),
   row("bus_voltage_v", 28.07),
-  row("cabin_pressure_kpa", 94.2, { acq: "OK", level: "RED", side: "LOW" }),
+  row("cabin_pressure_kpa", 94.2, { acq: "OK", level: "RED", side: "LOW", check_kind: "limit" }),
   row("cabin_temp_c", 21.94, { acq: "FROZEN", level: "NOMINAL" }),
-  row("rate_x_dps", 5.8, { acq: "STALE", level: "RED", side: "HIGH" }),
+  row("rate_x_dps", 6.8, { acq: "STALE", level: "RED", side: "HIGH", check_kind: "limit" }), // off the scale
   row("rate_y_dps", 0.01),
   row("rate_z_dps", null, { acq: "NO_DATA", level: "NOMINAL" }),
   row("tank_pressure_bar", 20.01),
 ];
+// G26: the engine holds RED HIGH in the deadband while the value is already back in the yellow range
+const deadband = nominal.map((p) =>
+  p.id === "tank_pressure_bar" ? { ...p, value: 24.3, state: { acq: "OK", level: "RED", side: "HIGH", check_kind: "limit" } as const } : p,
+);
 const card = { mode: "TEST", seq: 24290, tOnboard: T };
 
 createRoot(document.getElementById("root")!).render(
@@ -47,7 +51,7 @@ createRoot(document.getElementById("root")!).render(
     </header>
     <main>
       <VehicleCard vehicle="NYX-TA1" {...card} ageMs={340} params={mixed} statesWired />
-      <VehicleCard vehicle="NYX-TA2" {...card} ageMs={420} params={nominal} statesWired />
+      <VehicleCard vehicle="NYX-TA2" {...card} ageMs={420} params={deadband} statesWired />
       <VehicleCard vehicle="NYX-TA2" {...card} ageMs={4_800} params={nominal} banner="LOSS OF SIGNAL" />
       <VehicleCard vehicle="NYX-TA1" {...card} ageMs={360} params={nominal.map(({ state: _, ...p }) => p)} />
     </main>

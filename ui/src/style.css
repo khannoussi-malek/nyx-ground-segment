@@ -26,10 +26,13 @@
   --action-hover: #E0C410;
   --on-action: #0E0E0E;
 
-  /* limit gauge: grey zones, position only; the alarm engine owns state colour (G20) */
-  --zone-normal: #E9E5E0;
-  --zone-yellow: #858079; /* the yellow range, in grey */
-  --zone-red: #343230; /* the red range, in grey */
+  /* limit gauge at rest: grey only, zones told apart by pattern (D-UI-07, G20);
+     a zone takes its state colour only while the engine reports it live */
+  --zone-normal: #FFFFFF; /* where the value should be */
+  --zone-base: #ECE9E5; /* between the stripes */
+  --zone-yellow-stripe: #948E87; /* sparse stripes: the yellow range */
+  --zone-red-stripe: #3E3B38; /* dense stripes: the red range */
+  --gauge-edge: #857F78; /* track outline */
   --gauge-pointer: #0E0E0E;
   --gauge-halo: #F8F8F8;
 
@@ -195,11 +198,28 @@ td.value { white-space: nowrap; text-align: right; }
 /* limit gauge: full card width, grey zones, pointer above, outer limits printed below */
 tr.gauge-row > td { padding-top: 0; padding-bottom: 0.75rem; }
 .gauge { position: relative; height: 2.25rem; }
-.gauge-track { position: absolute; left: 0; right: 0; top: 0.625rem; height: 0.5rem; border-radius: 2px; overflow: hidden; }
+.gauge-track {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0.625rem;
+  height: 0.625rem;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.gauge-track::after { /* edge drawn last, above the positioned zones, so a white edge zone still has one */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border: 1px solid var(--gauge-edge);
+  border-radius: inherit;
+}
 .zone { position: absolute; top: 0; bottom: 0; }
 .zone[data-kind="normal"] { background: var(--zone-normal); }
-.zone[data-kind="yellow"] { background: var(--zone-yellow); }
-.zone[data-kind="red"] { background: var(--zone-red); }
+.zone[data-kind="yellow"] { background: repeating-linear-gradient(135deg, var(--zone-yellow-stripe) 0 2px, var(--zone-base) 2px 6px); }
+.zone[data-kind="red"] { background: repeating-linear-gradient(135deg, var(--zone-red-stripe) 0 3px, var(--zone-base) 3px 5px); }
+.zone[data-kind="yellow"][data-active] { background: repeating-linear-gradient(135deg, var(--yellow-ink) 0 2px, var(--yellow) 2px 6px); }
+.zone[data-kind="red"][data-active] { background: var(--red); }
 .gauge-pointer { position: absolute; top: 0; }
 .gauge-pointer::before { /* triangle above the track */
   content: "";
@@ -219,6 +239,9 @@ tr.gauge-row > td { padding-top: 0; padding-bottom: 0.75rem; }
   background: var(--gauge-pointer);
   box-shadow: 0 0 0 1.5px var(--gauge-halo);
 }
+.gauge-pointer[data-clamped]::before { top: 0.5rem; border: 6px solid transparent; }
+.gauge-pointer[data-clamped="-1"]::before { left: -10px; border-right: 8px solid var(--gauge-pointer); border-left: 0; }
+.gauge-pointer[data-clamped="1"]::before { left: 2px; border-left: 8px solid var(--gauge-pointer); border-right: 0; }
 .gauge-mark {
   position: absolute;
   top: 1.375rem;

@@ -43,13 +43,19 @@ const PAIRS: [string, string, number][] = [
   ["on-bar-muted", "bar", 4.5],
   ["on-action", "action-hover", 4.5],
   ["action", "bar", 3],
-  // limit gauge (G20: grey only): neighbouring zones and the pointer on every zone (WCAG 1.4.11)
-  ["zone-yellow", "zone-normal", 3],
-  ["zone-red", "zone-yellow", 3],
+  // limit gauge at rest, grey only (D-UI-07, G20); patterns tell the zones apart (WCAG 1.4.11)
+  ["gauge-edge", "surface", 3], // the track outline: a white edge zone still shows
+  ["zone-yellow-stripe", "zone-normal", 3],
+  ["zone-red-stripe", "zone-yellow-stripe", 3],
   ["gauge-pointer", "surface", 3],
   ["gauge-pointer", "zone-normal", 3],
-  ["gauge-pointer", "zone-yellow", 3],
-  ["gauge-halo", "zone-red", 3], // the needle's light outline carries it over the darkest zone
+  ["gauge-pointer", "zone-base", 3],
+  ["gauge-pointer", "zone-yellow-stripe", 3],
+  ["gauge-halo", "zone-red-stripe", 3], // the needle's light outline carries it over dark stripes
+  // the engine's live limit state fills its zone (G26)
+  ["yellow-ink", "yellow", 3], // stripes in the filled yellow zone
+  ["gauge-pointer", "yellow", 3],
+  ["gauge-halo", "red", 3], // the needle on the solid red zone
   ["ink", "surface", 4.5], // printed limits
   ["ink", "yellow", 4.5],
   ["ink", "red-tint", 4.5],

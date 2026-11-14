@@ -68,3 +68,15 @@ test("the track does not move with the value, and a missing value hides the poin
   expect(gaugeOf(cabin, 99)!.zones).toEqual(gaugeOf(cabin, 105)!.zones);
   expect(gaugeOf(cabin, null)).toMatchObject({ pos: null, clamped: 0 });
 });
+
+test("yellow and red zones know their side, so the engine's state can name one", () => {
+  const g = gaugeOf(cabin, 100)!;
+  expect(g.zones.map((z) => [z.kind, z.side])).toEqual([
+    ["red", "LOW"],
+    ["yellow", "LOW"],
+    ["normal", undefined],
+    ["yellow", "HIGH"],
+    ["red", "HIGH"],
+  ]);
+  expect(gaugeOf({ yellow_high: 8, red_high: 10 }, 5)!.zones.map((z) => z.side)).toEqual([undefined, "HIGH", "HIGH"]);
+});

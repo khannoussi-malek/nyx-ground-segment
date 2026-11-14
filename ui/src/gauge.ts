@@ -6,7 +6,7 @@ export type Limits = {
   yellow_high?: number | null;
   red_high?: number | null;
 };
-export type Zone = { from: number; to: number; kind: "normal" | "yellow" | "red" };
+export type Zone = { from: number; to: number; kind: "normal" | "yellow" | "red"; side?: "LOW" | "HIGH" };
 export type Mark = { at: number; value: number }; // a limit printed under the track
 export type Gauge = {
   pos: number | null; // null: no value, no pointer
@@ -32,15 +32,15 @@ export function gaugeOf(l: Limits, value: number | null): Gauge | null {
 
   const zones: Zone[] = [];
   let x = 0;
-  const upTo = (to: number, kind: Zone["kind"]) => {
-    if (to > x) zones.push({ from: x, to, kind });
+  const upTo = (to: number, kind: Zone["kind"], side?: Zone["side"]) => {
+    if (to > x) zones.push(side ? { from: x, to, kind, side } : { from: x, to, kind });
     x = Math.max(x, to);
   };
-  if (rl != null) upTo(f(rl), "red");
-  if (yl != null) upTo(f(yl), "yellow");
+  if (rl != null) upTo(f(rl), "red", "LOW");
+  if (yl != null) upTo(f(yl), "yellow", "LOW");
   upTo((yh ?? rh) == null ? 1 : f((yh ?? rh)!), "normal");
-  if (yh != null) upTo(rh == null ? 1 : f(rh), "yellow");
-  upTo(1, "red"); // no-op when the high side has no red
+  if (yh != null) upTo(rh == null ? 1 : f(rh), "yellow", "HIGH");
+  upTo(1, "red", "HIGH"); // no-op when the high side has no red
 
   const marks = [lo0, hi0].filter((v): v is number => v != null).map((v) => ({ at: f(v), value: v }));
 

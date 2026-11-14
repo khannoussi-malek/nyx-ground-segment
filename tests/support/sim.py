@@ -3,12 +3,19 @@
 import asyncio
 import json
 import random
+import socket
+import urllib.error
+import urllib.request
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import redis.exceptions
 
 from gs.simulator.buffer import FrameBuffer, send_loop
 from gs.simulator.frames import tick_loop
+from gs.simulator.main import SimSettings, run
+from tests.support.env import dotenv
+from tests.support.redisx import HOST, client
 
 EPOCH = datetime(2026, 11, 14, 10, tzinfo=UTC)
 
@@ -59,3 +66,55 @@ async def drive_send_loop(frames: list[str], failures: int) -> tuple[list[str], 
 
     await send_loop(buf, xadd, stop, sleep)
     return sent, sleeps
+
+
+def _fault_call(method: str, body: dict[str, object], port: int | None) -> int:
+    url = f"http://127.0.0.1:{port or dotenv()['SIM_HOST_PORT']}/sim/fault"
+    req = urllib.request.Request(url, json.dumps(body).encode(), method=method)
+    try:
+        return int(urllib.request.urlopen(req, timeout=3).status)
+    except urllib.error.HTTPError as e:
+        return e.code
+
+
+def post_fault(vehicle: str, fault: str, port: int | None = None, **params: object) -> int:
+    """POST /sim/fault on the compose sim (SIM_HOST_PORT) or `port`; returns the HTTP status."""
+    return _fault_call("POST", {"vehicle": vehicle, "fault": fault, "params": params}, port)
+
+
+def delete_fault(vehicle: str, fault: str, port: int | None = None) -> int:
+    return _fault_call("DELETE", {"vehicle": vehicle, "fault": fault}, port)
+
+
+async def run_sim_with(
+    v: str, seconds: float, at: float, fault: tuple[str, dict[str, object]]
+) -> list[str]:
+    """In-process sim for `v` on a free health port; POST `fault` at `at` s; the raw `data` of
+    every tm:<v> entry after `seconds`."""
+    with socket.socket() as sock:
+        sock.bind((HOST, 0))
+        port = sock.getsockname()[1]
+    env = dotenv()
+    url = f"redis://sim:{env['REDIS_SIM_PW']}@{HOST}:{env['REDIS_HOST_PORT']}/0"
+    stop = asyncio.Event()
+    task = asyncio.create_task(run(SimSettings(url, (v,), "1", HOST, port), stop))
+    await asyncio.sleep(at)
+    assert await asyncio.to_thread(post_fault, v, fault[0], port, **fault[1]) == 204
+    await asyncio.sleep(seconds - at)
+    stop.set()
+    await task
+    entries: Any = client("admin").xrange(f"tm:{v}")
+    return [str(f["data"]) for _, f in entries]
+
+
+def seqs_of(raws: list[str]) -> list[int]:
+    """Seqs of the entries that are valid JSON with an int seq."""
+    out = []
+    for raw in raws:
+        try:
+            seq = json.loads(raw)["seq"]
+        except ValueError, KeyError:
+            continue
+        if isinstance(seq, int):
+            out.append(seq)
+    return out

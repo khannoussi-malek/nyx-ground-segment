@@ -11,12 +11,14 @@ from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 import psycopg
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
+from gs.alarms.engine import compile_set
 from gs.common.hooks import Hooks
 from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
@@ -38,10 +40,10 @@ NO_HOOKS = Hooks()
 FAST_ENV = {"GS_TEST_HOOKS": "1", "STEAL_IDLE_MS": "3000", "RECLAIM_IDLE_MS": "3000"}
 
 
-async def ensure_set(dsn: str | None = None) -> None:
+async def ensure_set(dsn: str | None = None, mission_dir: Path = MISSION_DIR) -> None:
     """The start set row engine_state references, as main.run inserts it."""
     async with await psycopg.AsyncConnection.connect(dsn or app_dsn("gs"), autocommit=True) as c:
-        await insert_set(c, load_dir(MISSION_DIR))
+        await insert_set(c, load_dir(mission_dir))
 
 
 def make_ctx(
@@ -51,8 +53,9 @@ def make_ctx(
     vehicles: tuple[str, ...] = (),
     steal_idle_ms: int = 30_000,
     reclaim_idle_ms: int = 30_000,
+    mission_dir: Path = MISSION_DIR,
 ) -> Ctx:
-    mdb = load_dir(MISSION_DIR)
+    mdb = load_dir(mission_dir)
     return Ctx(
         consumer,
         build_frame_model(mdb.param_names),
@@ -60,7 +63,7 @@ def make_ctx(
         aclient("ingest", decode=False, retry=Retry(NoBackoff(), 0)),
         FieldStats(),
         {},
-        mdb.set_sha256,
+        compile_set(mdb),
         Counter(),
         homes or {},
         timing,
@@ -89,13 +92,16 @@ async def worker(
     steal_idle_ms: int = 30_000,
     reclaim_idle_ms: int = 30_000,
     hooks: Hooks = NO_HOOKS,
+    mission_dir: Path = MISSION_DIR,
 ) -> AsyncIterator[Running]:
     """run_vehicle tasks; `homes=None` makes every vehicle home (no start delay, no hand-back).
     A custom `dsn` must already hold the start set (see ensure_set)."""
     if dsn is None:
-        await ensure_set()
+        await ensure_set(mission_dir=mission_dir)
     homes = {v: consumer for v in vehicles} if homes is None else homes
-    ctx = make_ctx(consumer, homes, timing, tuple(vehicles), steal_idle_ms, reclaim_idle_ms)
+    ctx = make_ctx(
+        consumer, homes, timing, tuple(vehicles), steal_idle_ms, reclaim_idle_ms, mission_dir
+    )
     ctx = dataclasses.replace(ctx, hooks=hooks)
     stop, db = asyncio.Event(), dsn or app_dsn("gs")
     tasks = [asyncio.create_task(run_vehicle(ctx, v, db, stop)) for v in vehicles]
@@ -117,7 +123,7 @@ async def process_batch_once(
     try:
         async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as conn:
             await ensure_set()
-            _, n = await process_batch(ctx, conn, f"tm:{v}", entries, empty_state(ctx.set_sha256))
+            _, n = await process_batch(ctx, conn, f"tm:{v}", entries, empty_state(ctx.cset))
             return n
     finally:
         await ctx.redis.aclose()

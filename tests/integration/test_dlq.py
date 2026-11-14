@@ -10,6 +10,7 @@ import redis.asyncio
 import redis.exceptions
 from psycopg import sql
 
+from gs.alarms.engine import CompiledSet
 from gs.common.interfaces import DlqRecord, FrameHeader
 from gs.common.migrate import add_columns
 from gs.common.missiondb import load_dir
@@ -96,11 +97,15 @@ async def test_poison_neighbours_not_dlqd(monkeypatch: pytest.MonkeyPatch) -> No
     bad = [i for i, _ in read_all(v)][7]
 
     def crashing_fold(
-        vs: VehicleState, vehicle: str, frames: Sequence[FrameHeader], params: Sequence[str]
+        vs: VehicleState,
+        vehicle: str,
+        frames: Sequence[FrameHeader],
+        params: Sequence[str],
+        cset: CompiledSet,
     ) -> object:
         if any(f.seq == 7 for f in frames):
             raise Crash
-        return fold(vs, vehicle, frames, params)
+        return fold(vs, vehicle, frames, params, cset)
 
     monkeypatch.setattr(worker_mod, "fold", crashing_fold)
     for _ in range(3):  # crash every time the bad frame is read: deliveries 1, 2, 3
@@ -317,7 +322,7 @@ def xmin(table: str, where: str, *args: object) -> str:
     return str(row[0])
 
 
-async def test_isolation_keeps_reset_event_atomic(owner_trigger: Trigger) -> None:
+async def test_isolation_keeps_pending_events_atomic(owner_trigger: Trigger) -> None:
     v = owner_trigger.vehicle  # seq 5 fails with 22023
     produce(v, 3)
     async with worker([v]):
@@ -327,13 +332,10 @@ async def test_isolation_keeps_reset_event_atomic(owner_trigger: Trigger) -> Non
     produce(v, 10, start_seq=3)
     async with worker([v]):
         await until(lambda: drained(v), 5)
-    (reset,) = events_for(v, "ENGINE_STATE_RESET")
+    assert len(events_for(v, "ENGINE_STATE_RESET")) == 1  # committed at load (Task 16)
     (poisoned,) = events_for(v, "POISON")
     assert stored(v) == 12
     # pending events ride in the first per-frame commit that succeeds, not in a later write
-    assert xmin("events", "key = %s", reset["key"]) == xmin(
-        "telemetry", "vehicle = %s and seq = 3", v
-    )
     assert xmin("events", "key = %s", poisoned["key"]) == xmin(
         "telemetry", "vehicle = %s and seq = 6", v
     )

@@ -7,7 +7,7 @@ import logging
 import time
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,14 +15,25 @@ import psycopg
 import redis.asyncio
 import redis.exceptions
 
+from gs.alarms.contract import Transition
+from gs.alarms.engine import CompiledSet, initial_state, switch_set
+from gs.alarms.state import load, rebuild
 from gs.common.hooks import Hooks
 from gs.common.interfaces import DlqRecord, FrameHeader, Tm
+from gs.common.missiondb import MissionDbError
 from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
 from gs.ingest.events import GroundEvent, poison_key, reset_key
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
 from gs.ingest.link import STALE_S, on_silence
 from gs.ingest.owner import acquire, fence, release, waiting
-from gs.ingest.store import insert_frames, load_engine_row, load_seq_state, write_outcome
+from gs.ingest.store import (
+    insert_frames,
+    load_cset,
+    load_engine_row,
+    load_open_alarms,
+    load_seq_state,
+    write_outcome,
+)
 from gs.ingest.validate import FieldStats, classify, poison
 
 log = logging.getLogger(__name__)
@@ -61,7 +72,7 @@ class Ctx:
     redis: redis.asyncio.Redis
     stats: FieldStats
     loop_seen: dict[str, float]  # vehicle -> time.monotonic() of the last loop pass
-    set_sha256: str  # mission-db set the vehicle state is built with
+    cset: CompiledSet  # the mission-db set new frames are checked with
     dup_or_late: Counter[str]  # vehicle -> frames the tracker saw as duplicate or late
     homes: Mapping[str, str]  # vehicle -> home consumer (INGEST_HOMES)
     timing: Timing = Timing()
@@ -101,19 +112,18 @@ async def process_batch(
     stream: str,
     entries: list[Entry],
     vs: VehicleState,
-    extra: Sequence[GroundEvent] = (),
 ) -> tuple[VehicleState, int]:
     """One frame transaction (D-ING-22); returns the new state and the frames newly stored.
-    `extra` events (ENGINE_STATE_RESET at start) ride in the same transaction. Data errors are
-    isolated per frame (D-ING-04); an operational Postgres error rolls back, resets the batch's
-    delivery counts and raises OperationalDbError (D-ING-24). Nothing is acked on any error."""
+    Data errors are isolated per frame (D-ING-04); an operational Postgres error rolls back,
+    resets the batch's delivery counts and raises OperationalDbError (D-ING-24). Nothing is
+    acked on any error."""
     if not entries:
         return vs, 0
     deliveries = await _deliveries(ctx, stream, entries)  # before classify (R8)
     # an entry already judged poison keeps its count; resetting it would start a new crash loop
     ids = [eid for (eid, _), n in zip(entries, deliveries, strict=True) if n <= POISON_DELIVERIES]
     try:
-        return await _process(ctx, conn, stream, entries, deliveries, vs, extra)
+        return await _process(ctx, conn, stream, entries, deliveries, vs)
     except psycopg.Error as e:
         # data errors are isolated inside _process; the only Postgres work after isolation is the
         # closing events write (event inserts ON CONFLICT DO NOTHING + the state upserts that
@@ -132,12 +142,11 @@ async def _process(
     entries: list[Entry],
     deliveries: list[int],
     vs: VehicleState,
-    extra: Sequence[GroundEvent],
 ) -> tuple[VehicleState, int]:
     vehicle = stream.removeprefix("tm:")
     now = datetime.now(UTC)
     dlq: list[DlqRecord] = []
-    events = list(extra)
+    events: list[GroundEvent] = []
     items: list[Item] = []
     for (eid, fields), n in zip(entries, deliveries, strict=True):
         if n > POISON_DELIVERIES:  # D-ING-04: not processed again
@@ -189,9 +198,10 @@ async def _commit(
     vs: VehicleState,
     events: Sequence[GroundEvent],
 ) -> tuple[VehicleState, int, list[FrameHeader]]:
-    """fold + one transaction: frames (LATE frames still insert), then seq/link/events/state."""
-    nvs, out = fold(vs, vehicle, frames, ctx.params)
-    out = Outcome(out.new_frames, (*events, *out.events), out.dup_or_late)
+    """fold + one transaction: frames (LATE frames still insert), then seq/link/events, alarm
+    transitions and the engine snapshot."""
+    nvs, out = fold(vs, vehicle, frames, ctx.params, ctx.cset)
+    out = replace(out, events=(*events, *out.events))
     async with conn.transaction():  # COMMIT
         inserted = await insert_frames(conn, frames, ctx.params)
         await write_outcome(conn, vehicle, nvs, out)
@@ -264,33 +274,56 @@ async def _reset_deliveries(ctx: Ctx, stream: str, ids: list[str]) -> None:
         log.warning("could not reset delivery counts of %s (%s)", stream, e)
 
 
-async def load_state(
-    ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str
-) -> tuple[VehicleState, tuple[GroundEvent, ...]]:
-    """State at start; a row of another state version is ignored → ENGINE_STATE_RESET."""
+async def load_state(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str) -> VehicleState:
+    """State at start (D-ING-11, D-ALM-11). The snapshot is loaded with the set it was built
+    with, then switched to ctx.cset (G18). Another state version, or a snapshot or set that no
+    longer loads, is rebuilt from the open `alarms` rows + ENGINE_STATE_RESET (A-E1-5), never a
+    crash loop. What this produces commits at once, with the rewritten snapshot."""
+    cset = ctx.cset
     s = await load_seq_state(conn, vehicle)
     row = await load_engine_row(conn, vehicle)
-    if row is None or row[0] == state_version():
-        return load_vehicle(s, row[2] if row else None, ctx.set_sha256), ()
-    vs = load_vehicle(s, None, ctx.set_sha256)
-    if s is None:
-        return vs, ()
-    details = {"found_version": row[0], "version": state_version(), "epoch": s.epoch}
-    key = reset_key(vehicle, s.epoch, s.last_seq)
-    return vs, (GroundEvent(key, vehicle, "ENGINE_STATE_RESET", s.last_t, details),)
+    if row is None or s is None:  # no snapshot: initial() (D-ALM-11)
+        return load_vehicle(s, None, cset.set_sha256, initial_state(cset))
+    version, set_sha, obj = row
+    old = cset
+    if set_sha != cset.set_sha256:
+        try:
+            old = await load_cset(conn, set_sha)
+        except MissionDbError as e:  # the snapshot can't load with cset: rebuilt below
+            log.warning("stored set %s of %s no longer loads (%s)", set_sha, vehicle, e)
+    events: tuple[GroundEvent, ...] = ()
+    try:
+        if version != state_version():
+            raise ValueError(f"state version {version} != {state_version()}")
+        vs = load_vehicle(s, obj, old.set_sha256, load(obj["engine"], old))
+    except (ValueError, KeyError) as e:
+        log.warning("engine state of %s rebuilt from open alarms (%r)", vehicle, e)
+        vs = load_vehicle(
+            s, None, old.set_sha256, rebuild(await load_open_alarms(conn, vehicle), old)
+        )
+        details = {"found_version": version, "version": state_version(), "epoch": s.epoch,
+                   "reason": str(e)}  # fmt: skip
+        key = reset_key(vehicle, s.epoch, s.last_seq)
+        events = (GroundEvent(key, vehicle, "ENGINE_STATE_RESET", s.last_t, details),)
+    trs: tuple[Transition, ...] = ()
+    if old is not cset:
+        es, trs = switch_set(vs.engine, old, cset, vehicle, s.epoch, s.last_seq, s.last_t)
+        vs = replace(vs, set_sha256=cset.set_sha256, engine=es)
+    if events or trs:
+        async with conn.transaction():
+            await write_outcome(conn, vehicle, vs, Outcome((), events, 0, trs))
+    return vs
 
 
-async def _silence(
-    conn: psycopg.AsyncConnection, vehicle: str, vs: VehicleState, extra: Sequence[GroundEvent]
-) -> VehicleState:
-    """LOS after STALE_S without a new frame: LOS (+ pending `extra`) and engine_state in one
-    small transaction. Returns `vs` unchanged when no LOS was due."""
+async def _silence(conn: psycopg.AsyncConnection, vehicle: str, vs: VehicleState) -> VehicleState:
+    """LOS after STALE_S without a new frame: LOS and engine_state in one small transaction.
+    Returns `vs` unchanged when no LOS was due."""
     ls, ev = on_silence(vs.link, vehicle, vs.seq)
     if not ev:
         return vs
-    nvs = VehicleState(vs.seq, ls, vs.frozen, vs.set_sha256)
+    nvs = replace(vs, link=ls)
     async with conn.transaction():
-        await write_outcome(conn, vehicle, nvs, Outcome((), (*extra, *ev), 0))
+        await write_outcome(conn, vehicle, nvs, Outcome((), ev, 0))
     return nvs
 
 
@@ -332,7 +365,7 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
     RECLAIM_IDLE_MS under any consumer, and a non-home holder checks for hand-back (D-ING-26)."""
     stream = f"tm:{vehicle}"
     home = ctx.homes.get(vehicle)
-    vs, extra = await load_state(ctx, conn, vehicle)
+    vs = await load_state(ctx, conn, vehicle)
     ready, backoff, was_down = False, BACKOFF_START_S, False
     claim_idle: int | None = 0  # XAUTOCLAIM min-idle while draining; None = read new entries
     cursor = "0-0"
@@ -367,16 +400,12 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
                 )
                 claimed = res[0][1] if res else []
             entries: list[Entry] = [(eid.decode(), f or {}) for eid, f in claimed]
-            nvs, _ = await process_batch(ctx, conn, stream, entries, vs, extra)
-            if entries:
-                extra = ()
+            nvs, _ = await process_batch(ctx, conn, stream, entries, vs)
             if nvs.seq != vs.seq:  # a new frame advanced the tracker
                 last_new = time.monotonic()
             vs = nvs
             if time.monotonic() - last_new > ctx.timing.los_s:
-                nvs = await _silence(conn, vehicle, vs, extra)
-                if nvs is not vs:
-                    vs, extra = nvs, ()
+                vs = await _silence(conn, vehicle, vs)
             backoff = BACKOFF_START_S
             if was_down:  # R2-23: start the steal hold-off
                 ctx.reconnected_at[0], was_down = time.monotonic(), False

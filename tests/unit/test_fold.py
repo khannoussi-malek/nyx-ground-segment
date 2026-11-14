@@ -1,6 +1,8 @@
 import json
 from datetime import UTC, datetime, timedelta
 
+from gs.alarms.engine import compile_set, initial_state
+from gs.alarms.state import load
 from gs.common.interfaces import FrameHeader, build_frame_model
 from gs.common.missiondb import load_dir
 from gs.ingest.events import details_json
@@ -14,11 +16,14 @@ from gs.ingest.fold import (
 )
 from gs.ingest.link import FrozenState, LinkState
 from gs.ingest.seq import SeqState
+from gs.simulator.nominals import NOMINALS
 from tests.support.mission import MISSION_DIR
 
 V = "NYX-TA1"
 T0 = datetime(2026, 11, 14, 10, tzinfo=UTC)
-SHA = "a" * 64
+CSET = compile_set(load_dir(MISSION_DIR))
+SHA = CSET.set_sha256
+ES = initial_state(CSET)
 PARAMS = load_dir(MISSION_DIR).param_names
 MODEL = build_frame_model(PARAMS)
 
@@ -34,20 +39,20 @@ def fr(seq: int, t: float, base: float = 1.0, vary: bool = True) -> FrameHeader:
 def run(
     frames: list[FrameHeader], vs: VehicleState | None = None
 ) -> tuple[VehicleState, list[str]]:
-    vs, out = fold(vs or empty_state(SHA), V, frames, PARAMS)
+    vs, out = fold(vs or empty_state(CSET), V, frames, PARAMS, CSET)
     return vs, [e.kind for e in out.events]
 
 
 def test_dup_frames_not_new() -> None:
     frames = [fr(0, 0.0), fr(1, 0.1), fr(1, 0.1), fr(2, 0.2)]
-    _, out = fold(empty_state(SHA), V, frames, PARAMS)
+    _, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
     assert [f.seq for f in out.new_frames] == [0, 1, 2] and out.dup_or_late == 1
     assert out.events == ()
 
 
 def test_gap_reveals_los_aos_with_lost() -> None:
     frames = [fr(i, i / 10) for i in range(10)] + [fr(i, i / 10) for i in range(110, 120)]
-    vs, out = fold(empty_state(SHA), V, frames, PARAMS)
+    vs, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
     assert [e.kind for e in out.events] == ["GAP", "LOS", "AOS"]
     gap, _, aos = out.events
     assert gap.details["lost"] == 100 and aos.details["lost_frames"] == 100
@@ -56,7 +61,7 @@ def test_gap_reveals_los_aos_with_lost() -> None:
 
 def test_reset_aos_lost_unknown() -> None:
     frames = [fr(i, i / 10) for i in range(100)] + [fr(0, 15.0)]
-    _, out = fold(empty_state(SHA), V, frames, PARAMS)
+    _, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
     assert [e.kind for e in out.events] == ["SEQ_RESET", "LOS", "AOS"]
     assert out.events[2].details["lost_frames"] is None
 
@@ -93,21 +98,22 @@ VS = VehicleState(
     LinkState(True, T0, 7),
     FrozenState((1.5, None, -0.0, 3.25), 3, T0 + timedelta(seconds=0.3), False),
     SHA,
+    ES,
 )
 
 
 def test_dump_load_roundtrip() -> None:
-    assert load_vehicle(S, dump_vehicle(VS), SHA) == VS
+    assert load_vehicle(S, dump_vehicle(VS), SHA, ES) == VS
     via_json = json.loads(details_json(dump_vehicle(VS)))  # what jsonb hands back
-    assert load_vehicle(S, via_json, SHA) == VS
-    assert load_vehicle(S, None, SHA) == VehicleState(S, LinkState(), FrozenState(), SHA)
+    assert load_vehicle(S, via_json, SHA, ES) == VS
+    assert load_vehicle(S, None, SHA, ES) == VehicleState(S, LinkState(), FrozenState(), SHA, ES)
 
 
 def test_frozen_run_survives_reload() -> None:
     frames = [fr(i, i / 10, vary=False) for i in range(25)]
     vs, _ = run(frames[:15])
-    vs = load_vehicle(vs.seq, json.loads(json.dumps(dump_vehicle(vs))), SHA)
-    _, out = fold(vs, V, frames[15:], PARAMS)
+    vs = load_vehicle(vs.seq, json.loads(json.dumps(dump_vehicle(vs))), SHA, vs.engine)
+    _, out = fold(vs, V, frames[15:], PARAMS, CSET)
     ((f,),) = [out.events]
     assert (
         f.kind == "FROZEN"
@@ -122,14 +128,55 @@ def test_state_version_stable_positive() -> None:
 
 def test_seq_jump_aos_lost_unknown() -> None:  # G13, D-ING-16: counter jump ≠ lost frames
     frames = [fr(i, i / 10) for i in range(10)] + [fr(1010, 0.9 + 10.0)]
-    _, out = fold(empty_state(SHA), V, frames, PARAMS)
+    _, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
     assert [e.kind for e in out.events] == ["SEQ_JUMP", "LOS", "AOS"]
     assert out.events[0].details["lost"] == 1000 and out.events[2].details["lost_frames"] is None
 
 
 def test_in_order_aos_lost_zero() -> None:  # stale but in order: nothing lost
     frames = [fr(0, 0.0), fr(1, 5.0)]
-    _, out = fold(empty_state(SHA), V, frames, PARAMS)
+    _, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
     assert [e.kind for e in out.events] == ["LOS", "AOS"] and out.events[1].details[
         "lost_frames"
     ] == 0
+
+
+def nf(seq: int, t: float, temp: float = 22.0) -> FrameHeader:
+    """Every parameter at its design nominal, cabin_temp_c at `temp`."""
+    vals = {p: nom for p, (nom, _) in NOMINALS.items()} | {"cabin_temp_c": temp}
+    return MODEL(vehicle=V, seq=seq, t_onboard=T0 + timedelta(seconds=t), mode="TEST",
+                 last_cmd_id=None, **vals)  # fmt: skip
+
+
+def raises(frames: list[FrameHeader]) -> list[tuple[str, int | None]]:
+    _, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
+    return [(t.kind, t.trigger_seq) for t in out.transitions]
+
+
+def test_engine_raises_on_new_frames_only() -> None:  # D-ING-17: duplicates and LATE never step
+    frames = [nf(i, i / 10, 22.0 if i < 5 else 31.0) for i in range(8)]
+    assert raises(frames) == [("RAISE", 7)]
+    dup = [*frames[:6], frames[5], nf(3, 0.05, 31.0), *frames[6:]]  # a duplicate + a LATE frame
+    assert raises(dup) == [("RAISE", 7)]
+
+
+def test_gap_restarts_persistence() -> None:  # D-ALM-04: two bad frames + GAP + one ≠ three
+    pre = [nf(i, i / 10, 22.0 if i < 5 else 31.0) for i in range(7)]
+    post = [nf(i, i / 10, 31.0) for i in range(20, 23)]
+    assert raises(pre + post) == [("RAISE", 22)]
+
+
+def test_stale_restarts_persistence() -> None:  # in order, but > 2 s of vehicle time
+    pre = [nf(i, i / 10, 22.0 if i < 5 else 31.0) for i in range(7)]
+    post = [nf(i, 5.0 + i / 10, 31.0) for i in range(7, 10)]
+    assert raises(pre + post) == [("RAISE", 9)]
+
+
+def test_engine_snapshot_continues_exactly() -> None:  # D-ALM-10 at the fold level
+    frames = [nf(i, i / 10, 22.0 + i * 0.1) for i in range(120)]  # ramp through yellow, red
+    whole = fold(empty_state(CSET), V, frames, PARAMS, CSET)[1].transitions
+    vs, a = fold(empty_state(CSET), V, frames[:58], PARAMS, CSET)
+    obj = json.loads(json.dumps(dump_vehicle(vs)))
+    vs = load_vehicle(vs.seq, obj, SHA, load(obj["engine"], CSET))
+    _, b = fold(vs, V, frames[58:], PARAMS, CSET)
+    assert len(whole) >= 2 and a.transitions + b.transitions == whole

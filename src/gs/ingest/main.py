@@ -15,6 +15,7 @@ import redis.asyncio
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
+from gs.alarms.engine import compile_set
 from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import serve_health
 from gs.common.hooks import Hooks
@@ -76,7 +77,7 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
         r,
         FieldStats(),
         seen,
-        mdb.set_sha256,
+        compile_set(mdb),  # once per start (Task 17 reloads)
         Counter(),
         s.homes,
         vehicles=s.vehicles,

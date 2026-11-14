@@ -147,3 +147,24 @@ parameters:
 - **A-R8-9** (ASSUMED) Shelving, latching, suppression and re-alarm timers are out of scope.
 - **A-R8-10** (OPEN → R7) Replay seeds levels from `LEVEL` events in Postgres. Must `alarm_events` and `limits_versions` outlive the 24 h hot window, or be archived next to the Parquet files (`limits/<sha256>.yaml`)? Proposal: never prune them (small).
 - **A-R8-11** (OPEN → R7/R9) Does replay overlay the live ACKs from the audit log, or show frame-driven transitions only?
+
+## Corrections from R14 (2026-11-14)
+
+Appended after the paper-evidence round [R14](R14-paper-evidence.md) (§3 and §4). The text above is left as written; where it disagrees with this section, this section wins. Verdicts are R14's reading of the full text (PaperLab model not used); pages are PDF pages.
+
+| R8 claim | Paper | R14 verdict | Page |
+| --- | --- | --- | --- |
+| "Chattering is the main cause of alarm overload … first of four causes" | Wang, Yang, Chen & Shah 2016 | **Partly supported**: chattering is listed first of **four** main causes, not "the main cause"; for floods the true reason is "too many **correct** alarms" in a short time, from abnormality propagation. Read: "one of four main causes, listed first" | p. 1, 7, 14 (full text) |
+| Deadband trade-off: removes nuisance alarms, adds detection delay, optimum = weighted balance | Wang, Bai, Wang & Yang 2019 | **Supported (abstract only)**; owner upload recorded, full text not yet ingested | abstract |
+| Deadbands handle small deviations, delay timers short durations; a deadband followed by a timer in series handles both | Gyasi & Wang 2022 | **Supported** | p. 1–2 (full text) |
+| Delay timers **and deadbands** lower false and nuisance alarms "significantly"; detection delay traded against false/missed rates | Izadi et al. 2009 | **Partly supported**: the trade-offs yes (p. 6); "significantly" is said of delay only (p. 5); deadband is the least effective technique (p. 6). The Markov-chain analysis is also in Izadi (p. 4) | p. 4–6 (full text) |
+| Detection delay computed with Markov chains | Adnan, Izadi & Chen 2011 | **Not checkable yet**: owner upload recorded, still metadata-only in PaperLab | — |
+| Chatter can be measured from run-length distributions | Kondaveeti et al. 2010 | **Supported** | p. 3 (full text) |
+| Online method removes chattering alarms using alarm durations and intervals ("title only, not read") | Wang & Chen 2014 | **Supported**; "title only" is out of date | p. 4, p. 9 (full text) |
+| Flood: > 10 new alarms / 10 min, ends < 5 (secondary, UNVERIFIED) | Chemical Engineering magazine → Wang 2016 | **Now supported by a peer-reviewed source** (Wang 2016, citing Rothenberg 2009 and ISA/EEMUA); the "< 1 % of time in flood" target is still UNVERIFIED | Wang 2016 p. 7 |
+| §5 "Flood control comes only from per-param aggregation, deadband and persistence" | Gyasi & Wang 2022; Wang 2016; Beebe 2013 | **Contradicted**: those tools remove *false* alarms (Gyasi p. 2); floods are mostly *correct* alarms (Wang p. 7); rationalization doesn't control floods (Beebe, abstract). Read: "Nyx has no flood control; D-ALM-15 measures floods" | Gyasi p. 2, Wang p. 7 |
+| §3 persistence "is the series design in Gyasi & Wang" (values implied) | Gyasi & Wang 2022; Wang & Chen 2014; Izadi 2009 | **Structure supported, values not**: literature delays are 15 s (pressure) and 60 s (temperature) (EEMUA via Izadi p. 4) or m = 20 s by default (Wang & Chen p. 4), against Nyx's 0.3 s. N = 3 is the spec's value (ALM-03/05); the tuning study D-ALM-16 checks it on simulator noise | Izadi p. 4; Wang & Chen p. 4 |
+| "All seven papers … abstract only; no free PDFs" | — | **Out of date**: five now have full text (Wang 2016, Gyasi 2022, Izadi 2009, Kondaveeti 2010, Wang & Chen 2014) | — |
+| "Persistence filters ROC noise less than it filters level noise (derivation, UNVERIFIED by test)" | — | Still untested; D-ALM-16's N = 1..5 sweep on the ROC check tests it | — |
+
+Updated tags: Wang 2016 → `verified: full text p. 1, 7, 14`; Gyasi 2022 → `p. 1–2`; Izadi 2009 → `p. 4–6, partly`; Kondaveeti 2010 → `p. 3`; Wang & Chen 2014 → `p. 4`. Design consequences: [design.md §13](../design.md#13-research-rounds-r14--r15-disposition-with-r16-r17-r18) (D-ALM-02, D-ALM-03, D-ALM-13, D-ALM-15, D-ALM-16).

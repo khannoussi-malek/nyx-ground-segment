@@ -149,3 +149,9 @@ def gapless(seqs: Sequence[int]) -> bool:
     return all(
         b == (a + 1) % 2**32 or b <= RESET_SEQ_MAX for a, b in zip(seqs, seqs[1:], strict=False)
     )
+
+
+def rows(sql: str, *args: object, db: str = "gs") -> list[dict[str, Any]]:
+    """An app-role query on `db`, rows as dicts."""
+    with psycopg.connect(app_dsn(db), row_factory=dict_row) as c:
+        return c.execute(sql, args).fetchall()

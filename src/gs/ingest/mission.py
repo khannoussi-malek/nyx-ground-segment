@@ -32,22 +32,16 @@ def observe(p: Poll, hashes: Hashes, active: Hashes) -> tuple[Poll, bool]:
     return Poll(hashes), hashes == p.last and hashes != active
 
 
-def validate_set(
-    raw: tuple[bytes, bytes, bytes], columns: Collection[str], active: MissionDb | None
-) -> MissionDb:
+def validate_set(raw: tuple[bytes, bytes, bytes], columns: Collection[str]) -> MissionDb:
+    """The same verdict at start and on reload (G31): a rule that depends on the active set
+    would let a restarted worker run a set its peer rejects. The hazardous true→false rule
+    protects the command path and lives in the API's own reload (day 3)."""
     mdb = load(*raw)
     for p in mdb.param_names:
         if p not in columns:
             raise MissionDbError(
                 "parameters.yaml", f"parameter {p} has no telemetry column: run make migrate"
             )
-    if active is not None:
-        for name, c in active.commands.items():
-            new = mdb.commands.get(name)
-            if c.hazardous and new is not None and not new.hazardous:
-                raise MissionDbError(
-                    "commands.yaml", f"{name}: hazardous true→false needs a restart"
-                )
     return mdb
 
 
@@ -100,7 +94,7 @@ async def start_set(
     raw: tuple[bytes, bytes, bytes] | None = None
     try:
         raw = _read_raw(mission_dir)
-        mdb = validate_set(raw, cols, None)
+        mdb = validate_set(raw, cols)
     except MissionDbError as e:
         err = e
     else:
@@ -114,7 +108,7 @@ async def start_set(
     ).fetchall()
     for row in rows:
         try:
-            old = validate_set((row[0].encode(), row[1].encode(), row[2].encode()), cols, None)
+            old = validate_set((row[0].encode(), row[1].encode(), row[2].encode()), cols)
         except MissionDbError:
             continue
         # unreadable files: hash what we could not read as empty so the key stays deterministic
@@ -180,7 +174,7 @@ class MissionWatcher:
         elif not ready:
             return
         try:
-            mdb = validate_set(raw, await telemetry_columns(conn), self._current)
+            mdb = validate_set(raw, await telemetry_columns(conn))
         except MissionDbError as e:
             await insert_events(conn, [_rejected(raw, e)])  # key dedups across workers
             self._rejected = (hashes, time.monotonic())

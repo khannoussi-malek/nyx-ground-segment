@@ -33,8 +33,8 @@ def row(table: str, v: str) -> dict[str, Any] | None:
         return c.execute(f"select * from {table} where vehicle=%s", (v,)).fetchone()  # noqa: S608
 
 
-def kinds(v: str) -> list[str]:
-    return [e["kind"] for e in events_for(v)]
+def kinds(v: str) -> list[str]:  # LIMITS_APPLIED (first frame of a set, Task 17) left out
+    return [e["kind"] for e in events_for(v) if e["kind"] != "LIMITS_APPLIED"]
 
 
 def redeliver_last(v: str, n: int) -> None:

@@ -10,10 +10,10 @@ up: env
 	docker compose up -d --build --wait
 
 down:
-	docker compose --profile ingest2 down   # opt-in ingest-2 must not survive `down`
+	docker compose down
 
 reset:
-	docker compose --profile ingest2 down -v && rm -f .env users.yaml redis/users.acl
+	docker compose down -v && rm -f .env users.yaml redis/users.acl
 
 migrate:
 	docker compose run --rm migrate

@@ -1,6 +1,6 @@
 """Response bodies of GET /api/vehicles and GET /api/mission-db (D-EXT-01, ruling G20)."""
 
-from pydantic import ConfigDict, SerializeAsAny
+from pydantic import ConfigDict
 
 from gs.common.interfaces.base import StrictModel, VehicleId
 from gs.common.missiondb import CheckItem, Command, MissionDb, ParameterEntry
@@ -16,9 +16,7 @@ class Vehicles(_Resp):
 
 
 class LimitView(_Resp):
-    # SerializeAsAny: a check is dumped as its own kind (LimitCheck, RocCheck), not as the
-    # CheckConfig base, which would drop red_low, limit_per_s and the rest
-    checks: list[SerializeAsAny[CheckItem]]
+    checks: list[CheckItem]  # CheckItem dumps as its own kind (G21)
 
 
 class MissionDbView(_Resp):

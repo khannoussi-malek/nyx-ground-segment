@@ -9,7 +9,7 @@ import re
 from collections.abc import Hashable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Any, Literal
+from typing import Annotated, Any, Literal
 
 import yaml
 from pydantic import (
@@ -18,6 +18,7 @@ from pydantic import (
     Field,
     GetJsonSchemaHandler,
     PlainValidator,
+    SerializeAsAny,
     ValidationError,
     model_validator,
 )
@@ -93,12 +94,11 @@ class _ChecksUnionSchema:
         return handler(core_schema.tagged_union_schema(choices, discriminator="type"))
 
 
-if TYPE_CHECKING:
-    # ponytail: static view = the shipped kinds, so `c.type == "limit"` narrows for callers
-    # (tests/unit/test_sim_matches_mission_db.py); a plug-in kind is a CheckConfig at runtime
-    CheckItem = LimitCheck | RocCheck
-else:
-    CheckItem = Annotated[CheckConfig, PlainValidator(_check_item), _ChecksUnionSchema()]
+# SerializeAsAny: a dump keeps the item's own kind (red_low, limit_per_s, …), not just the
+# CheckConfig base fields (ruling G21); callers narrow with isinstance (G8)
+CheckItem = Annotated[
+    CheckConfig, PlainValidator(_check_item), _ChecksUnionSchema(), SerializeAsAny()
+]
 
 
 class LimitEntry(_M):

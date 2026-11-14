@@ -18,11 +18,10 @@ from redis.backoff import NoBackoff
 from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import serve_health
 from gs.common.hooks import Hooks
-from gs.common.interfaces import build_frame_model
-from gs.common.missiondb import load_dir
 from gs.ingest.errors import OperationalDbError
-from gs.ingest.events import insert_set
+from gs.ingest.events import insert_events
 from gs.ingest.liveness import ingest_status, refresh_memory, run_ticks
+from gs.ingest.mission import MissionWatcher, start_set
 from gs.ingest.owner import parse_homes
 from gs.ingest.validate import FieldStats
 from gs.ingest.worker import SOCKET_TIMEOUT_S, Ctx, run_vehicle
@@ -59,9 +58,11 @@ class IngestSettings:
 
 
 async def run(s: IngestSettings, stop: asyncio.Event) -> None:
-    mdb = load_dir(Path(s.mission_db))
     async with await psycopg.AsyncConnection.connect(s.database_url, autocommit=True) as conn:
-        await insert_set(conn, mdb)  # engine_state.set_sha256 references it
+        # stores the set (engine_state.set_sha256 references it) or falls back (D-ALM-12)
+        mdb, rejected = await start_set(conn, Path(s.mission_db))
+        await insert_events(conn, rejected)
+    watcher = MissionWatcher(Path(s.mission_db), s.database_url, s.consumer_name, mdb)
     # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
     # no client-side retry: every connection error must reach run_vehicle's backoff loop, which
     # re-reads our PEL and never re-sends a non-idempotent XADD behind our back (D-ING-03/08)
@@ -71,12 +72,10 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
     seen: dict[str, float] = {}  # a standby task (lock not granted) is not a stale loop
     ctx = Ctx(
         s.consumer_name,
-        build_frame_model(mdb.param_names),
-        mdb.param_names,
+        lambda: watcher.current,
         r,
         FieldStats(),
         seen,
-        mdb.set_sha256,
         Counter(),
         s.homes,
         vehicles=s.vehicles,
@@ -95,6 +94,7 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
             for v in s.vehicles:
                 tg.create_task(run_vehicle(ctx, v, s.database_url, stop))
             tg.create_task(run_ticks(ctx, s.database_url, stop, watchdog=True))
+            tg.create_task(watcher.run(stop))
     finally:
         server.close()
         await server.wait_closed()

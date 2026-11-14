@@ -1,4 +1,5 @@
-"""Frame-transaction writers: idempotent telemetry (D-ING-13), seq_state, events, engine_state."""
+"""Frame-transaction writers: idempotent telemetry (D-ING-13), seq_state, events, alarm rows,
+engine_state."""
 
 from collections.abc import Sequence
 from typing import Any
@@ -7,7 +8,10 @@ import psycopg
 from psycopg import sql
 from psycopg.types.json import Jsonb
 
+from gs.alarms.contract import Level, OpenAlarm, Transition
+from gs.alarms.engine import CompiledSet, compile_set
 from gs.common.interfaces import FrameHeader
+from gs.common.missiondb import load
 from gs.ingest.events import insert_events
 from gs.ingest.fold import Outcome, VehicleState, dump_vehicle, state_version
 from gs.ingest.seq import SeqState
@@ -60,10 +64,95 @@ async def load_engine_row(
     return None if row is None else (row[0], row[1], row[2])
 
 
+async def load_open_alarms(conn: psycopg.AsyncConnection, vehicle: str) -> list[OpenAlarm]:
+    cur = await conn.execute(
+        "SELECT alarm_id, param, state, severity, acked_sev, trigger_check, opened_at FROM alarms"
+        " WHERE vehicle = %s AND state <> 'CLEARED'",
+        (vehicle,),
+    )
+    return [
+        OpenAlarm(aid, p, st, Level[sev], None if acked is None else Level[acked], trig, opened)
+        for aid, p, st, sev, acked, trig, opened in await cur.fetchall()
+    ]
+
+
+async def load_cset(conn: psycopg.AsyncConnection, set_sha256: str) -> CompiledSet:
+    """The compiled set stored in limits_versions; MissionDbError if it no longer validates."""
+    cur = await conn.execute(
+        "SELECT limits_yaml, commands_yaml, parameters_yaml FROM limits_versions"
+        " WHERE set_sha256 = %s",
+        (set_sha256,),
+    )
+    row = await cur.fetchone()
+    if row is None:  # engine_state.set_sha256 references the table: only a bug gets here
+        raise LookupError(f"no limits_versions row {set_sha256}")
+    return compile_set(load(*(t.encode() for t in row)))
+
+
+# severity keeps the alarm's last non-NOMINAL value on RTN/CLEAR (ruling G17: the column is
+# YELLOW|RED only); limits_sha256 comes from the set row, so it always matches set_sha256
+_UPSERT_ALARM = """
+INSERT INTO alarms (alarm_id, vehicle, param, state, severity, acked_sev, trigger_check,
+                    limits_sha256, set_sha256, opened_at, closed_at)
+VALUES (%(alarm_id)s, %(vehicle)s, %(param)s, %(state)s,
+        COALESCE(%(severity)s, (SELECT severity FROM alarms WHERE alarm_id = %(alarm_id)s)),
+        %(acked_sev)s, %(trigger_check)s,
+        (SELECT limits_sha256 FROM limits_versions WHERE set_sha256 = %(set_sha256)s),
+        %(set_sha256)s, %(opened_at)s, %(closed_at)s)
+ON CONFLICT (alarm_id) DO UPDATE SET state = EXCLUDED.state, severity = EXCLUDED.severity,
+  acked_sev = EXCLUDED.acked_sev, trigger_check = EXCLUDED.trigger_check,
+  limits_sha256 = EXCLUDED.limits_sha256, set_sha256 = EXCLUDED.set_sha256,
+  closed_at = EXCLUDED.closed_at
+"""
+_INSERT_ALARM_EVENT = """
+INSERT INTO alarm_events (key, alarm_id, vehicle, param, kind, check_kind, level, severity,
+                          trigger_seq, trigger_t_onboard, by_user, note, alert,
+                          limits_sha256, set_sha256)
+VALUES (%(key)s, %(alarm_id)s, %(vehicle)s, %(param)s, %(kind)s, %(check_kind)s, %(level)s,
+        %(event_severity)s, %(trigger_seq)s, %(trigger_t)s, %(by_user)s, %(note)s, %(alert)s,
+        (SELECT limits_sha256 FROM limits_versions WHERE set_sha256 = %(set_sha256)s),
+        %(set_sha256)s)
+ON CONFLICT (key) DO NOTHING
+"""
+
+
+async def write_transitions(
+    conn: psycopg.AsyncConnection, set_sha256: str, transitions: Sequence[Transition]
+) -> None:
+    """alarms row, then its alarm_events row (FK), per transition in engine order."""
+    for t in transitions:
+        sev = None if t.severity == Level.NOMINAL else t.severity.name
+        p = {
+            "alarm_id": t.alarm_id,
+            "vehicle": t.vehicle,
+            "param": t.param,
+            "state": t.alarm_state,
+            "severity": sev,
+            "event_severity": t.severity.name,
+            "acked_sev": None if t.acked_sev is None else t.acked_sev.name,
+            "trigger_check": t.trigger_check,
+            "set_sha256": set_sha256,
+            "opened_at": t.opened_at,
+            "closed_at": t.closed_at,
+            "key": t.key,
+            "kind": t.kind,
+            "check_kind": t.check_kind,
+            "level": t.level,
+            "trigger_seq": t.trigger_seq,
+            "trigger_t": t.trigger_t,
+            "by_user": t.by_user,
+            "note": t.note,
+            "alert": t.alert,
+        }
+        await conn.execute(_UPSERT_ALARM, p)
+        await conn.execute(_INSERT_ALARM_EVENT, p)
+
+
 async def write_outcome(
     conn: psycopg.AsyncConnection, vehicle: str, vs: VehicleState, outcome: Outcome
 ) -> None:
-    """Inside the caller's frame transaction (D-ING-15/22): seq_state, events, engine_state."""
+    """Inside the caller's frame transaction (D-ING-15/22): seq_state, events, alarm
+    transitions (built with vs.set_sha256), engine_state."""
     s = vs.seq
     if s is not None:
         await conn.execute(
@@ -74,7 +163,9 @@ async def write_outcome(
             (vehicle, s.epoch, s.last_seq, s.last_t, s.period_s),
         )
     await insert_events(conn, outcome.events)
-    if s is not None:  # a vehicle with no frame yet has no state to keep
+    await write_transitions(conn, vs.set_sha256, outcome.transitions)
+    # no frame yet, or no set applied yet ("": seq_state without a snapshot): nothing to keep
+    if s is not None and vs.set_sha256:
         await conn.execute(
             "INSERT INTO engine_state (vehicle, last_seq, epoch, set_sha256, schema_version, state)"
             " VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (vehicle) DO UPDATE SET"

@@ -37,19 +37,12 @@ def _raw(d: Path) -> tuple[bytes, bytes, bytes]:
     return b[0], b[1], b[2]
 
 
-def test_hazardous_downgrade_rejected_on_reload(tmp_path: Path) -> None:
-    active = load_dir(MISSION_DIR)
+def test_hazardous_downgrade_is_not_an_ingest_rule(tmp_path: Path) -> None:  # G31
+    # ingest validates one way at start and on reload (no active-set rule), so two workers
+    # can't end up on different sets; the rule belongs to the API's own reload (day 3)
     m = mission_copy(tmp_path)
     edit(m / "commands.yaml", "hazardous: true", "hazardous: false")
-    with pytest.raises(MissionDbError, match="hazardous true→false needs a restart") as ei:
-        validate_set(_raw(m), active.param_names, active)
-    assert ei.value.file == "commands.yaml"
-
-
-def test_hazardous_downgrade_allowed_at_start(tmp_path: Path) -> None:
-    m = mission_copy(tmp_path)
-    edit(m / "commands.yaml", "hazardous: true", "hazardous: false")
-    mdb = validate_set(_raw(m), load_dir(m).param_names, None)
+    mdb = validate_set(_raw(m), load_dir(m).param_names)
     assert mdb.commands["vent_cabin"].hazardous is False
 
 
@@ -61,4 +54,4 @@ def test_unmigrated_param_rejected(tmp_path: Path) -> None:
     with pytest.raises(
         MissionDbError, match="cabin_humidity_pct has no telemetry column: run make migrate"
     ):
-        validate_set(_raw(m), cols, None)
+        validate_set(_raw(m), cols)

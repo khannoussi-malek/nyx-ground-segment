@@ -39,9 +39,9 @@ def test_lock_holder_ignores_a_waiter() -> None:
     holder = psycopg.connect(app_dsn("gs"), autocommit=True, application_name="holder-x")
     waiter = psycopg.connect(app_dsn("gs"), autocommit=True, application_name="waiter-x")
     t = threading.Thread(target=lambda: waiter.execute(key, (v,)))
+    holder.execute(key, (v,))
+    t.start()  # before the try: a setup failure is not masked by joining an unstarted thread
     try:
-        holder.execute(key, (v,))
-        t.start()
         wait_until(lambda: _waiting("waiter-x"), timeout=5)  # granted = false in pg_locks
         assert lock_holder(v) == "holder-x"  # fails without the `granted` filter
     finally:

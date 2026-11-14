@@ -99,7 +99,7 @@ def time_base() -> datetime:
 
 
 def frame(v: str, seq: int, base: datetime | None = None) -> str:
-    """One valid simulator frame; t_onboard is `base` (default: a minute ago) plus 100 ms per seq."""
+    """One valid simulator frame; t_onboard is `base` (default a minute ago) + 100 ms*seq."""
     t = (base or time_base()) + timedelta(milliseconds=100 * seq)
     return make_frame(v, seq, t, random.Random(seq))
 

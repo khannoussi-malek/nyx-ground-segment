@@ -17,3 +17,4 @@ dist/
 users.yaml
 
 .DS_Store
+.superpowers/

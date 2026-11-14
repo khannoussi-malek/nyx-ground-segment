@@ -1,6 +1,6 @@
 # Bug log (D-ENG-19)
 
-Real bugs that tests or review caught on the Gate 2 thin-slice branch.
+Real bugs that tests or review caught on the Gate 2 thin-slice branch and in Gate 3a (day 2, from the first Gate 3a row down).
 
 | Date | Failing test | What it caught | Fix commit |
 |---|---|---|---|
@@ -11,3 +11,12 @@ Real bugs that tests or review caught on the Gate 2 thin-slice branch.
 | 2026-11-14 | Review + new loader tests (Task 6) | An unhashable YAML key raised a bare `TypeError` and deep nesting raised `RecursionError`, both escaping the safe loader | `b564bde` |
 | 2026-11-14 | Review (Task 3) | The audit-log triggers were untested (only grants were); a trigger test was added | `2b48695` |
 | 2026-11-14 | CI e2e `make up && make down && make up` (run 43591332834), then `test_minio_init_survives_minio_setup_restart` (RED before the fix) | Bitnami MinIO runs a temporary server during setup that passes the health check, then stops it; `minio-init` connected in the gap and got "connection refused", so a restart of the stack failed at random | this commit (bounded retry in `minio-init`) |
+| 2026-11-14 | `tests/system/test_make_down.py::test_down_removes_opt_in_ingest_2` (Task 2, RED before the fix) | `make down` left a created-but-stopped `ingest-2` behind, because plain `docker compose down` ignores profile services | `a2f6e59` (`--profile ingest2` on `down` and `reset`) |
+| 2026-11-14 | `tests/integration/test_simulator_service.py::test_stream_grows` (Task 1, ruling G4) | The test compared `XLEN`, which stops growing once the simulator's `MAXLEN` cap is reached (about 10 h of uptime); a Gate 2 test bug | `c8f0f6e` (compares the newest stream id) |
+| 2026-11-14 | Review + `test_periodic_loss_still_raises` (Task 4, G15) | The alarm engine never raised on periodic frame loss (1 frame in 4): the frame that revealed a gap was not classified, so the persistence ring never reached N = 3 | `fdc155b` |
+| 2026-11-14 | `test_param_without_checks_is_skipped` (Task 4, G16) | A parameter with `checks: []` crashed `step` on every frame | `fdc155b` |
+| 2026-11-14 | `tests/integration/test_frame_txn.py::test_redis_outage_is_not_los` (Task 8) | After every Redis outage longer than 2 s the worker wrote a false LOS and an AOS with 0 lost frames; the reset event was also dropped while the link was silent (`test_reset_event_written_while_silent`) | `be5c06e` |
+| 2026-11-14 | `tests/integration/test_ownership.py::test_cancelled_acquire_ends_the_server_wait` (Task 10, hung before the fix) | Cancelling a task blocked in `pg_advisory_lock` hung the whole process: leaving `async with conn` waited for a query that never ended | `f772336` (cancel the server-side wait, 2 s bound added in `1b8dd19`) |
+| 2026-11-14 | Review (Task 11, critical) + `tests/integration/test_liveness.py::test_no_steal_right_after_own_reconnect`, `::test_steal_needs_the_same_holder_twice` | The first good tick after a Redis outage stole with no hold-off, and the hold-off was shorter than a healthy holder's own reconnect in CI, so two workers could steal from each other; a steal also acted on a stale consumer `idle` after a takeover or hand-back | `a986b74` |
+| 2026-11-14 | Review (Task 13) + `tests/integration/test_hooks_ingest.py::test_after_fence_before_read_is_before_the_read` | `after_fence_before_read` fired on the takeover drain, not before the new-entries read, so the `stop_after_fence` test proved nothing | `7bef87a` |
+| 2026-11-14 | Task 13 hung-owner proofs + `tests/unit/test_steal_decision.py::test_watchdog_timeout_is_the_remaining_budget` (G27) | The watchdog re-armed with the full 30 s each pass, so a hung loop could take up to 60 s to be killed | `a80f3fb` |

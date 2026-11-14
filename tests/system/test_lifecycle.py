@@ -29,8 +29,7 @@ def test_up_down_up_keeps_env_and_logins() -> None:
     )
     assert r.status_code == 204
     states = compose_ps()
-    opt_in = ONE_SHOTS + ("ingest-2",)  # ingest-2 is not part of `make up` until ownership lands
-    unhealthy = {n for n, s in states.items() if n not in opt_in and s["Health"] != "healthy"}
+    unhealthy = {n for n, s in states.items() if n not in ONE_SHOTS and s["Health"] != "healthy"}
     assert not unhealthy
     assert {n: states[n]["ExitCode"] for n in ONE_SHOTS} == {"migrate": 0, "minio-init": 0}
 

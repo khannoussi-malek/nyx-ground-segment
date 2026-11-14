@@ -5,7 +5,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from tests.support.compose import api_url, compose, recreate
+from tests.support.compose import api_url, recreate
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -24,5 +24,4 @@ def fast_ingest() -> Iterator[None]:
     both = ["ingest-1", "ingest-2"]
     recreate(both, {"GS_TEST_HOOKS": "1", "STEAL_IDLE_MS": "3000", "RECLAIM_IDLE_MS": "3000"})
     yield
-    recreate(["ingest-1"])  # defaults from compose
-    compose("stop", "ingest-2")  # opt-in service stays stopped (G1)
+    recreate(both)  # defaults from compose

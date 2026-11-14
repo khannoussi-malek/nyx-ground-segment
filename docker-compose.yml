@@ -107,9 +107,6 @@ services:
       retries: 15
   ingest-2:
     <<: *ingest
-    # opt-in until Track B's ownership lock lands: two lock-less workers interleave one vehicle's
-    # frames. Remove this line there.
-    profiles: ["ingest2"]
     environment: {<<: *ingest-env, CONSUMER_NAME: ingest-2}
   api:
     <<: *app

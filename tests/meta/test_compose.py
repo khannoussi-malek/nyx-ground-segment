@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from tests.support.compose import ONE_SHOTS, PROFILE_ENV, compose_config
+from tests.support.compose import ONE_SHOTS, compose_config
 from tests.support.env import REPO, dotenv
 
 APP = {"migrate", "simulator", "ingest-1", "ingest-2", "api"}
@@ -154,10 +154,9 @@ def test_ingest_defaults(services: dict[str, dict[str, Any]]) -> None:
         assert env["CONSUMER_NAME"] == svc
 
 
-def test_ingest_2_is_opt_in_until_ownership_lands(services: dict[str, dict[str, Any]]) -> None:
-    """G1: two lock-less workers would interleave one vehicle's frames; Track B removes this."""
-    assert services["ingest-2"]["profiles"] == ["ingest2"]
-    assert "profiles" not in services["ingest-1"]
+def test_both_ingest_workers_run_by_default(services: dict[str, dict[str, Any]]) -> None:
+    """G1/G5: with the ownership lock both workers start with `make up`."""
+    assert "profiles" not in services["ingest-2"] and "profiles" not in services["ingest-1"]
 
 
 def test_image_tag_is_per_worktree() -> None:
@@ -167,7 +166,7 @@ def test_image_tag_is_per_worktree() -> None:
     out = subprocess.run(
         ["docker", "compose", "config", "--format", "json"],
         cwd=REPO,
-        env={**os.environ, **PROFILE_ENV, "GS_IMAGE_TAG": "x"},
+        env={**os.environ, "GS_IMAGE_TAG": "x"},
         capture_output=True,
         text=True,
         check=True,

@@ -1,4 +1,3 @@
-import os
 import subprocess
 import time
 from collections.abc import Iterator
@@ -6,7 +5,6 @@ from collections.abc import Iterator
 import psycopg
 import pytest
 
-from tests.support.compose import PROFILE_ENV
 from tests.support.env import sh
 from tests.support.pg import app_dsn
 from tests.support.s3 import inspect_health
@@ -22,15 +20,12 @@ def _count() -> int:
 @pytest.fixture(scope="module")
 def up() -> Iterator[None]:
     sh("docker", "compose", "config", "-q")  # R16
-    os.environ.update(PROFILE_ENV)  # ingest-2 is opt-in (G1)
     sh(
         "docker", "compose", "up", "-d", "--build", "--wait",
         "redis", "db", "simulator", "ingest-1", "ingest-2",
     )  # fmt: skip
     yield
     sh("docker", "compose", "stop", "ingest-1", "ingest-2", "simulator")
-    for k in PROFILE_ENV:
-        os.environ.pop(k, None)
 
 
 @pytest.mark.usefixtures("up")

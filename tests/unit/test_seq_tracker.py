@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 from gs.ingest.events import GroundEvent, seq_key
-from gs.ingest.seq import MOD, SeqState, is_new, step
+from gs.ingest.seq import HALF, MOD, NOMINAL_PERIOD_S, SeqState, is_new, step
 
 V = "NYX-TA1"
 T0 = datetime(2026, 11, 14, 10, tzinfo=UTC)
@@ -133,7 +133,7 @@ def test_period_tracks_100hz() -> None:
     s, _ = run(feed(range(200), period=0.01))
     assert s is not None and abs(s.period_s - 0.01) < 1e-4
     # a gap at 100 Hz is judged against the learned period: 0.51 s after seq 199, seq 250 = 50 lost
-    s2, out = run([(250, s.last_t + timedelta(seconds=0.51))], s)
+    _, out = run([(250, s.last_t + timedelta(seconds=0.51))], s)
     ((_, (g,)),) = out
     assert (g.kind, g.details["lost"]) == ("GAP", 50)
 
@@ -150,3 +150,55 @@ def test_is_new() -> None:
     assert all(
         is_new(k) for k in ("FIRST", "IN_ORDER", "GAP", "SEQ_JUMP", "SEQ_RESET", "SEQ_ANOMALY")
     )
+
+
+S0 = SeqState(epoch=T0, last_seq=0, last_t=T0, period_s=0.1)
+
+
+def klass_at(s: SeqState, seq: int, dt: float) -> str:
+    return step(s, V, seq, s.last_t + timedelta(seconds=dt))[1]
+
+
+def test_gap_tolerance_edges() -> None:
+    # by_time = round(dt / 0.1) - 1, so dt = (by_time + 1) * 0.1; d = seq - 1
+    def k(d: int, by_time: int) -> str:
+        return klass_at(S0, d + 1, (by_time + 1) * 0.1)
+
+    assert (k(5, 3), k(5, 2), k(5, 7), k(5, 8)) == ("GAP", "SEQ_JUMP", "GAP", "SEQ_JUMP")  # floor 2
+    assert (k(1000, 900), k(1000, 899)) == ("GAP", "SEQ_JUMP")  # d // 10 = 100, inclusive
+    assert (k(1000, 1100), k(1000, 1101)) == ("GAP", "SEQ_JUMP")
+
+
+def test_reset_seq_max_edge() -> None:
+    s = SeqState(epoch=T0, last_seq=500, last_t=T0, period_s=0.1)
+    t = at(1.0)
+    _, k, (r, g) = step(s, V, 50, t)
+    assert (k, r.kind, g.kind, g.details["from_seq"], g.details["lost"]) == (
+        "SEQ_RESET",
+        "SEQ_RESET",
+        "GAP",
+        0,
+        50,
+    )
+    _, k, ev = step(s, V, 51, t)
+    assert (k, [e.kind for e in ev]) == ("SEQ_ANOMALY", ["SEQ_ANOMALY"])
+
+
+def test_half_edge() -> None:
+    assert klass_at(S0, HALF, 0.1) == "SEQ_JUMP"  # d = HALF - 1 is forward
+    assert klass_at(S0, HALF + 1, 0.1) == "SEQ_ANOMALY"  # d = HALF is behind
+    for dt in (0.0, -1.0):
+        s, k, ev = step(S0, V, HALF + 1, S0.last_t + timedelta(seconds=dt))
+        assert (k, ev, s) == ("DUP_OR_LATE", (), S0)
+
+
+def test_period_ewma_steps() -> None:
+    assert step(None, V, 7, T0) == (SeqState(T0, 7, T0, NOMINAL_PERIOD_S), "FIRST", ())
+    s, k, _ = step(S0, V, 1, at(0.2))
+    assert k == "IN_ORDER" and abs(s.period_s - 0.11) < 1e-12  # 0.9 * 0.1 + 0.1 * 0.2
+    for dt in (0.0, -0.1):  # d == 0 but the clock did not move forward
+        s, k, _ = step(S0, V, 1, at(dt))
+        assert (k, s.period_s) == ("IN_ORDER", 0.1)
+    slow = SeqState(epoch=T0, last_seq=500, last_t=T0, period_s=0.05)
+    s, k, _ = step(slow, V, 0, at(1.0))
+    assert (k, s.period_s, s.epoch) == ("SEQ_RESET", 0.05, at(1.0))

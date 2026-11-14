@@ -54,3 +54,12 @@ def test_make_reset(tmp_path: Path) -> None:
         assert gone.returncode != 0, "make reset left the compose volume behind"
     finally:
         subprocess.run(["docker", "volume", "rm", "-f", volume], capture_output=True)
+
+
+def test_minio_init_survives_minio_setup_restart() -> None:
+    """CI bug: Bitnami MinIO runs a temporary server, stops it, then starts the real one;
+    the health check passed on the first and minio-init hit the gap (connection refused)."""
+    sh("docker", "compose", "restart", "minio")
+    # --no-deps: start while MinIO is still in its setup phase, not after it reports healthy
+    sh("docker", "compose", "run", "--rm", "--no-deps", "minio-init")
+    sh("docker", "compose", "up", "-d", "--wait", "minio")

@@ -130,3 +130,27 @@ async def test_hang_waits_forever_only_at_its_point() -> None:
     await asyncio.wait_for(Hooks().hang("in_loop"), 1)  # off: returns at once
     with pytest.raises(TimeoutError):
         await asyncio.wait_for(h.hang("in_loop"), 0.2)
+
+
+def test_crash_recorder_that_returns_never_reaches_sigstop(tmp_path: Path) -> None:
+    calls: list[int] = []
+    sent: list[tuple[int, int]] = []
+    h = Hooks(
+        crash_at="after_xack",
+        marker_dir=tmp_path,
+        exit=calls.append,  # type: ignore[arg-type]
+        kill=lambda p, s: sent.append((p, s)),
+    )
+    h.fire("after_xack")
+    h.frame("NYX-TA1", 1)
+    assert calls == [99] and sent == []
+
+
+def test_frame_hot_path_with_hooks_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from gs.common import hooks as hooks_mod
+
+    def boom(*_: object) -> bool:
+        raise AssertionError("regex consulted with hooks off")
+
+    monkeypatch.setattr(hooks_mod, "_frame_match", boom)
+    Hooks().frame("NYX-TA1", 5)

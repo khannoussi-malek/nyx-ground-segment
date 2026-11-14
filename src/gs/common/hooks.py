@@ -80,6 +80,8 @@ class Hooks:
 
     def frame(self, vehicle: str, seq: int) -> None:
         """frame_seq hooks fire on every delivery of the matching frame (no marker)."""
+        if not (self.crash_at or self.stop_at):  # hot path: hooks off
+            return
         if _frame_match(self.crash_at, vehicle, seq):
             self._act(f"frame_seq:{vehicle}:{seq}", crash=True)
         elif _frame_match(self.stop_at, vehicle, seq):
@@ -94,5 +96,6 @@ class Hooks:
         if crash:
             log.warning("test hook CRASH_AT=%s", point)
             self.exit(CRASH_CODE)
+            return  # an injected exit may return; never fall through to the SIGSTOP
         log.warning("test hook STOP_AT=%s", point)
         self.kill(os.getpid(), signal.SIGSTOP)

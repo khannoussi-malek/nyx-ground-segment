@@ -9,11 +9,19 @@ from typing import NoReturn
 import pytest
 
 from gs.common.hooks import Hooks
+from gs.ingest.errors import OperationalDbError
 from gs.ingest.worker import Timing
 from tests.support.env import until, vid, wait_until
-from tests.support.ingest import start_ingest, worker
+from tests.support.ingest import lock_holder_pid, start_ingest, terminate_backends, worker
 from tests.support.pg import lock_holder, stored
-from tests.support.redisx import drained, pending, produce, ui_tm_count
+from tests.support.redisx import (
+    drained,
+    pending,
+    pending_of,
+    produce,
+    read_without_ack,
+    ui_tm_count,
+)
 
 N = 5
 
@@ -104,3 +112,24 @@ async def test_hang_in_loop_stops_the_loop() -> None:
             await asyncio.sleep(1.0)
             assert w.ctx.loop_seen[v] == seen and stored(v) == 0 and not w.done()
             w.tasks[0].cancel()
+
+
+async def test_after_fence_hook_sits_between_fence_and_read(tmp_path: Path) -> None:
+    """The hook loses the lock right after the fence passed: the worker still reads once (the
+    R14 E-5 residual window), so the entries land in its PEL before the commit fails."""
+    v = vid()
+    produce(v, N)
+    read_without_ack(v, "ghost")  # pending: the first pass (takeover drain) has entries to read
+
+    def lose_lock(_: int, __: int) -> None:
+        owner = lock_holder_pid(v)
+        assert owner is not None
+        terminate_backends([owner[0]])
+
+    hooks = Hooks(stop_at="after_fence_before_read", marker_dir=tmp_path, kill=lose_lock)
+    with pytest.raises(OperationalDbError):
+        async with worker([v], "w1", hooks=hooks) as w:
+            await asyncio.wait_for(w.tasks[0], 5)
+    # read after the fence: one stale read (the drain claims one entry at a time) took an entry
+    # into w1's PEL; with the hook above the fence, the fence fails first and nothing moves
+    assert (pending_of(v, "w1"), pending_of(v, "ghost"), stored(v)) == (1, N - 1, 0)

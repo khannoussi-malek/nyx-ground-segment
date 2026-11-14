@@ -17,6 +17,13 @@ test("broker down shows BROKER on every vehicle, never LOS", () => {
     expect(conditionFor({ ...base, broker: "down", processing, ageMs: 10_000 })).toBe("GROUND PROCESSING DOWN – BROKER");
 });
 
+test("NO LIVE CONNECTION outranks processing down and LOS; 1999 ms is not LOS", () => {
+  expect(conditionFor({ ...base, connected: false, processing: false })).toBe("NO LIVE CONNECTION");
+  expect(conditionFor({ ...base, connected: false, ageMs: 9000 })).toBe("NO LIVE CONNECTION");
+  expect(conditionFor({ ...base, ageMs: 1999 })).toBeNull();
+  expect(conditionFor({ ...base, ageMs: 1999, frozen: true })).toBe("FROZEN");
+});
+
 test("an unknown processing state is not 'down'; an unknown age is not LOS", () => {
   expect(conditionFor({ ...base, processing: undefined })).toBeNull();
   expect(conditionFor({ ...base, ageMs: null })).toBeNull();

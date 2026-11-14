@@ -27,5 +27,6 @@ test("acquisition: null → NO_DATA, frozen → FROZEN, then STALE, else OK; the
   expect(paramState(null, 0, true, undefined).acq).toBe("NO_DATA");
   expect(paramState(1, 5000, true, undefined).acq).toBe("FROZEN");
   expect(paramState(1, 2000, false, alarm("RED_LOW"))).toMatchObject({ acq: "STALE", level: "RED" });
-  expect(paramState(1, null, false, undefined).acq).toBe("OK");
+  for (const unknown of [null, undefined]) expect(paramState(1, unknown, false, undefined).acq).toBe("STALE"); // P-pf22
+  expect(paramState(null, null, false, undefined).acq).toBe("NO_DATA");
 });

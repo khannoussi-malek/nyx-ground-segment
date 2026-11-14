@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { expect, test } from "vitest";
+import { alarmView } from "./fixtures";
 import { ParamRow, type ParamView } from "./ParamRow";
 import type { ParamState } from "./status";
 import { VehicleCard, type VehicleCardProps } from "./VehicleCard";
@@ -121,18 +122,22 @@ const tmOf = (frozen = false, age_ms = 40) => ({
   kind: "tm" as const, vehicle: "NYX-TA1", seq: 3, t_onboard: T, mode: "TEST" as const,
   last_cmd_id: null, values: { cabin_pressure_kpa: 101.3, unknown_p: 1 }, age_ms, frozen,
 });
-const redAlarm = {
-  alarm_id: "a1", vehicle: "NYX-TA1", param: "cabin_pressure_kpa", state: "UNACK",
-  level: "RED_HIGH", severity: "RED", trigger_check: "limit",
-};
-
-test("LiveTable before the first snapshot: labels and gauges, no summary, no row state", async () => {
+const snapOf = (frozen = false) => ({ kind: "snapshot", vehicles: { "NYX-TA1": tmOf(frozen) }, alarms: [], commands: [], events: [] });
+/** one clock for the store and the table: the age clock must not depend on real time */
+async function setup() {
   const { createStore, ingest } = await import("./store");
   const { LiveTable } = await import("./LiveTable");
-  const store = createStore(() => 0);
+  let now = 0;
+  const store = createStore(() => now);
+  const render = () => renderToStaticMarkup(<LiveTable store={store} mission={mission} clock={() => now} />);
+  return { store, ingest, render, at: (t: number) => void (now = t) };
+}
+
+test("LiveTable before the first snapshot: labels and gauges, no summary, no row state", async () => {
+  const { store, ingest, render } = await setup();
   ingest(store, "tm", tmOf());
-  store.applyAlarm(redAlarm as never); // an alarm that arrived early must not mark a row yet
-  const html = renderToStaticMarkup(<LiveTable store={store} mission={mission} />);
+  store.applyAlarm(alarmView()); // an alarm that arrived early must not mark a row yet
+  const html = render();
   expect(html).toContain("Cabin total pressure");
   expect(html).toContain('class="gauge"');
   expect(html).toContain('class="label">unknown_p');
@@ -142,30 +147,36 @@ test("LiveTable before the first snapshot: labels and gauges, no summary, no row
 });
 
 test("LiveTable after the snapshot: the summary counts RED rows, the badge and the gauge fill show", async () => {
-  const { createStore, ingest } = await import("./store");
-  const { LiveTable } = await import("./LiveTable");
-  const store = createStore(() => 0);
-  ingest(store, "snapshot", {
-    kind: "snapshot", vehicles: { "NYX-TA1": tmOf() }, alarms: [redAlarm], commands: [], events: [],
-  });
-  const html = renderToStaticMarkup(<LiveTable store={store} mission={mission} />);
+  const { store, ingest, render } = await setup();
+  ingest(store, "snapshot", { ...snapOf(), alarms: [alarmView()] });
+  const html = render();
   expect(html).toMatch(/data-tone="red".*1 RED/);
   expect(html).toContain('data-level="RED"');
   expect(html).toContain("RED HIGH");
   expect(active(html)).toEqual(['data-kind="red" data-side="HIGH" data-active="true"']);
 });
 
-test("LiveTable banners: broker down, lost link, frozen rows", async () => {
-  const { createStore, ingest } = await import("./store");
-  const { LiveTable } = await import("./LiveTable");
-  const store = createStore(() => 0);
-  const render = () => renderToStaticMarkup(<LiveTable store={store} mission={mission} />);
-  ingest(store, "snapshot", { kind: "snapshot", vehicles: { "NYX-TA1": tmOf(true) }, alarms: [], commands: [], events: [] });
+test("LiveTable banners: frozen rows, broker down, lost link", async () => {
+  const { store, ingest, render } = await setup();
+  ingest(store, "snapshot", snapOf(true));
   expect(render()).toMatch(/data-tone="muted".*2 FROZEN/);
   ingest(store, "ground", { kind: "ground", broker: "down" });
   expect(render()).toContain("GROUND PROCESSING DOWN – BROKER");
   store.noteError();
   expect(render()).toContain("NO LIVE CONNECTION");
+});
+
+test("LiveTable banners: LOSS OF SIGNAL after 2 s, GROUND PROCESSING DOWN from the heartbeat", async () => {
+  const { store, ingest, render, at } = await setup();
+  ingest(store, "snapshot", snapOf());
+  at(1900);
+  expect(render()).not.toContain("LOSS OF SIGNAL"); // 40 + 1900 = 1940 ms
+  at(1960);
+  expect(render()).toContain("LOSS OF SIGNAL");
+  expect(render()).toContain('data-acq="STALE"'); // the rows are old too
+  ingest(store, "hb", { kind: "hb", server_ms: 1, processing: { "NYX-TA1": false } });
+  expect(render()).toContain("GROUND PROCESSING DOWN");
+  expect(render()).not.toContain("LOSS OF SIGNAL"); // outranks LOS
 });
 
 const active = (html: string) => html.match(/data-kind="\w+" data-side="\w+" data-active="true"/g) ?? [];

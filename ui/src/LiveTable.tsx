@@ -18,14 +18,14 @@ function useTick(ms: number): void {
   }, [ms]);
 }
 
-function Vehicle({ store, v, mission }: { store: Store; v: string; mission: MissionDb | null }) {
+function Vehicle({ store, v, mission, clock }: { store: Store; v: string; mission: MissionDb | null; clock: () => number }) {
   const tm = useSyncExternalStore(store.subscribe, () => store.vehicle(v), () => store.vehicle(v));
   const link = useSyncExternalStore(store.subscribe, store.link, store.link);
   useSyncExternalStore(store.subscribe, store.alarms, store.alarms); // re-render on alarm changes
   const wired = useSyncExternalStore(store.subscribe, store.hasSnapshot, store.hasSnapshot);
   useTick(AGE_TICK_MS);
   if (!tm) return null;
-  const ageMs = ageAt(tm.age_ms, store.receivedAt(v), performance.now());
+  const ageMs = ageAt(tm.age_ms, store.receivedAt(v), clock());
   const condition = conditionFor({ ...link, processing: link.processing[v], ageMs, frozen: tm.frozen });
   // FROZEN is counted from the rows; only the vehicle-level conditions replace the summary
   const banner = condition === "FROZEN" || condition === "STALE" ? undefined : (condition ?? undefined);
@@ -47,12 +47,13 @@ function Vehicle({ store, v, mission }: { store: Store; v: string; mission: Miss
   );
 }
 
-export function LiveTable({ store, mission }: { store: Store; mission: MissionDb | null }) {
+/** `clock` must be the store's clock: receipt stamps and the age clock share one time base. */
+export function LiveTable({ store, mission, clock = () => performance.now() }: { store: Store; mission: MissionDb | null; clock?: () => number }) {
   const vehicles = useSyncExternalStore(store.subscribe, store.vehicles, store.vehicles);
   return (
     <>
       {vehicles.map((v) => (
-        <Vehicle key={v} store={store} v={v} mission={mission} />
+        <Vehicle key={v} store={store} v={v} mission={mission} clock={clock} />
       ))}
     </>
   );

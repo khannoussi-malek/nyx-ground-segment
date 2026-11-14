@@ -7,6 +7,11 @@ export type CommandView = components["schemas"]["CommandView"];
 export type EventView = components["schemas"]["EventView"];
 export type Link = { connected: boolean; broker: "up" | "down"; processing: Record<string, boolean> };
 
+const ms = (t: string | null): number => (t === null ? -Infinity : Date.parse(t));
+/** Newest time a command row carries; a row with more evidence is newer. */
+const cmdTime = (c: CommandView): number =>
+  Math.max(...[c.queued_at, c.sent_at, c.received_at, c.verified_at, c.failed_at, c.late_ack_at, c.late_verified_at].map(ms));
+
 export const SILENCE_MS = 3000;
 export const EVENTS_KEPT = 200;
 
@@ -22,6 +27,7 @@ export function createStore(
   let alarms: readonly AlarmView[] = [];
   let commands: readonly CommandView[] = [];
   let events: readonly EventView[] = [];
+  let alarmT: Readonly<Record<string, number>> = {}; // newest transition time per alarm id, cleared ones included
   let seen: ReadonlySet<string> = new Set(); // event keys seen, so a replay is not shown twice
   let snapshotSeen = false;
   let link: Link = { connected: false, broker: "up", processing: {} };
@@ -43,6 +49,7 @@ export function createStore(
       const now = clock();
       stamps = Object.fromEntries(Object.keys(s.vehicles).map((v) => [v, now]));
       alarms = (s.alarms ?? []).filter((a) => a.state !== "CLEARED");
+      alarmT = Object.fromEntries((s.alarms ?? []).map((a) => [a.alarm_id, ms(a.last.t)]));
       commands = [...(s.commands ?? [])];
       events = trim(s.events ?? []);
       seen = new Set(events.map((e) => e.key));
@@ -57,12 +64,18 @@ export function createStore(
       set({ ...rows, [tm.vehicle]: tm });
       return true;
     },
+    /** An upsert older than what is held is dropped: a CLEARED alarm must not flash back to UNACK (reconnect replay). */
     applyAlarm(a: AlarmView): void {
+      const t = ms(a.last.t);
+      if (t < (alarmT[a.alarm_id] ?? -Infinity)) return;
+      alarmT = { ...alarmT, [a.alarm_id]: t };
       const rest = alarms.filter((x) => x.alarm_id !== a.alarm_id);
       alarms = a.state === "CLEARED" ? rest : [...rest, a];
       notify();
     },
     applyCmd(c: CommandView): void {
+      const held = commands.find((x) => x.cmd_id === c.cmd_id);
+      if (held && cmdTime(c) < cmdTime(held)) return;
       commands = commands.some((x) => x.cmd_id === c.cmd_id)
         ? commands.map((x) => (x.cmd_id === c.cmd_id ? c : x))
         : [c, ...commands];
@@ -123,7 +136,8 @@ const isSnapshot = (x: unknown): x is Snapshot =>
   optArr(x.alarms) && optArr(x.commands) && optArr(x.events);
 const isAlarm = (x: unknown): x is AlarmView =>
   isObj(x) && typeof x.alarm_id === "string" && typeof x.state === "string" &&
-  typeof x.vehicle === "string" && typeof x.param === "string" && typeof x.level === "string";
+  typeof x.vehicle === "string" && typeof x.param === "string" && typeof x.level === "string" &&
+  typeof x.severity === "string" && typeof x.trigger_check === "string" && isObj(x.last) && typeof x.last.t === "string";
 const isCmd = (x: unknown): x is CommandView =>
   isObj(x) && typeof x.cmd_id === "string" && typeof x.state === "string";
 const isEvent = (x: unknown): x is EventView => isObj(x) && typeof x.key === "string";

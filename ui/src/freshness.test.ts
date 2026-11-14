@@ -15,3 +15,9 @@ test("STALE at 2.0 s, OK at 1.9 s", () => {
 test("age grows with time since receipt", () => {
   expect(paramState(1, ageAt(1500, 0, 600), false, undefined).acq).toBe("STALE");
 });
+
+test("unknown age is STALE, not OK (P-pf22); a known fresh age stays OK", () => {
+  expect(paramState(1, ageAt(null, 0, 0), false, undefined).acq).toBe("STALE");
+  expect(paramState(1, ageAt(10, undefined, 0), false, undefined).acq).toBe("STALE");
+  expect(paramState(1, ageAt(10, 0, 0), false, undefined).acq).toBe("OK");
+});

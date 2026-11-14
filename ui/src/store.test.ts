@@ -1,5 +1,7 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { createStore, ingest, type AlarmView, type CommandView, type EventView, type Snapshot, type Tm } from "./store";
+import type { AlarmView, CommandView } from "./store";
+import { alarmView, commandView, eventView } from "./fixtures";
+import { createStore, ingest, type Snapshot, type Tm } from "./store";
 
 const tm = (seq: number, t: string, vehicle = "NYX-TA1", p = 101.3): Tm => ({
   kind: "tm", vehicle, seq, t_onboard: t, mode: "TEST",
@@ -115,10 +117,10 @@ test("the store stamps when each vehicle's latest tm arrived", () => {
 
 afterEach(() => vi.useRealTimers());
 
-const alarm = (id: string, state: string, param = "p", vehicle = "NYX-TA1") =>
-  ({ alarm_id: id, state, param, vehicle, level: "RED_HIGH" }) as unknown as AlarmView;
-const cmd = (id: string, state = "QUEUED") => ({ cmd_id: id, state }) as unknown as CommandView;
-const ev = (key: string) => ({ key, kind: "k", vehicle: null, t_onboard: null, details: {} }) as EventView;
+const alarm = (id: string, state: AlarmView["state"], param = "p", vehicle = "NYX-TA1", at = "2026-11-14T10:00:00Z") =>
+  alarmView({ alarm_id: id, state, param, vehicle, last: { ...alarmView().last, t: at } });
+const cmd = (id: string, state: CommandView["state"] = "QUEUED") => commandView({ cmd_id: id, state });
+const ev = (key: string) => eventView(key);
 
 test("alarm upsert by id, CLEARED removed, openAlarm finds by vehicle and param", () => {
   const s = createStore();
@@ -227,5 +229,47 @@ test("ingest drops wrong-shape alarm, cmd, link, ground, hb events", () => {
   ingest(s, "hb", { processing: 3 });
   expect([s.alarms().length, s.commands().length, s.events().length, s.link().broker]).toEqual([0, 0, 0, "up"]);
   expect(warn).toHaveBeenCalledTimes(5);
+  warn.mockRestore();
+});
+
+test("an older alarm upsert is dropped, also after CLEARED (no flash back to UNACK)", () => {
+  const s = createStore();
+  s.applyAlarm(alarm("a1", "UNACK", "p", "NYX-TA1", "2026-11-14T10:00:05Z"));
+  s.applyAlarm(alarm("a1", "UNACK", "p", "NYX-TA1", "2026-11-14T10:00:01Z")); // older replay
+  expect(s.alarms()[0]?.last.t).toBe("2026-11-14T10:00:05Z");
+  s.applyAlarm(alarm("a1", "CLEARED", "p", "NYX-TA1", "2026-11-14T10:00:09Z"));
+  s.applyAlarm(alarm("a1", "UNACK", "p", "NYX-TA1", "2026-11-14T10:00:05Z"));
+  expect(s.alarms()).toEqual([]);
+  s.applyAlarm(alarm("a1", "UNACK", "p", "NYX-TA1", "2026-11-14T10:00:09Z")); // same time: accepted
+  expect(s.alarms()).toHaveLength(1);
+});
+
+test("a snapshot resets what 'older' means", () => {
+  const s = createStore();
+  s.applyAlarm(alarm("a1", "UNACK", "p", "NYX-TA1", "2026-11-14T10:00:09Z"));
+  s.applySnapshot({ ...snap(), alarms: [alarm("a1", "UNACK", "p", "NYX-TA1", "2026-11-14T10:00:02Z")] });
+  s.applyAlarm(alarm("a1", "ACKED", "p", "NYX-TA1", "2026-11-14T10:00:03Z"));
+  expect(s.alarms()[0]?.state).toBe("ACKED");
+});
+
+test("an older command row (less evidence) is dropped, a newer one replaces", () => {
+  const s = createStore();
+  s.applyCmd(commandView({ state: "VERIFIED", sent_at: "2026-11-14T10:00:01Z", verified_at: "2026-11-14T10:00:03Z" }));
+  s.applyCmd(commandView({ state: "SENT", sent_at: "2026-11-14T10:00:01Z" }));
+  expect(s.commands()[0]?.state).toBe("VERIFIED");
+  s.applyCmd(commandView({ state: "FAILED", failed_at: "2026-11-14T10:00:09Z" }));
+  expect(s.commands()[0]?.state).toBe("FAILED");
+});
+
+test("ingest drops an alarm without severity, trigger_check or last.t", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const s = createStore();
+  const { severity: _s, ...noSeverity } = alarmView();
+  const { trigger_check: _t, ...noCheck } = alarmView();
+  ingest(s, "alarm", { alarm: noSeverity });
+  ingest(s, "alarm", { alarm: noCheck });
+  ingest(s, "alarm", { alarm: { ...alarmView(), last: null } });
+  expect(s.alarms()).toEqual([]);
+  expect(warn).toHaveBeenCalledTimes(3);
   warn.mockRestore();
 });

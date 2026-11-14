@@ -7,14 +7,14 @@ export const STALE_MS = 2000;
 const SIDES: readonly string[] = ["LOW", "HIGH", "RISING", "FALLING"];
 
 /** The state of one value, from what the engine sent: nothing here derives a level from limits.
- *  RTN_UNACK and no alarm are NOMINAL; the "was ..." text of a returned alarm is the alarm list's job. */
+ *  An unknown age is STALE, never OK: old data must look old (P-pf22). RTN_UNACK and no alarm are NOMINAL; the "was ..." text of a returned alarm is the alarm list's job. */
 export function paramState(
   value: number | null,
-  ageMs: number | null,
+  ageMs: number | null | undefined,
   frozen: boolean,
   alarm: AlarmView | undefined,
 ): ParamState {
-  const acq = value === null ? "NO_DATA" : frozen ? "FROZEN" : ageMs !== null && ageMs >= STALE_MS ? "STALE" : "OK";
+  const acq = value === null ? "NO_DATA" : frozen ? "FROZEN" : ageMs == null || ageMs >= STALE_MS ? "STALE" : "OK";
   if (!alarm || (alarm.state !== "UNACK" && alarm.state !== "ACKED")) return { acq, level: "NOMINAL" };
   // "RED_HIGH" -> RED, HIGH; an unreadable text falls back to the alarm's own severity, never to a guess
   const [sev, side] = alarm.level.split("_");

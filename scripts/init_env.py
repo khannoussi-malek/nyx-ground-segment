@@ -2,6 +2,7 @@
 
 import argparse
 import hashlib
+import os
 import secrets
 from pathlib import Path
 
@@ -50,12 +51,17 @@ def main(argv: list[str] | None = None) -> int:
     env_path = root / ".env"
     if not env_path.exists():
         pairs = _example_pairs(root / ".env.example")  # empty value = secret, else a default
-        env_path.write_text("".join(f"{k}={v or secrets.token_hex(24)}\n" for k, v in pairs))
+        body = "".join(f"{k}={v or secrets.token_hex(24)}\n" for k, v in pairs)
+        fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)  # secrets: owner only
+        with os.fdopen(fd, "w") as f:
+            f.write(body)
         env = _read_env(env_path)
         shown = " ".join(f"{name}={env[key]}" for name, key in DEMO_KEYS.items())
         print(f"demo users (shown once): {shown}")
     env = _read_env(env_path)
 
+    # users.yaml and redis/users.acl stay 0644: the containers (uid 10001, redis uid 999) read
+    # these bind mounts as other users on Linux. They hold only scrypt/sha256 hashes.
     users_path = root / "users.yaml"
     if not users_path.exists():
         names = _user_names(root / "users.example.yaml")

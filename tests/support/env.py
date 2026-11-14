@@ -28,7 +28,12 @@ def users(root: Path) -> dict[str, str]:
 
 
 def sh(*args: str, cwd: Path = REPO) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, cwd=cwd, capture_output=True, text=True, check=True)
+    r = subprocess.run(args, cwd=cwd, capture_output=True, text=True)
+    if r.returncode:
+        raise AssertionError(
+            f"{args} exited {r.returncode}\nstdout: {r.stdout}\nstderr: {r.stderr}"
+        )
+    return r
 
 
 def run_init_env(root: Path) -> subprocess.CompletedProcess[str]:

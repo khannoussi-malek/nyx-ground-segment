@@ -100,3 +100,8 @@ def test_make_up_down_reset_commands(root: Path) -> None:
     reset = sh("make", "-n", "reset", cwd=root).stdout
     assert "docker compose down -v" in reset
     assert "rm -f .env users.yaml redis/users.acl" in reset
+
+
+def test_env_is_private_to_the_owner(root: Path) -> None:
+    run_init_env(root)
+    assert (root / ".env").stat().st_mode & 0o777 == 0o600

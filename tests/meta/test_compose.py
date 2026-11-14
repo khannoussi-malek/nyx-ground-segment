@@ -1,5 +1,6 @@
 """Static compose rules (D-ENG-03); they read `docker compose config --format json`."""
 
+import re
 from typing import Any
 
 import pytest
@@ -56,33 +57,44 @@ def test_per_service_environment(services: dict[str, dict[str, Any]]) -> None:
     assert {n: set(s.get("environment", {})) for n, s in services.items()} == ENV
 
 
+USES = {  # secret keys each service's environment is derived from
+    "redis": {"REDIS_HEALTH_PW"},
+    "db": {"POSTGRES_PASSWORD", "GS_OWNER_PASSWORD", "GS_APP_PASSWORD"},
+    "minio": {"S3_ACCESS_KEY", "S3_SECRET_KEY"},
+    "minio-init": {"S3_ACCESS_KEY", "S3_SECRET_KEY"},
+    "migrate": {"GS_OWNER_PASSWORD"},
+    "simulator": {"REDIS_SIM_PW"},
+    "ingest-1": {"REDIS_INGEST_PW", "GS_APP_PASSWORD"},
+    "api": {"REDIS_API_PW", "GS_APP_PASSWORD", "SESSION_SECRET"},
+}
+
+
+def _tokens(svc: dict[str, Any]) -> set[str]:
+    """Alphanumeric words of every environment value; a secret is held when it is one word."""
+    return {w for v in svc.get("environment", {}).values() for w in re.split(r"\W+", str(v))}
+
+
 def test_secrets_not_shared(services: dict[str, dict[str, Any]]) -> None:
-    secret_keys = [k for k in dotenv() if k.endswith(("_PW", "_PASSWORD", "_SECRET", "_KEY"))]
+    env = dotenv()
+    secret_keys = {k for k in env if "_PW" in k or k.endswith(("_PASSWORD", "_SECRET", "_KEY"))}
     assert secret_keys
-    for key in secret_keys:
-        value = dotenv()[key]
-        holders = {n for n, s in services.items() if value in str(s.get("environment", {}))}
-        wanted = {
-            n
-            for n, s in services.items()
-            if value in str(s.get("environment", {})) and _needs(n, key)
-        }
-        assert holders == wanted, f"{key} reaches {holders - wanted}"
+    for svc, keys in USES.items():
+        missing = keys - env.keys()
+        assert not missing, f"{svc} needs {missing}, absent from .env"
+    for key in sorted(secret_keys):
+        holders = {n for n, s in services.items() if env[key] in _tokens(s)}
+        wanted = {n for n, keys in USES.items() if key in keys}
+        assert holders == wanted, f"{key} held by {holders}, expected {wanted}"
 
 
-def _needs(svc: str, key: str) -> bool:
-    """A service may hold secret `key` when its environment entries are derived from it."""
-    uses = {
-        "redis": {"REDIS_HEALTH_PW"},
-        "db": {"POSTGRES_PASSWORD", "GS_OWNER_PASSWORD", "GS_APP_PASSWORD"},
-        "minio": {"S3_ACCESS_KEY", "S3_SECRET_KEY"},
-        "minio-init": {"S3_ACCESS_KEY", "S3_SECRET_KEY"},
-        "migrate": {"GS_OWNER_PASSWORD"},
-        "simulator": {"REDIS_SIM_PW"},
-        "ingest-1": {"REDIS_INGEST_PW", "GS_APP_PASSWORD"},
-        "api": {"REDIS_API_PW", "GS_APP_PASSWORD", "SESSION_SECRET"},
-    }
-    return key in uses[svc]
+@pytest.mark.parametrize(
+    ("svc", "source"), [("redis", "users.acl"), ("api", "users.yaml")], ids=["acl", "users"]
+)
+def test_generated_file_mounts_never_create_directories(
+    services: dict[str, dict[str, Any]], svc: str, source: str
+) -> None:
+    (mount,) = [v for v in services[svc]["volumes"] if v["source"].endswith(source)]
+    assert mount["bind"].get("create_host_path", False) is False  # compose omits false
 
 
 @pytest.mark.parametrize("one_shot", ONE_SHOTS)

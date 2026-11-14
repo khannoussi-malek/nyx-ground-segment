@@ -6,7 +6,6 @@ import pytest
 
 from gs.api.app import create_app
 from tests.support.http import api_settings
-from tests.support.pg import app_dsn
 
 
 async def test_healthz_open_and_ok(api_client: httpx.AsyncClient) -> None:
@@ -18,7 +17,7 @@ async def test_healthz_open_and_ok(api_client: httpx.AsyncClient) -> None:
 async def test_healthz_503_when_db_unreachable(
     users_file: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
-    bad = app_dsn("gs").replace(":5432/", ":1/")  # nothing listens on port 1
+    bad = "postgresql://u:p@127.0.0.1:1/gs"  # nothing listens on port 1; env ports are irrelevant
     app = create_app(api_settings(users_file, database_url=bad))
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(

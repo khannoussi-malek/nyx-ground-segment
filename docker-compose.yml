@@ -28,7 +28,10 @@ services:
     command: ["redis-server", "--aclfile", "/etc/redis/users.acl", "--appendonly", "yes", "--appendfsync", "always",
               "--save", "300 10", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
     environment: {REDIS_HEALTH_PW: "${REDIS_HEALTH_PW}"}
-    volumes: ["./redis/users.acl:/etc/redis/users.acl:ro", "redisdata:/data"]
+    volumes:
+      # long form: a missing generated file must fail `up`, not become a directory (run `make env`)
+      - {type: bind, source: ./redis/users.acl, target: /etc/redis/users.acl, read_only: true, bind: {create_host_path: false}}
+      - redisdata:/data
     ports: ["127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"]
     stop_grace_period: 30s
     healthcheck:   # redis-cli exits 0 on WRONGPASS, hence grep (S3)
@@ -95,7 +98,9 @@ services:
                   DATABASE_URL: "postgresql://gs_app:${GS_APP_PASSWORD}@db:5432/gs", SESSION_SECRET: "${SESSION_SECRET}",
                   USERS_FILE: /run/users.yaml, MISSION_DB: /mission, VEHICLES: "NYX-TA1,NYX-TA2", BIND_HOST: "0.0.0.0", API_PORT: "8000",
                   UI_DIST: /app/ui/dist}
-    volumes: ["./mission:/mission:ro", "./users.yaml:/run/users.yaml:ro"]
+    volumes:
+      - ./mission:/mission:ro
+      - {type: bind, source: ./users.yaml, target: /run/users.yaml, read_only: true, bind: {create_host_path: false}}
     ports: ["127.0.0.1:${API_HOST_PORT:-8000}:8000"]
     depends_on: {redis: {condition: service_healthy}, db: {condition: service_healthy},
                  migrate: {condition: service_completed_successfully},

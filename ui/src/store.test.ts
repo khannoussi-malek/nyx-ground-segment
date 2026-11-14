@@ -273,3 +273,15 @@ test("ingest drops an alarm without severity, trigger_check or last.t", () => {
   expect(warn).toHaveBeenCalledTimes(3);
   warn.mockRestore();
 });
+
+test("recheck after a throttled background tab: silence over 3 s is noticed without the timer", () => {
+  let now = 0;
+  const s = createStore(() => now, { setTimeout: (() => 1) as never, clearTimeout: () => {} }); // timer never fires
+  s.noteMessage();
+  now = 2999;
+  s.recheck();
+  expect(s.link().connected).toBe(true);
+  now = 3000;
+  s.recheck();
+  expect(s.link().connected).toBe(false);
+});

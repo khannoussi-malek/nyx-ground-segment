@@ -1,15 +1,17 @@
 import { useState, type FormEvent } from "react";
 import { login } from "./api";
+import { armAudio } from "./audio";
 import { attemptLogin } from "./session";
 
-export function Login({ onLogin }: { onLogin: (user: string) => void }) {
+export function Login({ onLogin }: { onLogin: (user: string, audio: AudioContext | null) => void }) {
   const [error, setError] = useState("");
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    const audio = armAudio(); // inside the click, before any await: autoplay policy (D-UI-08)
     const f = new FormData(e.currentTarget);
     const user = String(f.get("user"));
     const failure = await attemptLogin(login, user, String(f.get("password")));
-    if (failure === null) onLogin(user);
+    if (failure === null) onLogin(user, audio);
     else setError(failure);
   }
   return (

@@ -1,6 +1,7 @@
 // @vitest-environment happy-dom
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
+import { alarmView, eventView } from "./fixtures";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { App } from "./App";
 import { Login } from "./Login";
@@ -40,6 +41,9 @@ class FakeEventSource {
   close() {}
 }
 
+const button = (t: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === t);
+const buttonText = (t: string) => button(t)?.textContent;
+
 async function submitLogin(user: string, password: string) {
   const input = (name: string) => host.querySelector<HTMLInputElement>(`input[name="${name}"]`)!;
   input("user").value = user;
@@ -52,7 +56,7 @@ test("Login: a right password calls onLogin with the user", async () => {
   const onLogin = vi.fn();
   act(() => root.render(<Login onLogin={onLogin} />));
   await submitLogin("fc1", "pw");
-  expect(onLogin).toHaveBeenCalledWith("fc1");
+  expect(onLogin).toHaveBeenCalledWith("fc1", null); // no AudioContext in this environment
   expect(host.querySelector('[role="alert"]')).toBeNull();
 });
 
@@ -81,7 +85,7 @@ test("App: logged in shows the console, opens the event stream and loads the mis
   });
   await act(async () => root.render(<App />));
   expect(host.querySelector("header span")?.textContent).toBe("fc1");
-  expect(host.querySelector("header button")?.textContent).toBe("Log out");
+  expect(buttonText("Log out")).toBe("Log out");
   expect(host.querySelector("main")).not.toBeNull();
   expect(FakeEventSource.opened).toEqual(["/api/events"]);
   expect(f).toHaveBeenCalledWith("/api/mission-db", { credentials: "same-origin" });
@@ -95,6 +99,140 @@ test("App: Log out returns to the login form", async () => {
     "/api/logout": { status: 204 },
   });
   await act(async () => root.render(<App />));
-  await act(async () => host.querySelector<HTMLButtonElement>("header button")!.click());
+  await act(async () => button("Log out")!.click());
   expect(host.querySelector('button[type="submit"]')?.textContent).toBe("Log in");
+});
+
+// ---- audio (Task 14) ----
+class LiveES {
+  static all: LiveES[] = [];
+  listeners = new Map<string, (e: { data: string }) => void>();
+  constructor() {
+    LiveES.all.push(this);
+  }
+  addEventListener(k: string, fn: (e: { data: string }) => void) {
+    this.listeners.set(k, fn);
+  }
+  close() {}
+  emit(kind: string, data: unknown) {
+    act(() => this.listeners.get(kind)!({ data: JSON.stringify(data) }));
+  }
+}
+const played: number[] = [];
+class FakeAudio {
+  static states: FakeAudio[] = [];
+  state = "running";
+  currentTime = 0;
+  destination = {};
+  constructor() {
+    FakeAudio.states.push(this);
+  }
+  resume() {
+    return Promise.resolve();
+  }
+  addEventListener() {}
+  removeEventListener() {}
+  createGain() {
+    return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {} }, connect: (n: unknown) => n };
+  }
+  createOscillator() {
+    const o = { frequency: { set value(v: number) { played.push(v); } }, connect: (n: unknown) => n, start() {}, stop() {} };
+    return o;
+  }
+}
+const tmFrame = { kind: "tm", vehicle: "NYX-TA1", seq: 1, t_onboard: "2026-11-14T10:00:00.000000Z", mode: "TEST", last_cmd_id: null, values: { p: 1 }, age_ms: 10, frozen: false };
+const snapshot = (alarms: unknown[] = [], events: unknown[] = []) => ({ kind: "snapshot", vehicles: { "NYX-TA1": tmFrame }, alarms, commands: [], events });
+
+async function liveConsole() {
+  vi.stubGlobal("EventSource", LiveES);
+  vi.stubGlobal("AudioContext", FakeAudio);
+  LiveES.all = [];
+  played.length = 0;
+  sessionStorage.clear();
+  stubApi({
+    "/api/me": { status: 200, body: { user: "fc1" } },
+    "/api/mission-db": { status: 200, body: { parameters: {}, limits: {}, commands: {} } },
+  });
+  await act(async () => root.render(<App />));
+  return LiveES.all[0]!;
+}
+const attr = (n: string) => host.firstElementChild!.getAttribute(n);
+
+test("App: SOUND OFF badge until the audio runs; the click arms it", async () => {
+  await liveConsole();
+  expect(buttonText("SOUND OFF – click to enable")).toBeDefined();
+  await act(async () => button("SOUND OFF – click to enable")!.click());
+  expect(FakeAudio.states).toHaveLength(1);
+  expect(button("SOUND OFF – click to enable")).toBeUndefined(); // running: badge gone
+});
+
+test("Login arms the audio inside the click and hands it to onLogin", async () => {
+  vi.stubGlobal("AudioContext", FakeAudio);
+  FakeAudio.states = [];
+  stubApi({ "/api/login": { status: 204 } });
+  const onLogin = vi.fn();
+  act(() => root.render(<Login onLogin={onLogin} />));
+  await submitLogin("fc1", "pw");
+  expect(onLogin).toHaveBeenCalledWith("fc1", FakeAudio.states[0]);
+});
+
+test("App: a RED alert key beeps once, also when a resync repeats it and after a reload", async () => {
+  const es = await liveConsole();
+  await act(async () => button("SOUND OFF – click to enable")!.click());
+  es.emit("snapshot", snapshot([alarmView()]));
+  expect(attr("data-beeps")).toBe("1");
+  expect(played).toEqual([880]);
+  es.emit("snapshot", snapshot([alarmView()])); // D-UI-18 resync
+  es.emit("alarm", { kind: "alarm", alarm: alarmView() });
+  expect(attr("data-beeps")).toBe("1");
+  es.emit("alarm", { kind: "alarm", alarm: alarmView({ last: { ...alarmView().last, key: "k2" } }) });
+  expect(attr("data-beeps")).toBe("2");
+  act(() => root.unmount());
+  root = createRoot(host); // reload: new console, same sessionStorage
+  await act(async () => root.render(<App />));
+  LiveES.all.at(-1)!.emit("snapshot", snapshot([alarmView()]));
+  expect(attr("data-beeps")).toBe("0");
+});
+
+test("App: LOS and BROKER sound one quieter tone each, keyed for the tests", async () => {
+  const es = await liveConsole();
+  await act(async () => button("SOUND OFF – click to enable")!.click());
+  es.emit("snapshot", snapshot());
+  expect(attr("data-last-tone")).toBe("");
+  es.emit("link", { kind: "link", event: eventView("LOS/NYX-TA1/1/7", { kind: "LOS", vehicle: "NYX-TA1" }) });
+  expect(attr("data-last-tone")).toBe("LOS:LOS/NYX-TA1/1/7");
+  expect(played).toEqual([440]);
+  es.emit("link", { kind: "link", event: eventView("AOS/NYX-TA1/1/8", { kind: "AOS", vehicle: "NYX-TA1" }) });
+  es.emit("ground", { kind: "ground", broker: "down" });
+  expect(attr("data-last-tone")).toBe("BROKER:*|BROKER");
+});
+
+test("App: 3 s of silence sounds NO LIVE CONNECTION once (fake timers)", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    const es = await liveConsole();
+    es.emit("snapshot", snapshot());
+    act(() => void vi.advanceTimersByTime(2999));
+    expect(attr("data-last-tone")).toBe("");
+    act(() => void vi.advanceTimersByTime(1));
+    expect(attr("data-last-tone")).toBe("NLC:*|NLC");
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("App: a throttled background tab still sounds NO LIVE CONNECTION when it is shown again", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] }); // the silence timer never fires here
+  let now = 1000;
+  const spy = vi.spyOn(performance, "now").mockImplementation(() => now);
+  try {
+    const es = await liveConsole();
+    es.emit("snapshot", snapshot());
+    now = 9000;
+    act(() => void document.dispatchEvent(new Event("visibilitychange")));
+    expect(attr("data-last-tone")).toBe("NLC:*|NLC");
+  } finally {
+    spy.mockRestore();
+    vi.useRealTimers();
+  }
 });

@@ -118,6 +118,19 @@ header {
 header > span { margin-left: auto; color: var(--on-bar-muted); font-size: 0.875rem; }
 header button:focus-visible { outline-color: var(--on-bar); }
 
+/* SOUND OFF: pill-shaped action in the brand yellow (G25) */
+header .sound-off {
+  border: 0;
+  border-radius: 999px;
+  padding: 0.25rem 0.875rem;
+  background: var(--action);
+  color: var(--on-action);
+  font-weight: 600;
+  font-size: 0.875rem;
+  cursor: pointer;
+}
+header .sound-off:hover { background: var(--action-hover); }
+
 /* vehicle grid */
 main {
   display: grid;

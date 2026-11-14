@@ -32,6 +32,7 @@ export function createStore(
   let snapshotSeen = false;
   let link: Link = { connected: false, broker: "up", processing: {} };
   let silence: ReturnType<typeof setTimeout> | undefined;
+  let lastMessageAt: number | null = null;
   const subs = new Set<() => void>();
   const notify = () => subs.forEach((fn) => fn());
   const set = (next: Readonly<Record<string, Tm>>) => {
@@ -91,12 +92,17 @@ export function createStore(
     setProcessing: (p: Record<string, boolean>): void => setLink({ processing: { ...p } }),
     /** Any message proves the link. One-shot timer, re-armed here: a hidden tab throttles intervals (P-pf18). */
     noteMessage(): void {
+      lastMessageAt = clock();
       if (silence !== undefined) clearTimeout(silence);
       silence = setTimeout(() => {
         silence = undefined;
         setLink({ connected: false });
       }, SILENCE_MS);
       if (!link.connected) setLink({ connected: true });
+    },
+    /** A hidden tab may delay the silence timer: when the tab is shown again, judge by the clock (P-pf18). */
+    recheck(): void {
+      if (link.connected && lastMessageAt !== null && clock() - lastMessageAt >= SILENCE_MS) setLink({ connected: false });
     },
     noteError(): void {
       if (link.connected) setLink({ connected: false });

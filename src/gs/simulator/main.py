@@ -42,15 +42,16 @@ async def xadd_tm(r: redis.asyncio.Redis, stream: str, data: str) -> object:
     )
 
 
+def sim_status(buf: FrameBuffer) -> tuple[State, dict[str, object]]:
+    state: State = "degraded" if len(buf) >= DEGRADED_BACKLOG or buf.overflow else "ok"
+    return state, {"buffered": len(buf), "overflow": buf.overflow}
+
+
 async def run(s: SimSettings, stop: asyncio.Event) -> None:
     buf = FrameBuffer()
     r = redis.asyncio.Redis.from_url(s.redis_url, socket_timeout=2)
 
-    def status() -> tuple[State, dict[str, object]]:
-        state: State = "degraded" if len(buf) >= DEGRADED_BACKLOG or buf.overflow else "ok"
-        return state, {"buffered": len(buf), "overflow": buf.overflow}
-
-    server = await serve_health(s.bind_host, s.health_port, status)
+    server = await serve_health(s.bind_host, s.health_port, lambda: sim_status(buf))
     try:
         async with asyncio.TaskGroup() as tg:
             for v in s.vehicles:

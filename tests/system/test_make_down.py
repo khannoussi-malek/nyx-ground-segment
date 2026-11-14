@@ -5,14 +5,19 @@ import shutil
 import subprocess
 from pathlib import Path
 
+import pytest
+
+from tests.support.compose import throwaway_env_text
 from tests.support.env import REPO, sh
 
 
-def test_down_removes_opt_in_ingest_2(tmp_path: Path) -> None:
+def test_down_removes_opt_in_ingest_2(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = tmp_path / f"nyxdown{secrets.token_hex(3)}"  # compose project name = directory name
     (root / "redis").mkdir(parents=True)
-    for f in ("Makefile", "docker-compose.yml", ".env"):
+    for f in ("Makefile", "docker-compose.yml"):
         shutil.copy(REPO / f, root / f)
+    (root / ".env").write_text(throwaway_env_text((REPO / ".env").read_text()))
+    monkeypatch.delenv("COMPOSE_PROJECT_NAME", raising=False)  # worktree shells pin it
     for f in ("users.yaml", "redis/users.acl"):
         (root / f).write_text("x=1\n")
     try:

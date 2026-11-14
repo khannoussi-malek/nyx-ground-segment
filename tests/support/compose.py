@@ -90,3 +90,10 @@ def container_exit_code(svc: str) -> int:
 
 def api_url() -> str:
     return f"http://127.0.0.1:{dotenv()['API_HOST_PORT']}"
+
+
+def throwaway_env_text(text: str) -> str:
+    """.env for a throwaway project: a pinned COMPOSE_PROJECT_NAME would make it the real stack."""
+    return "".join(
+        ln for ln in text.splitlines(keepends=True) if not ln.startswith("COMPOSE_PROJECT_NAME=")
+    )

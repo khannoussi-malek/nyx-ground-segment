@@ -134,13 +134,14 @@ def lock_holder(vehicle: str, dsn: str | None = None) -> str | None:
     negative, hence the shifted comparison.
     """
     with psycopg.connect(dsn or app_dsn("gs")) as c:
-        row = c.execute(
+        rows = c.execute(
             "select a.application_name from pg_locks l join pg_stat_activity a using (pid)"
             " where l.locktype='advisory' and l.granted"
             " and ((l.classid::bigint << 32) | l.objid::bigint) = hashtext('tm:' || %s)::bigint",
             (vehicle,),
-        ).fetchone()
-    return None if row is None else str(row[0])
+        ).fetchall()
+    assert len(rows) <= 1, f"advisory lock for {vehicle} granted to {len(rows)} sessions"
+    return str(rows[0][0]) if rows else None
 
 
 def gapless(seqs: Sequence[int]) -> bool:

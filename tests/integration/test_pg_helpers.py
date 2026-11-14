@@ -1,10 +1,11 @@
 """tests/support/pg.py helpers that other tracks' tests rely on."""
 
+import threading
 from datetime import UTC, datetime, timedelta
 
 import psycopg
 
-from tests.support.env import vid
+from tests.support.env import vid, wait_until
 from tests.support.pg import app_dsn, lock_holder, out_of_order
 
 
@@ -34,17 +35,29 @@ def test_lock_holder_finds_holder_for_negative_and_positive_hash() -> None:
 
 def test_lock_holder_ignores_a_waiter() -> None:
     v = vid()
-    with (
-        psycopg.connect(app_dsn("gs"), autocommit=True, application_name="holder-x") as a,
-        psycopg.connect(app_dsn("gs"), autocommit=True, application_name="waiter-x") as b,
-    ):
-        a.execute("select pg_advisory_lock(hashtext('tm:' || %s))", (v,))
-        b.execute("set lock_timeout = '300ms'")
-        try:
-            b.execute("select pg_advisory_lock(hashtext('tm:' || %s))", (v,))
-        except psycopg.errors.LockNotAvailable:
-            pass
-        assert lock_holder(v) == "holder-x"
+    key = "select pg_advisory_lock(hashtext('tm:' || %s))"
+    holder = psycopg.connect(app_dsn("gs"), autocommit=True, application_name="holder-x")
+    waiter = psycopg.connect(app_dsn("gs"), autocommit=True, application_name="waiter-x")
+    t = threading.Thread(target=lambda: waiter.execute(key, (v,)))
+    try:
+        holder.execute(key, (v,))
+        t.start()
+        wait_until(lambda: _waiting("waiter-x"), timeout=5)  # granted = false in pg_locks
+        assert lock_holder(v) == "holder-x"  # fails without the `granted` filter
+    finally:
+        holder.close()  # releases the lock; the waiter is granted and returns
+        t.join(timeout=5)
+        waiter.close()
+
+
+def _waiting(app: str) -> bool:
+    with psycopg.connect(app_dsn("gs")) as c:
+        row = c.execute(
+            "select 1 from pg_locks l join pg_stat_activity a using (pid)"
+            " where l.locktype='advisory' and not l.granted and a.application_name=%s",
+            (app,),
+        ).fetchone()
+    return row is not None
 
 
 def test_out_of_order_counts_seq_inversions_by_t_received() -> None:

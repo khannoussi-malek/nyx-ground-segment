@@ -286,3 +286,76 @@ async def test_connect_error_is_operational() -> None:
     with pytest.raises(OperationalDbError, match="no_such_db"):
         async with worker([vid()], dsn=app_dsn("no_such_db")) as w:
             await asyncio.wait_for(w.tasks[0], 10)
+
+
+async def test_frame_failing_every_retry_dlqd(monkeypatch: pytest.MonkeyPatch) -> None:
+    v = vid()  # pins RETRIES from the other side: batch + exactly 3 per-frame attempts
+    produce(v, 10)
+    eid = [i for i, _ in read_all(v)][5]
+    calls = 0
+
+    async def always(conn: object, frames: list[FrameHeader], params: object) -> object:
+        nonlocal calls
+        if any(f.seq == 5 for f in frames):
+            calls += 1
+            raise ValueError("always bad")
+        return await insert_frames(conn, frames, params)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(worker_mod, "insert_frames", always)
+    async with worker([v]):
+        await until(lambda: drained(v), 5)
+    assert calls == 4 and stored(v) == 9
+    (raw,) = dlq_entries(v)
+    rec = DlqRecord.model_validate_json(raw)
+    assert (rec.entry_id, rec.detail) == (eid, "ValueError: always bad")
+
+
+def xmin(table: str, where: str, *args: object) -> str:
+    with psycopg.connect(app_dsn("gs")) as c:
+        row = c.execute(f"select xmin::text from {table} where {where}", args).fetchone()  # noqa: S608
+    assert row is not None
+    return str(row[0])
+
+
+async def test_isolation_keeps_reset_event_atomic(owner_trigger: Trigger) -> None:
+    v = owner_trigger.vehicle  # seq 5 fails with 22023
+    produce(v, 3)
+    async with worker([v]):
+        await until(lambda: drained(v), 5)
+    with psycopg.connect(admin_dsn("gs")) as c:
+        c.execute("update engine_state set schema_version = -1 where vehicle=%s", (v,))
+    produce(v, 10, start_seq=3)
+    async with worker([v]):
+        await until(lambda: drained(v), 5)
+    (reset,) = events_for(v, "ENGINE_STATE_RESET")
+    (poisoned,) = events_for(v, "POISON")
+    assert stored(v) == 12
+    # pending events ride in the first per-frame commit that succeeds, not in a later write
+    assert xmin("events", "key = %s", reset["key"]) == xmin(
+        "telemetry", "vehicle = %s and seq = 3", v
+    )
+    assert xmin("events", "key = %s", poisoned["key"]) == xmin(
+        "telemetry", "vehicle = %s and seq = 6", v
+    )
+
+
+async def test_poison_entry_not_reset_on_operational_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    v = vid()  # an entry already judged poison keeps its count: no second crash loop
+    eid = xadd_raw(v, frame(v, 0))
+    read_without_ack(v, consumer="g1")
+    claim(v, eid, "g2")
+    claim(v, eid, "g3")
+    claim(v, eid, "c1")  # 4 deliveries, in c1's PEL
+    produce(v, 2, start_seq=1)
+    entries = read_without_ack(v, consumer="c1")
+    entries = [(eid, {b"data": frame(v, 0).encode()}), *entries]
+
+    async def shutdown(*_: object) -> list[FrameHeader]:
+        raise psycopg.errors.AdminShutdown("bye")
+
+    monkeypatch.setattr(worker_mod, "insert_frames", shutdown)
+    with pytest.raises(OperationalDbError):
+        await process_batch_once(v, entries)
+    assert times_delivered(v) == [4, 0, 0]

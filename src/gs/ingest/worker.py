@@ -83,13 +83,19 @@ async def process_batch(
     delivery counts and raises OperationalDbError (D-ING-24). Nothing is acked on any error."""
     if not entries:
         return vs, 0
+    deliveries = await _deliveries(ctx, stream, entries)  # before classify (R8)
+    # an entry already judged poison keeps its count; resetting it would start a new crash loop
+    ids = [eid for (eid, _), n in zip(entries, deliveries, strict=True) if n <= POISON_DELIVERIES]
     try:
-        return await _process(ctx, conn, stream, entries, vs, extra)
-    except psycopg.Error as e:  # data errors never get here: _process isolates them
-        await _reset_deliveries(ctx, stream, entries)
+        return await _process(ctx, conn, stream, entries, deliveries, vs, extra)
+    except psycopg.Error as e:
+        # data errors are isolated inside _process; the only Postgres work after isolation is the
+        # closing events write (event inserts ON CONFLICT DO NOTHING + the state upserts that
+        # just committed per frame), which has no data-class failure, so this is operational
+        await _reset_deliveries(ctx, stream, ids)
         raise OperationalDbError(_why(e)) from e
     except asyncio.CancelledError:  # a sibling vehicle's exit; this batch is not at fault
-        await _reset_deliveries(ctx, stream, entries)
+        await _reset_deliveries(ctx, stream, ids)
         raise
 
 
@@ -98,11 +104,11 @@ async def _process(
     conn: psycopg.AsyncConnection,
     stream: str,
     entries: list[Entry],
+    deliveries: list[int],
     vs: VehicleState,
     extra: Sequence[GroundEvent],
 ) -> tuple[VehicleState, int]:
     vehicle = stream.removeprefix("tm:")
-    deliveries = await _deliveries(ctx, stream, entries)  # before classify (R8)
     now = datetime.now(UTC)
     dlq: list[DlqRecord] = []
     events = list(extra)
@@ -172,30 +178,32 @@ async def _isolate(
     now: datetime,
 ) -> tuple[VehicleState, int, list[FrameHeader], list[DlqRecord]]:
     """Re-run one frame per transaction from the pre-batch state; a frame failing RETRIES times
-    goes to the DLQ as poison, the rest commit (D-ING-04). Operational errors propagate."""
+    goes to the DLQ as poison, the rest commit (D-ING-04). Pending events (`extra`, POISON) ride
+    in the next per-frame commit that succeeds. Operational errors propagate."""
     vehicle = stream.removeprefix("tm:")
     dup = 0
     inserted: list[FrameHeader] = []
     bad: list[DlqRecord] = []
+    pending = list(events)
     for eid, fields, n, frame in items:
         why = ""
         for _ in range(RETRIES):
             try:
-                vs, d, ins = await _commit(ctx, conn, vehicle, [frame], vs, ())
+                vs, d, ins = await _commit(ctx, conn, vehicle, [frame], vs, pending)
             except Exception as e:  # noqa: BLE001  D-ING-04: a processing exception is the frame's fault
                 if _operational(e):
                     raise
                 why = _why(e)
                 continue
-            dup, inserted = dup + d, inserted + ins
+            dup, inserted, pending = dup + d, inserted + ins, []
             break
         else:
             log.error("frame %s of %s failed %d times (%s); to DLQ", eid, stream, RETRIES, why)
             bad.append(poison(fields, stream, eid, n, why, now))
-            events = [*events, _poison_event(stream, vehicle, eid, n)]
-    if events:  # extra + POISON events, which the failed batch transaction did not keep
+            pending.append(_poison_event(stream, vehicle, eid, n))
+    if pending:  # no later frame committed: write them on their own, still before the XACK
         async with conn.transaction():
-            await write_outcome(conn, vehicle, vs, Outcome((), tuple(events), 0))
+            await write_outcome(conn, vehicle, vs, Outcome((), tuple(pending), 0))
     return vs, dup, inserted, bad
 
 
@@ -213,13 +221,14 @@ def _why(e: Exception) -> str:
     return f"{code}: {e}"
 
 
-async def _reset_deliveries(ctx: Ctx, stream: str, entries: list[Entry]) -> None:
+async def _reset_deliveries(ctx: Ctx, stream: str, ids: list[str]) -> None:
     """XCLAIM … 0 <ids> RETRYCOUNT 0 JUSTID (D-ING-24, R15 E1): times_delivered counts frames
     that kill us, not database failures while they were in flight."""
+    if not ids:
+        return
     try:
-        await ctx.redis.xclaim(
-            stream, GROUP, ctx.consumer, 0, [eid for eid, _ in entries], retrycount=0, justid=True
-        )
+        msg_ids: list[Any] = list(ids)  # redis-py's stub wants a list of a union
+        await ctx.redis.xclaim(stream, GROUP, ctx.consumer, 0, msg_ids, retrycount=0, justid=True)
     except redis.exceptions.RedisError as e:
         log.warning("could not reset delivery counts of %s (%s)", stream, e)
 

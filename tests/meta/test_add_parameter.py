@@ -11,7 +11,7 @@ import psycopg
 import pytest
 
 from gs.common import migrate
-from gs.common.interfaces import build_frame_model
+from gs.common.interfaces import FrameHeader, build_frame_model
 from gs.common.interfaces.export import write_all
 from gs.common.missiondb import load_dir
 from gs.ingest.store import insert_frames
@@ -40,7 +40,7 @@ def stored_value(db: str, vehicle: str) -> float | None:
     with psycopg.connect(app_dsn(db)) as c:
         row = c.execute(f"select {PARAM} from telemetry where vehicle=%s", (vehicle,)).fetchone()
     assert row is not None
-    return row[0]
+    return float(row[0]) if row[0] is not None else None
 
 
 async def test_add_parameter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -72,8 +72,9 @@ async def test_add_parameter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
             build_frame_model(db.param_names),
             now,
         )
+        assert isinstance(frame, FrameHeader)
         async with await psycopg.AsyncConnection.connect(app_dsn(name)) as c, c.transaction():
-            assert len(await insert_frames(c, [frame], db.param_names)) == 1  # type: ignore[arg-type]
+            assert len(await insert_frames(c, [frame], db.param_names)) == 1
         assert stored_value(name, vehicle) == 41.5
     # no code change, and no generated file to commit (CI stale check stays green)
     write_all(tmp_path / "gen")

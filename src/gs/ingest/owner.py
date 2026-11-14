@@ -11,6 +11,7 @@ from gs.ingest.errors import OperationalDbError
 
 LOCK_SQL = "SELECT pg_advisory_lock(hashtext(%s))"
 UNLOCK_SQL = "SELECT pg_advisory_unlock(hashtext(%s))"
+CANCEL_TIMEOUT_S = 2.0  # a stalled cancel must not outlast the 5 s stop grace period
 # pg_locks shows a bigint advisory key split over classid (high 32 bits) / objid (low 32 bits),
 # objsubid 1; the shift recombines it, also for a negative hashtext (Review Focus 3)
 MATCH = (
@@ -37,7 +38,7 @@ async def acquire(conn: psycopg.AsyncConnection, vehicle: str, stop: asyncio.Eve
         stopped.cancel()
         if not returned:  # stop or cancellation: end the wait before anyone closes conn
             with contextlib.suppress(psycopg.Error):
-                await conn.cancel_safe()
+                await conn.cancel_safe(timeout=CANCEL_TIMEOUT_S)
             with contextlib.suppress(psycopg.Error):
                 await lock  # QueryCanceled, or granted in the same instant (freed on close)
     if returned:

@@ -9,6 +9,7 @@ from typing import Any
 import psycopg
 import pytest
 
+from gs.ingest import worker as worker_mod
 from gs.ingest.errors import OperationalDbError
 from gs.ingest.owner import LOCK_SQL, acquire, holder, waiting
 from gs.ingest.worker import Timing
@@ -139,20 +140,49 @@ async def test_lock_match_negative_hashtext() -> None:  # Review Focus 3
             assert await holder(c, v) is None
 
 
-async def test_fenced_owner_exits_before_read() -> None:  # D-ING-12, R2-06
+async def test_fenced_owner_exits_before_read(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D-ING-12, R2-06: the lock is lost between two reads (here: while a batch is handled);
+    the next pass must fail at the fence, never start another XREADGROUP."""
     v = vid()
     calm = Timing(los_s=60.0)  # keep the LOS write out of it: only the fence may notice
+    reads: list[float] = []
+    t_kill: list[float] = []
+    real_batch = worker_mod.process_batch
+
+    async def kill_once(*a: Any, **k: Any) -> Any:
+        if armed and not t_kill:  # lose the lock after this pass's fence and read
+            owner = lock_holder_pid(v)
+            assert owner is not None
+            terminate_backends([owner[0]])
+            wait_until(lambda: not backend_alive(owner[0]), 5)
+            t_kill.append(time.monotonic())
+        return await real_batch(*a, **k)
+
+    armed = False
+    monkeypatch.setattr(worker_mod, "process_batch", kill_once)
     with pytest.raises(OperationalDbError, match="fence"):
         async with worker([v], "w1", {v: "w1"}, calm) as w:
             await until(lambda: lock_holder(v) == "w1", 5)
-            with psycopg.connect(admin_dsn("gs"), autocommit=True) as a:
-                a.execute(
-                    "select pg_terminate_backend(pid) from pg_stat_activity"
-                    " where application_name = 'w1'"
-                )
-            await asyncio.wait_for(w.tasks[0], 3)  # ≤ one BLOCK, then the fence fails
+            real_read = w.ctx.redis.xreadgroup
+
+            async def spy(*a: Any, **k: Any) -> Any:
+                reads.append(time.monotonic())
+                return await real_read(*a, **k)
+
+            w.ctx.redis.xreadgroup = spy  # type: ignore[method-assign]
+            armed = True
+            await asyncio.wait_for(w.tasks[0], 5)
+    assert t_kill and all(r < t_kill[0] for r in reads)  # no read after the lock was lost
     produce(v, 5)
     assert pending_of(v, "w1") == 0  # nothing entered the fenced owner's PEL
+
+
+def backend_alive(pid: int) -> bool:
+    with psycopg.connect(admin_dsn("gs")) as c:
+        return (
+            c.execute("select 1 from pg_stat_activity where pid = %s", (pid,)).fetchone()
+            is not None
+        )
 
 
 def test_sigterm_while_waiting_on_lock() -> None:  # Review Focus 4

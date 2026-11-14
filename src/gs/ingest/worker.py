@@ -303,6 +303,7 @@ async def _run_vehicle(ctx: Ctx, vehicle: str, dsn: str, stop: asyncio.Event) ->
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), ctx.timing.start_delay_s)
         while not stop.is_set() and await acquire(conn, vehicle, stop):
+            ctx.loop_seen[vehicle] = time.monotonic()  # owned is never without a fresh pass
             ctx.owned.add(vehicle)
             try:
                 await _own(ctx, conn, vehicle, stop)  # returns on stop or after a hand-back

@@ -46,15 +46,16 @@ def test_insert_error_loop_keeps_frames() -> None:  # G19: fails without the RET
     exit, in-flight frames would reach delivery 4 and the DLQ as POISON (R15 E1)."""
     wait_backoff_reset(running_ingest())
     t0, before = now(), restarts()
-    fail_inserts(True)
     try:
+        fail_inserts(True)
         time.sleep(12)
     finally:
         fail_inserts(False)
     for s in before:
         wait_healthy(s, 60)
     wait_drained(LIVE, 30)
-    assert sum(restarts()[s] - before[s] for s in before) >= 3
+    after = restarts()
+    assert all(after[s] - before[s] >= 3 for s in before), (before, after)  # each owner looped
     time.sleep(2)
     for v in LIVE:
         seqs = seqs_since(v, t0)
@@ -67,11 +68,13 @@ def fail_inserts(on: bool) -> None:
     with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
         if on:
             c.execute(
-                "CREATE FUNCTION test_disk_full() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+                "CREATE OR REPLACE FUNCTION test_disk_full() RETURNS trigger LANGUAGE plpgsql"
+                " AS $$ BEGIN"
                 " IF NEW.vehicle IN ('NYX-TA1', 'NYX-TA2') THEN"
                 " RAISE EXCEPTION 'test disk full' USING ERRCODE = '53100'; END IF;"
                 " RETURN NEW; END $$"
             )
+            c.execute("DROP TRIGGER IF EXISTS test_disk_full ON telemetry")
             c.execute(
                 "CREATE TRIGGER test_disk_full BEFORE INSERT ON telemetry"
                 " FOR EACH ROW EXECUTE FUNCTION test_disk_full()"

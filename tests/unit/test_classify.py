@@ -128,3 +128,8 @@ def test_missing_param_counted(caplog: pytest.LogCaptureFixture) -> None:
     assert stats.missing["tank_pressure_bar"] == 2
     assert "cabin_pressure_kpa" not in stats.missing and not stats.unknown
     assert len([r for r in caplog.records if "tank_pressure_bar" in r.getMessage()]) == 1
+
+
+def test_precedence_t_onboard_over_schema() -> None:
+    old = (NOW - timedelta(days=8)).isoformat()
+    assert rec(frame_json(t_onboard=old, seq="5")).reason == "t_onboard_range"

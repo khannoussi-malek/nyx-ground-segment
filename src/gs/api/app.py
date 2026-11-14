@@ -156,6 +156,8 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, e: ApiError) -> JSONResponse:
+        if e.body is not None:
+            return JSONResponse(e.body.model_dump(mode="json"), status_code=e.status)
         return _error(e.status, e.error, e.message)
 
     @app.exception_handler(HTTPException)

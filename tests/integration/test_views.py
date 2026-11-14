@@ -113,10 +113,12 @@ async def test_alarm_view_level_last_and_ack_request(conn: psycopg.AsyncConnecti
     await transition(
         conn, a, v, "cabin_pressure_kpa", "ESCALATE", t0 + timedelta(seconds=1), "RED_LOW", 95.5
     )
-    req = uuid4()
-    await insert(
-        conn, "alarm_ack_request", request_id=req, alarm_id=a, vehicle=v, by_user="fc1", note="n"
-    )
+    req, older = uuid4(), uuid4()  # the newer request goes in first: requested_at decides
+    await insert(conn, "alarm_ack_request", request_id=req, alarm_id=a, vehicle=v, by_user="fc1",
+                 note="n", requested_at=t0 + timedelta(seconds=2))  # fmt: skip
+    await insert(conn, "alarm_ack_request", request_id=older, alarm_id=a, vehicle=v,
+                 by_user="fc2", note="n", requested_at=t0 + timedelta(seconds=1), status="rejected",
+                 status_reason="x")  # fmt: skip
     (view,) = await alarm_views(conn, vehicle=v)
     assert (view.level, view.value, view.last.kind, view.last.value) == (
         "RED_LOW", 95.5, "ESCALATE", 95.5,
@@ -130,9 +132,25 @@ async def test_alarm_view_level_last_and_ack_request(conn: psycopg.AsyncConnecti
     assert (acked.level, acked.value, acked.last.kind) == ("RED_LOW", 95.5, "ACK")
     rtn = await alarm(conn, v, "cabin_temp_c", "RTN_UNACK", "YELLOW", t0 + timedelta(seconds=3))
     await transition(conn, rtn, v, "cabin_temp_c", "RAISE", t0, "YELLOW_HIGH", 30.0)
+    await transition(
+        conn, rtn, v, "cabin_temp_c", "RTN", t0 + timedelta(seconds=4), "NOMINAL", 25.0
+    )
     views = await alarm_views(conn, vehicle=v)
     assert [x.alarm_id for x in views] == [rtn, a]  # newest opened_at first
-    assert views[0].level == "NOMINAL" and views[0].ack_request is None
+    # P-pf20: a returned alarm keeps its last non-NOMINAL level ("RETURNED · was YELLOW HIGH")
+    assert (views[0].level, views[0].value, views[0].last.kind) == ("YELLOW_HIGH", 30.0, "RTN")
+    assert views[0].ack_request is None
+
+
+async def test_alarm_value_comes_from_the_level_row(conn: psycopg.AsyncConnection) -> None:
+    v, t0 = vid(), now()
+    a = await alarm(conn, v, "rate_y_dps", "UNACK", "RED", t0)
+    await transition(conn, a, v, "rate_y_dps", "RAISE", t0, "YELLOW_HIGH", 2.5)
+    await transition(
+        conn, a, v, "rate_y_dps", "ESCALATE", t0 + timedelta(seconds=1), "RED_HIGH", None
+    )
+    (view,) = await alarm_views(conn, alarm_ids=[a])
+    assert (view.level, view.value) == ("RED_HIGH", None)  # never the older row's 2.5
 
 
 async def test_alarm_views_open_only_and_filters(conn: psycopg.AsyncConnection) -> None:
@@ -154,7 +172,7 @@ async def test_alarm_views_open_only_and_filters(conn: psycopg.AsyncConnection) 
     assert got(await alarm_views(conn, vehicle=v, state="ACKED")) == {ids["ACKED"]}
     assert got(await alarm_views(conn, vehicle=v, state="CLEARED")) == set()  # open only
     cleared = await alarm_views(conn, alarm_ids=[ids["CLEARED"]], open_only=False)
-    assert cleared[0].level == "NOMINAL" and cleared[0].closed_at is not None
+    assert cleared[0].level == "YELLOW_HIGH" and cleared[0].closed_at is not None  # P-pf20
 
 
 async def test_event_views_include_vehicle_null(conn: psycopg.AsyncConnection) -> None:

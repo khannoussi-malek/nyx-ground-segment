@@ -59,7 +59,9 @@ class AlarmView(_Sse):
     param: str
     state: AlarmState
     severity: Literal["YELLOW", "RED"]
-    level: str  # "NOMINAL", "RED", or "<SEV>_<SIDE>", side in LOW HIGH RISING FALLING
+    # last non-NOMINAL level in every state (RTN_UNACK/CLEARED: what it was, P-pf20): "RED" or
+    # "<SEV>_<SIDE>", side in LOW HIGH RISING FALLING; "NOMINAL" only if no row had one
+    level: str
     value: float | None  # the reading of the row `level` comes from (P-pf4: kept after an ACK)
     trigger_check: str
     limits_sha256: str

@@ -88,6 +88,8 @@ def alarm_id_for(raise_key: str) -> uuid.UUID:
 def _iso(o: object) -> str:
     if isinstance(o, datetime):
         return iso_z(o)  # D-ENG-18: every time leaving the process
+    if isinstance(o, uuid.UUID):
+        return str(o)
     raise TypeError(f"not JSON serializable: {type(o).__name__}")
 
 

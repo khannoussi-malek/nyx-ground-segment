@@ -54,12 +54,15 @@ CREATE TABLE alarm_events (                              -- history; never prune
   limits_sha256 text NOT NULL,                           -- = sha256sum mission/limits.yaml (ALM-08); bytes in limits_versions.limits_yaml
   set_sha256 text NOT NULL REFERENCES limits_versions);  -- the whole set that produced this row (EX-10, Q6)
 
+CREATE INDEX alarm_events_by_alarm ON alarm_events (alarm_id, id);   -- views: newest row per alarm (P-pf21)
+
 CREATE TABLE alarm_ack_request (                         -- D-ALM-14: API inserts, owner worker applies
   request_id uuid PRIMARY KEY, alarm_id uuid NOT NULL REFERENCES alarms, vehicle text NOT NULL,
   by_user text NOT NULL, note text NOT NULL CHECK (length(trim(note)) > 0),
   requested_at timestamptz NOT NULL DEFAULT clock_timestamp(), applied_at timestamptz,
   status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','applied','superseded','rejected')),
   status_reason text);                                   -- superseded: alarm already ACKED; rejected: SAVEPOINT error (R2-01, R2-10)
+CREATE INDEX alarm_ack_request_by_alarm ON alarm_ack_request (alarm_id, requested_at);   -- views: newest request (P-pf21)
 
 CREATE TABLE commands (                                  -- current state; full history lives in audit_log
   cmd_id uuid PRIMARY KEY, vehicle text NOT NULL, name text NOT NULL, args jsonb NOT NULL,

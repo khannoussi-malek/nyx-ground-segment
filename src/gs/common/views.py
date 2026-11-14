@@ -31,12 +31,12 @@ ORDER BY queued_at DESC, cmd_id
 LIMIT %(limit)s
 """
 
-# last = newest alarm_events row; lv = newest row with a level (its value goes with it, P-pf4)
+# last = newest alarm_events row; lv = newest row with a non-NOMINAL level, its value with it
+# (P-pf4), in every state, so a returned alarm still says what it was (P-pf20)
 _ALARMS = """
 SELECT a.alarm_id, a.vehicle, a.param, a.state, a.severity, a.trigger_check, a.limits_sha256,
        a.set_sha256, a.opened_at, a.closed_at,
-       CASE WHEN a.state IN ('RTN_UNACK', 'CLEARED') THEN 'NOMINAL' ELSE lv.level END AS level,
-       lv.value,
+       lv.level, lv.value,
        last.key AS t_key, last.kind AS t_kind,
        coalesce(last.trigger_t_onboard, last.processed_at) AS t_t, last.alert AS t_alert,
        last.by_user AS t_by_user, last.note AS t_note, last.check_kind AS t_check_kind,
@@ -46,7 +46,7 @@ FROM alarms a
 JOIN LATERAL (SELECT * FROM alarm_events e WHERE e.alarm_id = a.alarm_id
               ORDER BY e.id DESC LIMIT 1) last ON true
 LEFT JOIN LATERAL (SELECT e.level, e.value FROM alarm_events e
-                   WHERE e.alarm_id = a.alarm_id AND e.level IS NOT NULL
+                   WHERE e.alarm_id = a.alarm_id AND e.level <> 'NOMINAL'
                    ORDER BY e.id DESC LIMIT 1) lv ON true
 LEFT JOIN LATERAL (SELECT * FROM alarm_ack_request q WHERE q.alarm_id = a.alarm_id
                    ORDER BY q.requested_at DESC LIMIT 1) r ON true
@@ -135,7 +135,8 @@ async def alarm_views(
     alarm_ids: Sequence[UUID] | None = None,
     open_only: bool = True,
 ) -> list[AlarmView]:
-    """Newest opened_at first; an alarm without any alarm_events row is not listed."""
+    """Newest opened_at first; `level`/`value` = the last non-NOMINAL level in any state
+    (RTN_UNACK, CLEARED: what it was); an alarm without any alarm_events row is not listed."""
     ids = None if alarm_ids is None else list(alarm_ids)
     p = {"vehicle": vehicle, "severity": severity, "state": state, "ids": ids,
          "open_only": open_only}  # fmt: skip

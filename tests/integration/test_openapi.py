@@ -61,7 +61,7 @@ def test_rest_surface_is_final() -> None:
         assert _schema(paths[report]["get"], "409").endswith("/ReportConflict")
     csv = paths["/api/sessions/{session_id}/report.csv"]["get"]["responses"]["200"]["content"]
     assert list(csv) == ["text/csv"]
-    # R19: a body that is not JSON/UTF-8 is a 400; login documents its rate limit (D-ENG-08)
+    # R19: a body that is not UTF-8 is a 400 (bad JSON is 422); login documents its rate limit
     for path in ("/api/login", "/api/commands", "/api/alarms/{alarm_id}/ack", "/api/sessions"):
         assert _schema(paths[path]["post"], "400") == ERR, path
     assert _schema(paths["/api/login"]["post"], "429") == ERR

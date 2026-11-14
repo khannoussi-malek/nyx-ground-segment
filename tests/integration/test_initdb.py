@@ -99,3 +99,14 @@ def test_ack_invalid_and_alarm_value_columns() -> None:
             " state, failure_reason, queued_at) values (gen_random_uuid(), 'V', 'n', '{}', 'h',"
             " false, 'u', 'FAILED', 'ACK_INVALID', now())"
         )
+
+
+def test_view_lookup_indexes() -> None:  # P-pf21: alarm_views' lateral lookups per alarm
+    with throwaway_db() as db, psycopg.connect(owner_dsn(db)) as c:
+        rows = c.execute(
+            "select tablename, indexdef from pg_indexes where tablename in"
+            " ('alarm_events', 'alarm_ack_request')"
+        ).fetchall()
+    defs = {(t, d.split(" USING ")[1]) for t, d in rows}
+    assert ("alarm_events", "btree (alarm_id, id)") in defs
+    assert ("alarm_ack_request", "btree (alarm_id, requested_at)") in defs

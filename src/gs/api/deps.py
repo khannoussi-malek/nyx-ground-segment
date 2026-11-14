@@ -5,15 +5,21 @@ from http import HTTPStatus
 from typing import Annotated
 
 from fastapi import Depends, Request
+from pydantic import BaseModel
 
 from gs.api.bodies import ErrorBody
 from gs.common.missiondb import MissionDb
 
 
 class ApiError(Exception):
-    def __init__(self, status: int, error: str, message: str) -> None:
+    """`body`: the route's own error model (CommandConflict, ReportConflict) instead of
+    ErrorBody; it carries `error` and `message` itself."""
+
+    def __init__(
+        self, status: int, error: str, message: str, body: BaseModel | None = None
+    ) -> None:
         super().__init__(message)
-        self.status, self.error, self.message = status, error, message
+        self.status, self.error, self.message, self.body = status, error, message, body
 
 
 def sess_key(sid: str) -> str:

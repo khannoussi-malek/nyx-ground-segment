@@ -236,3 +236,46 @@ async def test_tracker_runs_every_pass_caught_up_after_a_short_read(
     # drain pass (XAUTOCLAIM, no `>` read), full read, short read, then idle reads
     assert [c[:2] for c in calls[:4]] == [(v, False), (v, False), (v, True), (v, True)]
     assert [c[2] for c in calls[:3]] == [0, worker_mod.COUNT, worker_mod.COUNT + 50]  # after COMMIT
+
+
+async def test_tracker_error_never_stops_the_worker(monkeypatch: pytest.MonkeyPatch) -> None:
+    async def broken(ctx: Any, conn: Any, vehicle: str, caught_up: bool) -> None:
+        raise RuntimeError("tracker bug")
+
+    monkeypatch.setattr(worker_mod, "track_pass", broken)
+    v = vid()
+    produce(v, 10)
+    async with worker([v]) as w:
+        await until(lambda: stored(v) == 10 and w.ctx.counters["cmd_tracker_errors"] >= 2, 10)
+        produce(v, 10, start_seq=10)  # frames keep landing after tracker failures (D-ING-24)
+        await until(lambda: stored(v) == 20, 10)
+        assert not w.done()
+
+
+async def test_tracker_runs_after_a_redis_error_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    log: list[object] = []
+
+    async def track(ctx: Any, conn: Any, vehicle: str, caught_up: bool) -> None:
+        log.append(("track", caught_up))
+
+    monkeypatch.setattr(worker_mod, "track_pass", track)
+    v = vid()
+    async with worker([v]) as w:
+        await until(lambda: ("track", True) in log, 10)
+        real_read, real_claim = w.ctx.redis.xreadgroup, w.ctx.redis.xautoclaim
+
+        async def read_once_down(*a: Any, **k: Any) -> Any:
+            if "down" not in log:
+                log.append("down")
+                raise redis.exceptions.ConnectionError("broker down")
+            return await real_read(*a, **k)
+
+        async def claim(*a: Any, **k: Any) -> Any:
+            log.append("claim")
+            return await real_claim(*a, **k)
+
+        monkeypatch.setattr(w.ctx.redis, "xreadgroup", read_once_down)
+        monkeypatch.setattr(w.ctx.redis, "xautoclaim", claim)
+        await until(lambda: "claim" in log, 10)
+    after = log[log.index("down") + 1 :]
+    assert after[:2] == [("track", False), "claim"]  # the failed pass itself ran the tracker

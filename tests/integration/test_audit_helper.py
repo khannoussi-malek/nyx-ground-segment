@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import psycopg
 
@@ -32,3 +33,11 @@ async def test_audit_in_the_callers_transaction() -> None:
         await audit(c, actor, "LOGOUT")
     (row,) = audit_rows(actor=actor)
     assert (row["reason"], row["details"]) == (None, {})
+
+
+async def test_audit_details_uuids_as_strings() -> None:
+    actor, ids = f"t-{vid()}", {k: uuid4() for k in ("cmd_id", "alarm_id", "request_id")}
+    async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as c:
+        await audit(c, actor, "ALARM_ACK", "note", ids)
+    (row,) = audit_rows(actor=actor)
+    assert row["details"] == {k: str(v) for k, v in ids.items()}

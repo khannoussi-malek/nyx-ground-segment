@@ -1,5 +1,7 @@
 """The compose `api` service, through its published port, with the demo users from .env."""
 
+from collections.abc import Iterator
+
 import httpx
 import pytest
 
@@ -7,8 +9,12 @@ from tests.support.env import dotenv, sh
 from tests.support.http import login
 
 
-def test_compose_config_is_valid() -> None:
-    sh("docker", "compose", "config", "-q")
+@pytest.fixture(scope="module", autouse=True)
+def up() -> Iterator[None]:
+    sh("docker", "compose", "config", "-q")  # R16
+    sh("docker", "compose", "up", "-d", "--build", "--wait", "api")
+    yield
+    sh("docker", "compose", "stop", "api")
 
 
 @pytest.fixture

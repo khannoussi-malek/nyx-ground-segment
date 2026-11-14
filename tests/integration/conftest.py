@@ -7,26 +7,7 @@ import yaml
 
 from gs.api.app import create_app
 from gs.api.auth import hash_password
-from gs.api.settings import Settings
-from tests.support.env import REPO, dotenv
-from tests.support.pg import app_dsn
-
-FC1_PW, FC2_PW = "fc1-test-password", "fc2-test-password"
-
-
-def api_settings(users_file: Path, **over: str) -> Settings:
-    env = dotenv()
-    return Settings(
-        redis_url=over.get(
-            "redis_url",
-            f"redis://api:{env['REDIS_API_PW']}@127.0.0.1:{env['REDIS_HOST_PORT']}/0",
-        ),
-        database_url=over.get("database_url", app_dsn("gs")),
-        session_secret="test-secret",
-        users_file=users_file,
-        mission_db=REPO / "mission",
-        vehicles=("NYX-TA1",),
-    )
+from tests.support.http import FC1_PW, FC2_PW, api_settings
 
 
 @pytest.fixture(scope="session")

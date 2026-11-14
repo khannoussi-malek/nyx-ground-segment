@@ -1,6 +1,7 @@
 """FastAPI app: every route lives on ROUTER with its full path (Task 15/16 add to it)."""
 
 import asyncio
+import logging
 import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
@@ -35,6 +36,7 @@ CLIENT_HEADER = "X-GS-Client"
 SOCKET_TIMEOUT_S = 5
 CHECK_TIMEOUT_S = 2
 ROUTER = APIRouter()
+log = logging.getLogger(__name__)
 User = Annotated[str, Depends(current_user)]
 
 
@@ -74,6 +76,9 @@ async def login(body: LoginRequest, request: Request) -> Response:
         raise ApiError(HTTPStatus.UNAUTHORIZED, "LOGIN_FAILED", "wrong user or password")
     sid = secrets.token_urlsafe(32)
     await request.app.state.redis.set(sess_key(sid), body.user, ex=SESSION_TTL_S)
+    old = request.session.get("sid")
+    if isinstance(old, str):  # re-login must not leave the previous session alive
+        await request.app.state.redis.delete(sess_key(old))
     request.session.clear()
     request.session["sid"] = sid
     return Response(status_code=204)
@@ -107,7 +112,8 @@ async def healthz(request: Request) -> Response:
         try:
             await asyncio.wait_for(check(request), CHECK_TIMEOUT_S + 1)
             checks[name] = "ok"
-        except Exception:  # any failure means that dependency is down
+        except Exception as e:  # any failure means that dependency is down
+            log.warning("healthz %s check failed: %s: %s", name, type(e).__name__, e)
             checks[name] = "down"
     up = all(v == "ok" for v in checks.values())
     body = Health(status="ok" if up else "down", checks=checks)
@@ -140,6 +146,7 @@ def create_app(settings: Settings) -> FastAPI:
             await app.state.redis.aclose()
 
     app = FastAPI(lifespan=lifespan)
+    # ponytail: https_only left off, the deployment is loopback-only plain http
     app.add_middleware(
         SessionMiddleware,
         secret_key=settings.session_secret,
@@ -176,7 +183,8 @@ def create_app(settings: Settings) -> FastAPI:
         return _error(422, "VALIDATION_ERROR", f"{loc}: {first['msg']}")
 
     @app.exception_handler(redis.RedisError)
-    async def _redis_down(_: Request, e: redis.RedisError) -> JSONResponse:
+    async def _redis_down(request: Request, e: redis.RedisError) -> JSONResponse:
+        log.warning("session store error on %s: %s: %s", request.url.path, type(e).__name__, e)
         return _error(503, "UNAVAILABLE", "session store unreachable")
 
     return app

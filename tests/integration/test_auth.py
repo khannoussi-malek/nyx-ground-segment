@@ -1,14 +1,15 @@
 import json
+import logging
+from pathlib import Path
 
 import httpx
 import pytest
 from fastapi.routing import APIRoute
 from itsdangerous import TimestampSigner
 
-from gs.api.app import ROUTER
-from tests.integration.conftest import FC1_PW, FC2_PW
+from gs.api.app import ROUTER, create_app
 from tests.support.http import CLIENT_HEADERS as H
-from tests.support.http import login
+from tests.support.http import FC1_PW, FC2_PW, api_settings, login, session_sid
 from tests.support.redisx import client as redis_client
 
 
@@ -29,9 +30,18 @@ async def test_identity_follows_the_session_user(api_client: httpx.AsyncClient) 
 
 async def test_session_lives_in_redis_with_ttl(api_client: httpx.AsyncClient) -> None:
     await login(api_client, "fc1", FC1_PW)
-    keys = list(redis_client("admin").keys("sess:*"))
-    mine = [k for k in keys if redis_client("admin").get(k) == "fc1"]
-    assert mine and 0 < int(redis_client("admin").ttl(mine[0])) <= 43200
+    admin, key = redis_client("admin"), f"sess:{session_sid(api_client)}"
+    assert admin.get(key) == "fc1"
+    assert 43000 < int(admin.ttl(key)) <= 43200
+
+
+async def test_relogin_revokes_the_previous_session(api_client: httpx.AsyncClient) -> None:
+    await login(api_client, "fc1", FC1_PW)
+    old = f"sess:{session_sid(api_client)}"
+    await login(api_client, "fc2", FC2_PW)
+    admin = redis_client("admin")
+    assert admin.get(old) is None
+    assert admin.get(f"sess:{session_sid(api_client)}") == "fc2"
 
 
 async def test_logout_revokes_replayed_cookie(api_client: httpx.AsyncClient) -> None:
@@ -46,7 +56,7 @@ async def test_logout_revokes_replayed_cookie(api_client: httpx.AsyncClient) -> 
 
 async def test_forged_cookie_is_rejected(api_client: httpx.AsyncClient) -> None:
     await login(api_client, "fc1", FC1_PW)
-    sid = str(next(iter(redis_client("admin").keys("sess:*")))).removeprefix("sess:")
+    sid = session_sid(api_client)
     forged = TimestampSigner("other").sign(json.dumps({"sid": sid}).encode())
     # right sid but unsigned / signed with another secret / garbage: must not authenticate
     for bad in (sid, forged.decode(), "x.y.z"):
@@ -57,8 +67,7 @@ async def test_forged_cookie_is_rejected(api_client: httpx.AsyncClient) -> None:
 
 async def test_expired_session_in_redis_is_401(api_client: httpx.AsyncClient) -> None:
     await login(api_client, "fc1", FC1_PW)
-    for k in redis_client("admin").keys("sess:*"):
-        redis_client("admin").delete(k)
+    redis_client("admin").delete(f"sess:{session_sid(api_client)}")
     assert (await api_client.get("/api/me")).status_code == 401
 
 
@@ -118,14 +127,23 @@ async def test_unknown_route_uses_error_body(api_client: httpx.AsyncClient) -> N
     assert r.status_code == 404 and r.json()["error"] == "NOT_FOUND"
 
 
-async def test_login_503_when_redis_unreachable(users_file: object) -> None:
+async def test_login_503_when_redis_unreachable(users_file: Path) -> None:
     from gs.api.app import create_app
-    from tests.integration.conftest import api_settings
 
-    app = create_app(api_settings(users_file, redis_url="redis://127.0.0.1:1/0"))  # type: ignore[arg-type]
+    app = create_app(api_settings(users_file, redis_url="redis://127.0.0.1:1/0"))
     async with app.router.lifespan_context(app):
         async with httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app), base_url="http://a"
         ) as c:
             r = await login(c, "fc1", FC1_PW)
     assert r.status_code == 503 and r.json()["error"] == "UNAVAILABLE"
+
+
+async def test_redis_failure_is_logged(users_file: Path, caplog: pytest.LogCaptureFixture) -> None:
+    app = create_app(api_settings(users_file, redis_url="redis://127.0.0.1:1/0"))
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://a") as c:
+            with caplog.at_level(logging.WARNING, logger="gs.api"):
+                await login(c, "fc1", FC1_PW)
+    assert any("ConnectionError" in r.getMessage() for r in caplog.records)

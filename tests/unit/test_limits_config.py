@@ -52,6 +52,20 @@ def test_floor_values() -> None:
     assert floor(shipped_limit("cabin_pressure_kpa")) == pytest.approx(1.59)
     assert floor(shipped_limit("bus_current_a")) == pytest.approx(0.15)  # one-sided: |limit| only
     assert floor(shipped_limit("rate_x_dps")) == pytest.approx(0.15)  # 1 % of span 10 > 1 % of 5
+    # one-sided bounds crossing zero: span 15 is ignored (0.225 if it counted), |limit| 10 rules
+    crossing = LimitCheck(type="limit", yellow_high=-10.0, red_high=5.0, hysteresis_abs=1.0)
+    assert floor(crossing) == pytest.approx(0.15)
+
+
+def test_span_of_two_sided_check_missing_a_red_bound() -> None:
+    # extends D-ALM-02's span (red_high - red_low) to the outermost bounds (ruling G10)
+    cfg = LimitCheck(
+        type="limit", red_low=95.0, yellow_low=98.0, yellow_high=104.0, hysteresis_pct=10.0
+    )
+    assert deadband(cfg) == pytest.approx(0.9)  # 10 % of 104 - 95
+    assert floor(cfg) == pytest.approx(1.56)  # 1.5 x 1 % of |104|
+    with pytest.raises(MissionDbError, match="cabin_pressure_kpa: deadband 0.9 below floor 1.56"):
+        load_with(limits_edit("red_high: 106.0, hysteresis_pct: 15", "hysteresis_pct: 10"))
 
 
 def test_deadband_values() -> None:

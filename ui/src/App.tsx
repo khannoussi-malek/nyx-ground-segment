@@ -4,6 +4,7 @@ import { armAudio, beep, beepsFor, tone, toneActive, toneKeys, type ToneState } 
 import { sessionKeySet } from "./keySet";
 import { AlarmList } from "./AlarmList";
 import { CommandPanel } from "./CommandPanel";
+import { EventStrip } from "./EventStrip";
 import { LiveTable } from "./LiveTable";
 import { Login } from "./Login";
 import { bootUser, checkSession, loadMission, safeLogout } from "./session";
@@ -123,6 +124,7 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
       <main>
         <LiveTable store={store} mission={mission} />
       </main>
+      <EventStrip store={store} />
     </div>
   );
 }

@@ -89,6 +89,7 @@ test("App: logged in shows the console, opens the event stream and loads the mis
   expect(host.querySelector("main")).not.toBeNull();
   expect(host.querySelector('section[aria-label="Alarms"]')).not.toBeNull(); // mounted (P-pf10)
   expect(host.querySelector('section[aria-label="Commands"]')).not.toBeNull();
+  expect(host.querySelector('section[aria-label="Events"]')).not.toBeNull();
   expect(FakeEventSource.opened).toEqual(["/api/events"]);
   expect(f).toHaveBeenCalledWith("/api/mission-db", { credentials: "same-origin" });
 });

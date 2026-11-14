@@ -24,7 +24,9 @@ function Console({ user, onLogout }: { user: string; onLogout: () => void }) {
         <span>{user}</span>
         <button onClick={() => void safeLogout(logout).then(onLogout)}>Log out</button>
       </header>
-      <LiveTable store={store} />
+      <main>
+        <LiveTable store={store} />
+      </main>
     </>
   );
 }

@@ -1,26 +1,34 @@
-import { useSyncExternalStore } from "react";
-import { formatValue, sortedEntries } from "./format";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { ageAt, sortedEntries } from "./format";
 import type { Store } from "./store";
+import { VehicleCard } from "./VehicleCard";
 
-function VehicleTable({ store, v }: { store: Store; v: string }) {
+const AGE_TICK_MS = 100; // D-UI-05 clock tick
+
+function useNow(ms: number): number {
+  const [now, setNow] = useState(() => performance.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(performance.now()), ms);
+    return () => clearInterval(id);
+  }, [ms]);
+  return now;
+}
+
+function Vehicle({ store, v }: { store: Store; v: string }) {
   const tm = useSyncExternalStore(store.subscribe, () => store.vehicle(v));
+  const now = useNow(AGE_TICK_MS);
   if (!tm) return null;
+  // ponytail: ids only until GET /api/mission-db lands here (labels, units, limits), states on day 3
+  const params = sortedEntries(tm.values).map(([id, value]) => ({ id, value }));
   return (
-    <table>
-      <caption>
-        {v} {tm.mode} seq {tm.seq} {tm.t_onboard}
-      </caption>
-      <tbody>
-        {sortedEntries(tm.values).map(([p, value]) => (
-            <tr key={p}>
-              <th scope="row">{p}</th>
-              <td data-vehicle={v} data-param={p} data-seq={tm.seq} data-t-onboard={tm.t_onboard}>
-                {formatValue(value)}
-              </td>
-            </tr>
-          ))}
-      </tbody>
-    </table>
+    <VehicleCard
+      vehicle={v}
+      mode={tm.mode}
+      seq={tm.seq}
+      tOnboard={tm.t_onboard}
+      ageMs={ageAt(tm.age_ms, store.receivedAt(v), now)}
+      params={params}
+    />
   );
 }
 
@@ -29,7 +37,7 @@ export function LiveTable({ store }: { store: Store }) {
   return (
     <>
       {vehicles.map((v) => (
-        <VehicleTable key={v} store={store} v={v} />
+        <Vehicle key={v} store={store} v={v} />
       ))}
     </>
   );

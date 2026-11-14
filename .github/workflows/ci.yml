@@ -19,6 +19,7 @@ jobs:
       - run: uv run ruff check
       - run: uv run ruff format --check
       - run: uv run mypy --strict src tests
+      - run: make gen && git diff --exit-code -- interfaces || (echo "generated code is stale: run make gen"; exit 1)
 
   test:
     runs-on: ubuntu-latest

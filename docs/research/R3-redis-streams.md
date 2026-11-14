@@ -55,7 +55,7 @@ Versions checked (2026-11-13): Redis **8.10.3** is the latest stable release (8.
   - After acking the 500 delivered entries, it went to **502**: the never-delivered entries were kept too.
   - Plain `MAXLEN = 10` (KEEPREF) cut it to **10**.
 
-  `ACKED` therefore protects both un-acked and never-delivered entries. UNVERIFIED: that `~` combined with `ACKED` behaves the same way (I only tested `=`).
+  `ACKED` therefore protects both un-acked and never-delivered entries. **VERIFIED** for `~` (redis 8.2, 2026-11-14): with 200 acked, 50 pending and 150 never-delivered entries, `XTRIM MAXLEN ~ 10 ACKED` trims exactly the 200 acked ones, same as `=`.
 - `ACKED` checks **all** groups. A second group on `tm:<vehicle>` (e.g. a separate alarm group) would hold back trimming until that group acks too — [XTRIM](https://redis.io/docs/latest/commands/xtrim/)
 - Size, local probe: 36 000 frames shaped like §3 cost about **110 B/entry** when each value is a separate stream field, and **311 B/entry** as one JSON blob field. Streams compress repeated field names.
   - At 10 Hz that is about 95 MB/day per vehicle (fields layout).
@@ -99,13 +99,13 @@ Versions checked (2026-11-13): Redis **8.10.3** is the latest stable release (8.
 | | Redis Streams | Kafka | NATS JetStream |
 |---|---|---|---|
 | Delivery | at-least-once via PEL + XACK; claims are explicit ([intro](https://redis.io/docs/latest/develop/data-types/streams/)) | at-least-once by default; process, then commit offset ([design](https://kafka.apache.org/43/design/design/)) | at-least-once; AckWait (30 s default) redelivers ([ack docs](https://docs.nats.io/learn/jetstream/acknowledgment)) |
-| Retry limit / DLQ | delivery count + your own DLQ stream | none built in (UNVERIFIED for 4.x) | `MaxDeliver` + `BackOff`, then a max-deliveries advisory; **no built-in DLQ** ([ack docs](https://docs.nats.io/learn/jetstream/acknowledgment)) |
+| Retry limit / DLQ | delivery count + your own DLQ stream | **CONTRADICTED** for 4.x **share groups**: `group.share.delivery.count.limit` (default 5, range 2–10; KIP-932 production-ready in 4.2) and a share-group DLQ since 4.4 (KIP-1191). Classic consumer groups still have neither | `MaxDeliver` + `BackOff`, then a max-deliveries advisory; **no built-in DLQ** ([ack docs](https://docs.nats.io/learn/jetstream/acknowledgment)) |
 | Ordering | per stream; lost with N consumers on one stream | total order per partition, one consumer per partition per group ([design](https://kafka.apache.org/43/design/design/)) | redelivery arrives after later messages unless MaxAckPending=1 ([ack docs](https://docs.nats.io/learn/jetstream/acknowledgment)) |
 | Storage | RAM + AOF/RDB; async replication | disk log; acks 0/1/all ([design](https://kafka.apache.org/43/design/design/)) | memory or disk ([JetStream](https://docs.nats.io/nats-concepts/jetstream)) |
 | Producer dedup | `IDMP` (8.6+) | idempotent producer | `Nats-Msg-Id`, 2 min window ([deep dive](https://docs.nats.io/using-nats/developer/develop_jetstream/model_deep_dive)) |
 | Ops cost for us | already in the stack (spec §3 says `tm:<vehicle>` streams) | new cluster + client lib | new server |
 
-- Load at review Q11 (10 vehicles × 100 Hz): 1 000 XADD/s. Redis docs report 0.5–1 M XADD/s with pipelining "in an average machine" — [streams intro](https://redis.io/docs/latest/develop/data-types/streams/). The broker is not the first bottleneck. More likely the Python worker (parse + DB insert) or the Postgres insert rate (R6/R10), or AOF `always` fsync on Docker Desktop disks (UNVERIFIED, to be measured in ATP-08).
+- Load at review Q11 (10 vehicles × 100 Hz): 1 000 XADD/s. Redis docs report 0.5–1 M XADD/s with pipelining "in an average machine" — [streams intro](https://redis.io/docs/latest/develop/data-types/streams/). The broker is not the first bottleneck. More likely the Python worker (parse + DB insert) or the Postgres insert rate (R6/R10), or AOF `always` fsync on Docker Desktop disks (**STILL UNVERIFIED**: to be measured in ATP-08).
 
 ## Decision candidate
 
@@ -124,7 +124,7 @@ Versions checked (2026-11-13): Redis **8.10.3** is the latest stable release (8.
 **Rejected:**
 - Kafka — partitions would give per-vehicle order for free (R4), but it adds a JVM/KRaft service, has no built-in DLQ, and offers more durability than a 25 h single-node bench tool needs.
 - NATS JetStream — MaxDeliver/BackOff come built in, but it is a new service and still has no DLQ.
-- `XREADGROUP ... CLAIM` (8.4) — a nicer single call, but it is newer and its redis-py reply parsing is UNVERIFIED. Keep it as an upgrade.
+- `XREADGROUP ... CLAIM` (8.4) — a nicer single call, but it is newer and its redis-py reply parsing is **STILL UNVERIFIED** (not used; upgrade only). Keep it as an upgrade.
 - `appendfsync everysec` — loses up to 1 s on a hard kill, which breaks "0 frames lost".
 
 **Commands**
@@ -192,7 +192,7 @@ redis:
   command: [redis-server, --appendonly, "yes", --appendfsync, always, --save, "300 10",
             --maxmemory, 512mb, --maxmemory-policy, noeviction]
   volumes: [redis-data:/data]          # AOF + RDB survive container recreate
-  stop_grace_period: 30s               # let SHUTDOWN flush (UNVERIFIED: docker default is 10 s)
+  stop_grace_period: 30s               # let SHUTDOWN flush (**VERIFIED**: `docker stop` and Compose `stop_grace_period` default to 10 s)
   healthcheck: {test: [CMD, redis-cli, ping], interval: 2s, timeout: 2s, retries: 15}
 ```
 **Producer (simulator / bench gateway):** it must buffer frames in order while Redis is down (a bounded deque, 10 s × 10 Hz × 2 = 200 frames), then flush on reconnect. Without that, ENG-02 creates real gaps, and ING-04 would correctly report them as a GAP.
@@ -219,3 +219,18 @@ redis:
 4. One DLQ `tm:dlq` for both malformed (ING-02) and poison (ING-08), with a `reason` field? Assumed yes.
 5. Stream retention target: `MAXLEN ~ 360000` per vehicle (about 10 h at 10 Hz, 1 h at 100 Hz)? It only needs to cover the longest worker outage we accept. The DB and archive are the record.
 6. Does the live UI read from the stream (XREAD, no group) or from the DB/pub-sub? If it used a second consumer group, that would affect `ACKED` trimming (R9).
+
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources, source code or by test. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| `XTRIM ~ … ACKED` protects unacked entries | VERIFIED | redis 8.2 test | D-ING (stream trimming) |
+| Kafka 4.x has no retry limit / DLQ | CONTRADICTED (share groups) | Kafka source + 4.2/4.4 upgrade notes | D-ING-01 rationale ("no DLQ") |
+| AOF `always` fsync on Docker Desktop disks as bottleneck | STILL UNVERIFIED | measurement pending | D-ING-07 |
+| `XREADGROUP … CLAIM` in redis-py | STILL UNVERIFIED | not tested; not used | none |
+| Docker default stop timeout 10 s | VERIFIED | Docker docs, Compose spec | D-ENG-03 |
+
+CONTRADICTED: Kafka 4.x has no retry limit / DLQ.

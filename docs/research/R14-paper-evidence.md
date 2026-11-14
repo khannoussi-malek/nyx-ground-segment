@@ -94,7 +94,7 @@ Verdicts are my reading of the quoted passage (PaperLab model not used, see Meth
 | Detection delay computed with Markov chains | Adnan, Izadi & Chen 2011 | **Not checkable yet**: the owner upload is recorded (R15 session) but still metadata-only in PaperLab | — |
 | Chatter can be measured from run-length distributions | Kondaveeti et al. 2010 | **Supported** | p. 3 |
 | Online method removes chattering alarms using alarm durations and intervals ("title only, not read") | Wang & Chen 2014 | **Supported**; R8's "title only" is now out of date | p. 4 (Rules 3a/3b, delay timer), p. 9 (conclusion) |
-| Flood: > 10 new alarms / 10 min, ends < 5 (secondary, UNVERIFIED) | (Chemical Engineering magazine) | **Now supported by a peer-reviewed source**: Wang 2016 p. 7, citing Rothenberg 2009 and ISA/EEMUA. The "< 1 % of time in flood" target is still UNVERIFIED | Wang 2016 p. 7 |
+| Flood: > 10 new alarms / 10 min, ends < 5 (secondary, UNVERIFIED) | (Chemical Engineering magazine) | **Now supported by a peer-reviewed source**: Wang 2016 p. 7, citing Rothenberg 2009 and ISA/EEMUA. The "< 1 % of time in flood" target is still UNVERIFIED (2026-11-14: confirmed only by a secondary source, Siemens' reproduction of the ISA-18.2 metrics table; see the R8 verification pass) | Wang 2016 p. 7 |
 | "All seven papers … abstract only; no free PDFs" | — | **Out of date**: five now have full text (Wang 2016, Gyasi 2022, Izadi 2009, Kondaveeti 2010, Wang & Chen 2014) | — |
 
 Suggested R8 tag updates: Wang 2016 → `verified: full text p. 1, 7 (read)`. Gyasi 2022 → `p. 1–2`. Izadi 2009 → `p. 4–6, partly`. Kondaveeti 2010 → `p. 3`. Wang & Chen 2014 → `p. 4`.
@@ -110,3 +110,14 @@ Suggested R8 tag updates: Wang 2016 → `verified: full text p. 1, 7 (read)`. Gy
 7. Cheng, Izadi & Chen 2013, Chem. Eng. Res. Des., [10.1016/j.cherd.2012.11.001](https://doi.org/10.1016/j.cherd.2012.11.001), and Kondaveeti et al. 2012, Comput. Chem. Eng., [10.1016/j.compchemeng.2012.06.042](https://doi.org/10.1016/j.compchemeng.2012.06.042): flood pattern matching and alarm-assessment plots, if E-3 shows floods.
 8. Patterson, Watts-Perotti & Woods 1999, CSCW, [10.1023/A:1008722214282](https://doi.org/10.1023/A:1008722214282): Shuttle mission-control coordination; the only mission-control operations study found (metadata only).
 9. Anderson et al. 2016, J. MIS (DOI in §1): the polymorphic-warning design; would firm up E-8 beyond Bravo-Lillo.
+
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources, source code or by test. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| "< 1 % of time in flood" target | PARTLY VERIFIED (secondary) | Siemens/processonline reproduction of the ISA-18.2 table | D-ALM-15 |
+
+CONTRADICTED: none.

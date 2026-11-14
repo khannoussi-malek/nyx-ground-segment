@@ -44,7 +44,7 @@ Method: public web pages only, read 2026-11-13. The devjobs.de link from the spe
 
 ### 2. TEC and Nyx, dated
 
-- TEC founded 2021 — [Wikipedia: Nyx](https://en.wikipedia.org/wiki/Nyx_(spacecraft)). Offices in Munich, Bordeaux, Turin and Houston — [Hogan Lovells, Series B](https://hlc.com/en/news/hogan-lovells-conseille-the-exploration-company-dans-le-cadre-de-sa-serie-b-de-160-millions-de-dollars). TEC's own ALADDIN post says Nyx is developed "across sites in Munich, Bordeaux, and Torino" — [TEC blog](https://www.exploration.space/blog/the-exploration-company-wins-esa-aladdin-cargo-capsule-contract). New HQ in Oberpfaffenhofen from Oct 2025: UNVERIFIED (only a Wikipedia mirror).
+- TEC founded 2021 — [Wikipedia: Nyx](https://en.wikipedia.org/wiki/Nyx_(spacecraft)). Offices in Munich, Bordeaux, Turin and Houston — [Hogan Lovells, Series B](https://hlc.com/en/news/hogan-lovells-conseille-the-exploration-company-dans-le-cadre-de-sa-serie-b-de-160-millions-de-dollars). TEC's own ALADDIN post says Nyx is developed "across sites in Munich, Bordeaux, and Torino" — [TEC blog](https://www.exploration.space/blog/the-exploration-company-wins-esa-aladdin-cargo-capsule-contract). New HQ in Oberpfaffenhofen from Oct 2025: **VERIFIED** by trade press (European Spaceflight, 30 Oct 2025: opened 27 Oct 2025); no TEC press release found.
 - 2024-05-22: ESA LEO Cargo Return phase 1, €25 M each to TEC and Thales Alenia Space — [TechCrunch](https://techcrunch.com/2024/05/23/esa-prepares-for-the-post-iss-era-selects-the-exploration-company-thales-alenia-to-develop-cargo-spacecraft)
 - 2025-06-23: Mission Possible launched on Transporter-14. In orbit it powered 25 payloads, kept communications and attitude control, and made a controlled re-entry from about 550 km. Communications were lost at about 26 km, just before parachute opening, and the capsule was lost. TEC called it a partial success. The parachute was not drop-tested, and critical systems were single-string — [TEC blog, 2025-06-30](https://exploration.space/blog/mission-possible-re-entry-milestone-achieved-for-europes-reusable-spaceflight). No root cause had been published as of 2025-10-02 — [SpaceNews via SLS](https://www.spacelaunchschedule.com/space-news/the-exploration-company-still-studying-mission-possible-reentry). I found no later root-cause statement.
 - 2025-08: Nyx passes phase 1 of the ISS safety review — [European Spaceflight](https://europeanspaceflight.com/?p=5044)
@@ -61,7 +61,7 @@ Method: public web pages only, read 2026-11-13. The devjobs.de link from the spe
 - What is public: TEC builds its own Mission Control Software. The 2025 Mission Possible flight used in-house flight software and an in-house onboard computer — [TEC blog](https://exploration.space/blog/mission-possible-re-entry-milestone-achieved-for-europes-reusable-spaceflight). It is building a mission control center that interfaces to MCC-H — [Ground Segment Engineer post](https://builtin.com/job/ground-segment-engineer/6376095)
 - Tools named in public postings: Python or Ruby (on Rails), TypeScript, Vue or React, REST, WebSockets, Redis Streams or Kafka, MinIO or S3, Docker, Kubernetes, CCSDS (bonus) — postings above.
 - GitHub org `The-Exploration-Company` exists, with 0 public repos (`gh api orgs/The-Exploration-Company`, 2026-11-13).
-- I found nothing public tying TEC to Yamcs, OpenC3 COSMOS or Open MCT, and no talk or engineering blog on its ground software. That Ruby on Rails is in their current stack is UNVERIFIED: the posting lists it as an alternative to Python, which suggests it but does not say so.
+- I found nothing public tying TEC to Yamcs, OpenC3 COSMOS or Open MCT, and no talk or engineering blog on its ground software. That Ruby on Rails is in their current stack is **STILL UNVERIFIED**: the (now closed) Mission Control Software posting asks for "Python and/or Ruby (on Rails)" and "object storage solutions (e.g., MinIO, AWS S3)"; no posting mentions Yamcs, OpenC3/COSMOS or Open MCT.
 
 ## Decision candidate
 
@@ -82,7 +82,7 @@ Method: public web pages only, read 2026-11-13. The devjobs.de link from the spe
 
 ## Risks / what would make us switch
 
-- Their backend may be Rails (UNVERIFIED). Mitigation: the frame and command contracts are JSON on Redis Streams plus REST/WebSocket, so the README can show that any language can sit on either side.
+- Their backend may be Rails (**STILL UNVERIFIED**, see above). Mitigation: the frame and command contracts are JSON on Redis Streams plus REST/WebSocket, so the README can show that any language can sit on either side.
 - The posting may change or close before submission. Re-read it on arbeitnow before the final README pass.
 - If a TEC talk or post naming their ground tools appears, update section 3 and the vocabulary.
 
@@ -91,3 +91,16 @@ Method: public web pages only, read 2026-11-13. The devjobs.de link from the spe
 - A-R12-1: Is the target user at the bench an AIT test conductor, a flight controller, or both? (Assume both, as in spec §2.)
 - A-R12-2: Should "thermal" stay in spec §1? There is no public TEC thermal test report. (Assume yes, as a generic test type.)
 - A-R12-3: Is it worth a README line that the console could sit next to a Rails backend? (Default no, unless asked.)
+
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources, source code or by test. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| TEC HQ in Oberpfaffenhofen from Oct 2025 | VERIFIED (trade press) | European Spaceflight 2025-10-30 | none |
+| Rails in TEC's current stack | STILL UNVERIFIED | job posting wording only | none |
+| (same, risk list) | STILL UNVERIFIED | as above | none |
+
+CONTRADICTED: none.

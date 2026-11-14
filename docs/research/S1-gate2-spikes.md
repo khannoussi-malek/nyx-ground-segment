@@ -11,7 +11,7 @@ Checks the "Proves early" column of design §5.3 Gate 2 before implementation st
 | S1 MinIO image | **PASS** | `mc` and `curl` are both in the image; a bad `x-amz-checksum-sha256` is rejected with `XAmzContentChecksumMismatch`; data survives re-creating the container | Pin the index digest `sha256:451fe685…a349c` (amd64 and arm64). Data path is `/bitnami/minio/data`. Give `minio` a curl healthcheck. Use the **same image** for `minio-init`, gated on `service_healthy`, which replaces R11's `pgsty/mc` retry loop |
 | S2 `up --wait` + one-shots | **PASS with a rule** | Full `up -d --wait`: rc=0 in 6.1 s. One-shot without a waiting dependent in the up set: **rc=1** `container … exited (0)`. `--wait migrate` alone returns **while migrate is still running** | Every one-shot needs a dependent with `service_completed_successfully`. **Never list a one-shot in `--wait`.** CI: `up -d --wait redis db && docker compose run --rm migrate` (replaces R11's `up -d --wait redis db migrate`) |
 | S3 Redis ACL | **PASS** | All 4 claims hold. `redis-cli` exits **0** on WRONGPASS / NOAUTH / NOPERM | Healthcheck must be `… ping \| grep -q PONG`. Use the ACL file below (selectors, sha256 hashes generated from `.env`). Add `+client\|setinfo`. Add an `admin` user for tests and ops |
-| S4 `appendfsync always` | **PASS** | Single XADD p50 0.30 ms / p99 0.56–0.68 ms (everysec: 0.022 / 0.05 ms). Serial throughput 3.2–3.3 k/s; batch 100 gives 57–62 k/s. Paced 2 × 100 Hz: p50 1.2 ms, p99 4.7 ms, max 13–21 ms | None (keep D-ING-07). 200/s is about 6 % of one serial connection. Caveat: whether fsync inside the Docker Desktop VM reaches the Mac SSD is UNVERIFIED |
+| S4 `appendfsync always` | **PASS** | Single XADD p50 0.30 ms / p99 0.56–0.68 ms (everysec: 0.022 / 0.05 ms). Serial throughput 3.2–3.3 k/s; batch 100 gives 57–62 k/s. Paced 2 × 100 Hz: p50 1.2 ms, p99 4.7 ms, max 13–21 ms | None (keep D-ING-07). 200/s is about 6 % of one serial connection. Caveat: whether fsync inside the Docker Desktop VM reaches the Mac SSD is **STILL UNVERIFIED** (2016 HyperKit: F_FULLFSYNC per flush; no current doc) |
 | S5 Clock | **PASS** | Container↔container median +0.21 ms (inside RTT/2 ≈ 0.9 ms). Redis `TIME` vs container median −0.005 ms. Host↔VM median −0.5 ms (range −1.0…+2.4 ms) with no trend over 3 min | None (D-PERF-01 holds). Host sleep/wake was not tested |
 | S6 SSE reconnect | **PASS with a change** | Restart command to first new event: plain uvicorn **11.1 s** (stalls until SIGKILL at a 10 s grace period). With `timeout_graceful_shutdown=1`: **2.30–2.35 s**. Generators ended on SIGTERM: **1.14–1.25 s**. 0 gaps and 0 duplicates in all runs | Set `stop_grace_period` explicitly: this engine defaults new containers to **StopTimeout=1**, which hides the stall. End SSE generators from a `uvicorn.Server.handle_exit` hook as well as setting the 1 s timeout. 1.0 s of the 1.2 s is `retry: 1000` |
 
@@ -20,8 +20,8 @@ Checks the "Proves early" column of design §5.3 Gate 2 before implementation st
 1. **D-ARC-09 / R11 compose table:** `minio` and `minio-init` both use `bitnamilegacy/minio:2025.5.24@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c`. Volume at `/bitnami/minio/data`; env `MINIO_ROOT_USER`/`MINIO_ROOT_PASSWORD`. Healthcheck `curl -fsS http://localhost:9000/minio/health/live`. `minio-init`: `entrypoint: bash -c`, `mc alias set … && mc mb --ignore-existing s3/<bucket>`, `depends_on: minio: service_healthy`, `MC_CONFIG_DIR=/tmp/mc`. That env var was set as a precaution because the image runs as uid 1001 with `HOME=/`; the spike did not test without it. Drop `pgsty/mc` and the `until … sleep` loop.
 2. **D-ENG-03 / R11 CI:** `make up` = `docker compose up -d --build --wait` with **no service list**. Each one-shot (`migrate`, `minio-init`) must have at least one long-running dependent with `service_completed_successfully` (true today: archiver, api, ingest). CI integration step = `docker compose up -d --wait redis db && docker compose run --rm migrate` (rc is migrate's exit code). Remove the R11 "fallback: poll /healthz" item.
 3. **D-ENG-17:** Use the ACL file from S3. `make up` writes it (gitignored) from `.env`, storing passwords as `#<sha256>`. Healthcheck `redis-cli --no-auth-warning --user health --pass "$$REDIS_HEALTH_PW" ping | grep -q PONG`. Add an `admin` user (`~* &* +@all`, password in `.env`) for integration-test setup and ops. With `default off` nothing else can `FLUSHALL` or read `ACL LOG`. Key-permission facts: `XADD` needs only `%W`, `XREADGROUP` needs only `%R`, and `XACK` needs write. If the simulator reads `tc:*` through a group it needs `~tc:*` read-write, so the command list (a selector) is what blocks `XADD tc:*`, not the key pattern.
-4. **D-UI-02:** Set `stop_grace_period: 5s` on every app service, explicitly. The documented Docker default is 10 s, but this machine creates containers with `StopTimeout=1`, so a test here would hide a stall that appears elsewhere. Keep `timeout_graceful_shutdown=1`, and also set a shutdown `asyncio.Event` from an overridden `uvicorn.Server.handle_exit` that SSE generators check, which gives 1.2 s instead of 2.3 s. Optional: `retry: 500` saves about 0.5 s. D-UI-02's earlier "0.87 s" result may have been helped by the 1 s StopTimeout (UNVERIFIED).
-5. **D-ING-07 (README limitation, no change to the choice):** `appendfsync always` was measured against ext4 on the Docker Desktop VM disk (`/dev/vda1`). Durability against a container or VM crash is what the R3 test showed. Durability against host power loss depends on Docker Desktop's disk flush behaviour, which is UNVERIFIED.
+4. **D-UI-02:** Set `stop_grace_period: 5s` on every app service, explicitly. The documented Docker default is 10 s, but this machine creates containers with `StopTimeout=1`, so a test here would hide a stall that appears elsewhere. Keep `timeout_graceful_shutdown=1`, and also set a shutdown `asyncio.Event` from an overridden `uvicorn.Server.handle_exit` that SSE generators check, which gives 1.2 s instead of 2.3 s. Optional: `retry: 500` saves about 0.5 s. D-UI-02's earlier "0.87 s" result may have been helped by the 1 s StopTimeout (**STILL UNVERIFIED**).
+5. **D-ING-07 (README limitation, no change to the choice):** `appendfsync always` was measured against ext4 on the Docker Desktop VM disk (`/dev/vda1`). Durability against a container or VM crash is what the R3 test showed. Durability against host power loss depends on Docker Desktop's disk flush behaviour, which is **STILL UNVERIFIED** (see above).
 
 ---
 
@@ -313,7 +313,7 @@ docker run -d alpine:3.20 sleep 100          plain docker run StopTimeout=1
 docker run -d --stop-timeout 10 …            explicit --stop-timeout 10 -> 10
 docker compose stop api (MODE=none, curl stream open)   stop took 1.31s   ExitCode=137
 ```
-The images do not set StopTimeout, and `~/.docker/daemon.json` has no timeout. The source of the 1 s default is UNVERIFIED (a Docker Desktop 4.54 / Engine 29 default or setting). On this machine every app container is SIGKILLed after 1 s, which **hides** the uvicorn stall. The first run (StopTimeout=1) gave `none` 2.12 s, `timeout` 2.14 s and `event` 1.21 s to the first new event, all with the old process killed (no "exited" log line for `none`/`timeout`).
+The images do not set StopTimeout, and `~/.docker/daemon.json` has no timeout. The source of the 1 s default is **STILL UNVERIFIED**: the documented defaults are 10 s (`docker stop`; Compose `stop_grace_period`), and no 1 s default is in the docs or Compose source (a Docker Desktop 4.54 / Engine 29 default or setting). On this machine every app container is SIGKILLed after 1 s, which **hides** the uvicorn stall. The first run (StopTimeout=1) gave `none` 2.12 s, `timeout` 2.14 s and `event` 1.21 s to the first new event, all with the old process killed (no "exited" log line for `none`/`timeout`).
 
 **Main run with `stop_grace_period: 10s`** (Docker's documented default):
 ```
@@ -349,3 +349,17 @@ event   restart_cmd  593 error  114 first_new 1141 gaps 0 dups 0
 - In the API: `timeout_graceful_shutdown=1` **and** a shutdown event set from an overridden `uvicorn.Server.handle_exit`, checked by every SSE generator loop. Measured 1.14–1.25 s to the first new event.
 - Optional: `retry: 500`.
 - The ATP-level UI-07 test should set the grace period explicitly too, or it measures the wrong thing on Docker Desktop.
+
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources, source code or by test. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| VM fsync reaches the Mac SSD | STILL UNVERIFIED | only 2016 maintainer comment | D-ING-07 |
+| 0.87 s helped by 1 s StopTimeout | STILL UNVERIFIED | not retested | D-UI-02 |
+| (same, power-loss durability) | STILL UNVERIFIED | as above | D-ING-07 |
+| Source of the observed 1 s stop timeout | STILL UNVERIFIED | documented default is 10 s | D-ENG-03 (explicit stop_grace_period) |
+
+CONTRADICTED: none.

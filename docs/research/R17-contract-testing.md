@@ -18,7 +18,7 @@ The design has one pydantic source per interface, exported schemas, a stale chec
   - `ui:events` written by the new worker, read by the old API;
   - pending entries of the old shape, read by the new code after a restart.
 - The design names a rejection path for frames only (schema → DLQ). For `tcack`, a validation error inside the tracker falls under D-ING-24 (3): roll back, log, carry on. The entry is then never XACKed and fails again on every pass. The command times out as **NOT_RECEIVED although the vehicle acknowledged it**, so the operator sees a wrong outcome. For `ui:events` and `tc`, the design doesn't state what happens.
-- Literature: Habib et al. (ISSTA 2021) frame this as a **data-compatibility** problem: the new producer schema must be a subschema of what the old consumer accepts, and the reverse for entries already stored. They check it automatically (abstract only; full text pending). Web-API evolution studies report that interface changes routinely break clients (Li et al. ICWS 2013; Sohan et al. 2015; UNVERIFIED, metadata only).
+- Literature: Habib et al. (ISSTA 2021) frame this as a **data-compatibility** problem: the new producer schema must be a subschema of what the old consumer accepts, and the reverse for entries already stored. They check it automatically (abstract only; full text pending). Web-API evolution studies report that interface changes routinely break clients (Li et al. ICWS 2013; Sohan et al. 2015; **STILL UNVERIFIED**: metadata only, no free PDF).
 - **Keep `forbid`.** RFC 9413 *Maintaining Robust Protocols* (IETF 2023, https://www.rfc-editor.org/rfc/rfc9413) argues that tolerating unexpected input makes protocols decay, and recommends strictness plus explicit extension points. That is D-EXT-18's choice. The gap is only the missing rule for what a consumer does on rejection, and for how upgrades happen.
 - **Change:**
   1. **One rejection rule for every stream consumer.** It is the frame rule, extended: an entry that fails its model goes to `tm:dlq` with `reason = schema`, `stream`, and the validation message; it is XACKed; an `INTERFACE_MISMATCH` event is raised once per stream and consumer. Applies to `tcack` in the tracker, `ui:events` in the API, and `tc` in the simulator. Tests: `test_invalid_tcack_dlq_not_retried`, `test_invalid_ui_event_dlq`.
@@ -61,3 +61,14 @@ Chosen: F1 (rejection rule plus upgrade rule; no automatic compatibility classif
 ## Sources (PaperLab: Nyx ground segment design)
 
 Hatfield-Dodds & Dygalo 2022 Deriving Semantics-Aware Fuzzers from Web API Schemas, 10.1109/icse-companion55297.2022.9793781 (arXiv:2112.10328) · Kim et al. 2022 Automated Test Generation for REST APIs: No Time to REST Yet, 10.1145/3533767.3534401 · Atlidakis et al. 2019 RESTler, 10.1109/icse.2019.00083 · Habib et al. 2021 Finding Data Compatibility Bugs with JSON Subschema Checking, 10.1145/3460319.3464796 · Attouche et al. 2024 Validation of Modern JSON Schema, 10.1145/3632891 · Li et al. 2013 How Does Web Service API Evolution Affect Clients?, 10.1109/icws.2013.48 · Sohan et al. 2015 A Case Study of Web API Evolution, 10.1109/services.2015.43 · Lehvä et al. 2019 Consumer-Driven Contract Tests for Microservices, 10.1007/978-3-030-35333-9_35 · RFC 9413 Maintaining Robust Protocols (IETF, 2023)
+
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources, source code or by test. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| Web-API evolution breaks clients | STILL UNVERIFIED | metadata only | F1 (context only) |
+
+CONTRADICTED: none.

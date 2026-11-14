@@ -14,7 +14,7 @@ D-ARC verifies the **bytes** that go to MinIO (sha256 on PUT, full re-read, side
 
 - Today's checks: the re-read compares the sha256 and `num_rows` (R7 §54). The hot delete commits only if the deleted row count equals `archive_object.rows` (D-ARC-05). Nothing compares the **contents** or the **time span** of the archived rows with the rows being deleted.
 - At Nyx's normal load, every full vehicle-hour has exactly **36,000 rows** (10 Hz × 3600 s, R7 spike data). Suppose the export and the delete disagree on the hour boundary: an off-by-one hour, local time versus UTC in `time_bucket`, or `[h, h+1)` versus `(h, h+1]`. The count check then still passes, and hour H+1's hot rows are deleted after hour H was archived. That data is lost, and nothing reports it until someone replays H+1.
-- The end-to-end argument (Saltzer, Reed & Clark 1984) says that checks at lower layers, such as a transport checksum, can't replace a check at the endpoints: here, the rows replay will read against the rows being deleted. Krioukov et al. (FAST 2008) found that layered protections still miss combinations of faults. UNVERIFIED: PDFs ingesting; check with `plab.py find "end-to-end check careful file transfer"`.
+- The end-to-end argument (Saltzer, Reed & Clark 1984) says that checks at lower layers, such as a transport checksum, can't replace a check at the endpoints: here, the rows replay will read against the rows being deleted. Krioukov et al. (FAST 2008) found that layered protections still miss combinations of faults. **VERIFIED**: Saltzer et al. p. 2 ("can completely and correctly be implemented only with the knowledge and help of the application"), p. 3 (careful file transfer needs "an end-to-end reliability guarantee – in this case, a checksum"); Krioukov et al. p. 2 ("We find holes in all of the schemes examined").
 - **Change (two small checks):**
   1. **At verify (D-ARC-03), compare the content.** Decode the re-read Parquet, fetch the hot rows of the same `(vehicle, hour)` with the same schema, sort both by `(t_onboard, seq)`, and compare with `pyarrow.Table.equals`. That is 36 k rows, a few ms. Store `t_min` and `t_max` in `archive_object` (columns, not footer metadata, so SR-05 stands).
   2. **At hot delete (D-ARC-05), check the range.** In the same transaction, check `count`, `min(t_onboard)` and `max(t_onboard)` of the deleted rows against the row, and roll back on any mismatch. Use one shared `hour_bounds(vehicle, hour)` helper for export and delete.
@@ -24,7 +24,7 @@ D-ARC verifies the **bytes** that go to MinIO (sha256 on PUT, full re-read, side
 
 - After `HOT_RETENTION_H` (25 h), the single-node MinIO object is the only copy. D-REP-01 checks its hash when a replay reads it. So the first time anyone learns about a corrupted object is when someone replays that window, possibly in front of the review board.
 - Bairavasundaram et al. (FAST 2008), a 41-month field study: silent data corruptions "cannot be detected or repaired by the disk drive itself. Detecting and recovering from data corruption requires protection techniques beyond those provided by the disk drive" (p. 1). The DuckDB authors draw the same lesson: "We have learned to distrust the hardware the database is running on" (Raasveldt & Mühleisen 2019, p. 4).
-- Proactive scrubbing, so latent faults are found before they combine with another fault, is the recommendation of Schroeder et al. (FAST 2010) and Baker et al. (EuroSys 2006). UNVERIFIED: these full texts are still ingesting.
+- Proactive scrubbing, so latent faults are found before they combine with another fault, is the recommendation of Schroeder et al. (FAST 2010) and Baker et al. (EuroSys 2006). **VERIFIED** in part: Baker et al. model latent faults and their detection time (p. 12); Schroeder et al. evaluate scrubbing policies on field data (p. 10). No numbers are quoted here.
 - **Change:** a **rolling scrub** in the existing `gs-archiver` loop (D-ARC-07). Each pass re-hashes the K objects with the oldest `last_checked_at` (new column in `archive_object`). A mismatch raises an `ARCHIVE_CORRUPT` event and marks `/healthz` `degraded` (D-ARC-10).
   - Cost: about 1 MB and 3 ms per object (R7 S2). A month for two vehicles is about 1,440 objects, so a full pass takes seconds.
   - Repair stays out of scope: there is one copy, and it belongs on the §4 "not production-ready" list next to Redis/Postgres replication.
@@ -55,3 +55,15 @@ Chosen: F1 (content check at verify, plus a count-and-range check at delete) and
 ## Sources (PaperLab: Nyx ground segment design)
 
 Saltzer, Reed & Clark 1984 End-to-end arguments in system design (ACM TOCS) · Krioukov et al. 2008 Parity Lost and Parity Regained (FAST) · Bairavasundaram et al. 2008 An analysis of data corruption in the storage stack (FAST; ACM TOS 10.1145/1416944.1416947) · Bairavasundaram et al. 2007 An analysis of latent sector errors in disk drives, 10.1145/1269899.1254917 · Schroeder, Damouras & Gill 2010 Understanding latent sector errors and how to protect against them (FAST; ACM TOS 10.1145/1837915.1837917) · Baker et al. 2006 A fresh look at the reliability of long-term digital storage, 10.1145/1217935.1217957 · Zeng et al. 2023 An Empirical Evaluation of Columnar Storage Formats, 10.14778/3626292.3626298
+
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources, source code or by test. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| End-to-end argument; layered protection has holes | VERIFIED | Saltzer p. 2–3; Krioukov p. 2 | F1 (D-ARC-03/05) |
+| Scrubbing / latent-fault detection recommended | VERIFIED (in part) | Baker p. 12; Schroeder p. 10 | F2 (scrub) |
+
+CONTRADICTED: none.

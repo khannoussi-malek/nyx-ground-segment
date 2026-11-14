@@ -23,10 +23,10 @@ Versions checked 2026-11-13 against the PyPI JSON API, the npm registry, the Doc
 ### 2. Compose
 
 - `depends_on` conditions: `service_healthy` waits for a dependency that "is expected to be healthy, which is defined with `healthcheck`". `service_completed_successfully` waits until it "run[s] to successful completion". The Postgres example uses `pg_isready -U … -d …` — [startup order](https://docs.docker.com/compose/how-tos/startup-order/).
-- `docker compose up --wait` will "Wait for services to be running|healthy. Implies detached mode" — [compose up](https://docs.docker.com/reference/cli/docker/compose/up/). How it handles one-shot services that exit 0 (`migrate`, `minio-init`) is **UNVERIFIED**. Check it in the Gate 2 thin slice. Fallback: poll `/healthz` from the Makefile.
+- `docker compose up --wait` will "Wait for services to be running|healthy. Implies detached mode" — [compose up](https://docs.docker.com/reference/cli/docker/compose/up/). How it handles one-shot services that exit 0 (`migrate`, `minio-init`) was unverified; now **VERIFIED** (S2 and a retest 2026-11-14, Compose 2.40.3): `--wait` fails with `container … exited (0)` when a one-shot has no dependent with `service_completed_successfully`, and passes when it has one (compose `dependency_wait.go`, `start.go` getDependencyCondition). This is D-ENG-03's rule. Fallback: poll `/healthz` from the Makefile.
 - Restart policy `unless-stopped` is "similar to `always`, except that when the container is stopped (manually or otherwise), it isn't restarted". Also: "If you manually stop a container, the restart policy is ignored" — [restart policies](https://docs.docker.com/engine/containers/start-containers-automatically/).
 - **Probe:** `docker kill` on an `unless-stopped` container → `exited restarts=0`, so it was **not** restarted. A process that crashes inside the container → `running restarts=2`. Consequence for ATP-05: "kill a worker" with `docker compose kill ingest-1` tests **R4 takeover by ingest-2**. To test **self-restart**, use `docker compose exec ingest-1 kill -9 1`, which makes the main process exit so the policy restarts it.
-- **MinIO images are gone.** `hub.docker.com/v2/repositories/minio/minio` and `…/minio/mc` return 404, and anonymous access to the quay.io API returns 401 (both probed). MinIO CE is now "source-only" — [glukhov.org](https://glukhov.org/data-infrastructure/object-storage/minio-dead/), [madewithlove](https://madewithlove.com/blog/thanks-for-all-the-buckets/) (third-party blogs; no official MinIO notice found). The community fork `pgsty/minio` has tags up to `RELEASE.2026-08-04T00-00-00Z` (4.2 M pulls). Development has moved on as `pgsty/silo` (AGPL-3.0; it bundles the client as `mcli`; there is "no `minio` server binary alias"). `pgsty/mc:RELEASE.2026-11-12T00-00-00Z` is current — [pgsty/minio](https://github.com/pgsty/minio), Docker Hub API. Whether the `pgsty/minio` image has `curl` or `mc` inside is **UNVERIFIED**: my probe was blocked by the sandbox. For that reason the design below does not rely on either.
+- **MinIO images are gone.** `hub.docker.com/v2/repositories/minio/minio` and `…/minio/mc` return 404, and anonymous access to the quay.io API returns 401 (both probed). MinIO CE is now "source-only" — [glukhov.org](https://glukhov.org/data-infrastructure/object-storage/minio-dead/), [madewithlove](https://madewithlove.com/blog/thanks-for-all-the-buckets/) (third-party blogs; no official MinIO notice found). The community fork `pgsty/minio` has tags up to `RELEASE.2026-08-04T00-00-00Z` (4.2 M pulls). Development has moved on as `pgsty/silo` (AGPL-3.0; it bundles the client as `mcli`; there is "no `minio` server binary alias"). `pgsty/mc:RELEASE.2026-11-12T00-00-00Z` is current — [pgsty/minio](https://github.com/pgsty/minio), Docker Hub API. The `pgsty/minio` image has both: **VERIFIED** (`Dockerfile.goreleaser` copies `mcli`, linked as `mc`, and `curl`; the distroless variant has neither). The repo is now `pgsty/silo` (renamed 2026-08-06, last MinIO-branded release 20260804), from the Pigsty project: my probe was blocked by the sandbox. For that reason the design below does not rely on either.
 - Healthchecks: Redis uses `redis-cli ping` (R3). Postgres uses `pg_isready`. MinIO gets no healthcheck. Instead, an `mc` init container retries `mc alias set` until the server answers, then runs `mc mb --ignore-existing`, and the archiver waits for it with `service_completed_successfully`.
 
 ### 3. Tests at three levels
@@ -206,8 +206,8 @@ GRANT SELECT, INSERT, UPDATE (ended_at, ended_by) ON test_session TO gs_app;   -
 ## Risks / what would make us switch
 
 - **MinIO fork drift.** `pgsty/minio` stopped at 2026-08-04. Its successor `pgsty/silo` has no `minio` binary alias. If the pinned tag disappears, switch to `pgsty/silo` (change `command`) or RustFS (`rustfs/rustfs:1.0.5`, Apache-2, 23 M pulls). The S3 API code stays the same. The spec's "MinIO / S3 API" wording allows either, and the switch goes in README limitations.
-- **`compose up --wait` combined with one-shot services** is UNVERIFIED. If it fails, `make up` polls `/healthz` instead.
-- **Unhealthy is not restarted.** Docker restarts on exit, not on a failed healthcheck (UNVERIFIED for Compose v2 without Swarm). A hung worker is handled by R4's steal path. Optionally, a watchdog calls `os._exit(1)` when `loop_age > 30 s`, and the restart policy brings it back.
+- **`compose up --wait` combined with one-shot services** is **VERIFIED** (see above): it fails unless each one-shot has a `service_completed_successfully` dependent.
+- **Unhealthy is not restarted.** Docker restarts on exit, not on a failed healthcheck (**VERIFIED**: test 2026-11-14, unhealthy for 15 s with 0 restarts; Docker docs tie restarts to exit only; moby#28400 still open). A hung worker is handled by R4's steal path. Optionally, a watchdog calls `os._exit(1)` when `loop_age > 30 s`, and the restart policy brings it back.
 - **Session clock.** `started_at` is ground time (`now()`), while the window filter uses `t_onboard` (vehicle time). Skew shifts the edges. That is fine on the bench; with real hardware we would use `t_received`.
 - **The fixed users file** has demo hashes committed and no lockout or rate limit. This is listed under Q14 "not production-ready", and company SSO is the next step (§1 out of scope).
 - **Parameters required in every frame.** If the registry gets ahead of the simulator, every frame goes to the DLQ. The ENG-06 guide must update both together.
@@ -221,3 +221,17 @@ GRANT SELECT, INSERT, UPDATE (ended_at, ended_by) ON test_session TO gs_app;   -
 5. **A-R11-5** (OPEN): may any logged-in user start/stop sessions and send hazardous commands, or do we need roles (conductor vs controller)? Assumed no roles. The identity is recorded.
 6. **A-R11-6** (ASSUMED): ATP-05 "kill a worker" = `docker compose kill ingest-1`, which tests takeover. Self-restart is shown separately with `kill -9 1` inside the container.
 7. **A-R11-7** (ASSUMED): MinIO runs from the community fork `pgsty/minio` pinned. Upstream images are gone.
+
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources, source code or by test. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| `up --wait` with one-shot services | VERIFIED (fails without a completed-successfully dependent) | S2 + retest + compose source | D-ENG-03 |
+| `pgsty/minio` has curl / mc | VERIFIED (renamed pgsty/silo) | Dockerfile in repo | D-ARC-09 (alternative image) |
+| (same, risk list) | VERIFIED | as above | D-ENG-03 |
+| Unhealthy containers are not restarted | VERIFIED | test + docs | D-ING-26 watchdog, D-ING-12 |
+
+CONTRADICTED: none.

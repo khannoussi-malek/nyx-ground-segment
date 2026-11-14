@@ -41,7 +41,7 @@ The design (D-xxx) was built from docs, vendor references and spikes. Which deci
 ### Confirmations (no change)
 
 - **Ack after commit, plus dedup before user code** (D-ING-02, D-ING-13) is MillWheel's delivery protocol: check dedup data, run user code, commit pending changes, then ACK the senders (Akidau et al. 2013, p. 6).
-- **Snapshot of state in the same transaction as the output** (D-ALM-11) is the atomic state-plus-output commit that Flink (Carbone et al. 2017) and Kafka Streams (Wang et al. 2021) use for exactly-once processing. UNVERIFIED in full text (ACM/VLDB PDFs blocked; VLDB author copy ingesting).
+- **Snapshot of state in the same transaction as the output** (D-ALM-11) is the atomic state-plus-output commit that Flink (Carbone et al. 2017) and Kafka Streams (Wang et al. 2021) use for exactly-once processing. **VERIFIED** for Flink in full text (Carbone et al. 2017 p. 8: "Once a snapshot is fully committed the version is atomically incremented"; p. 9: sinks use "transactions to offer delivery guarantees"). Kafka Streams (Wang et al. 2021): **STILL UNVERIFIED** (ACM PDF blocked).
 - **Report freeze on the vehicle watermark** (D-DB-10) matches the watermark semantics of Begoli et al. (PVLDB 2021).
 - **Seeded, replayable chaos soak** (D-EXT-15 `CHAOS_SEED`) plus pure `step/decide/classify` functions follow the FoundationDB deterministic-simulation approach in spirit (Zhou et al. 2021, p. 8); there is nothing to add at this scale.
 
@@ -66,3 +66,14 @@ Chosen: E1 (reset counter on the controlled exit, plus test and chaos action), E
 ## Sources (PaperLab: Nyx ground segment design)
 
 Akidau et al. 2013 MillWheel (PVLDB) · Akidau et al. 2015 The Dataflow Model, 10.14778/2824032.2824076 · Begoli et al. 2021 Watermarks, 10.14778/3476311.3476389 · Carbone et al. 2017 State management in Apache Flink, 10.14778/3137765.3137777 · Wang et al. 2021 Consistency and Completeness (Kafka), 10.1145/3448016.3457556 · Gray & Cheriton 1989 Leases, 10.1145/74850.74870 · Karimov et al. 2018 Benchmarking Distributed Stream Data Processing Systems, 10.1109/icde.2018.00169 · Dean & Barroso 2013 The Tail at Scale, 10.1145/2408776.2408794 · Hoefler & Belli 2015 Scientific benchmarking of parallel computing systems · Jugel et al. 2014 M4, 10.14778/2732951.2732953 · Van Der Donckt et al. 2023 MinMaxLTTB, 10.1109/vis54172.2023.00013 · Zhou et al. 2021 FoundationDB, 10.1145/3448016.3457559 · Yuan et al. 2014 Simple Testing Can Prevent Most Critical Failures (OSDI) · Bronson et al. 2021 Metastable failures, 10.1145/3458336.3465286 · Huang et al. 2022 Metastable failures in the wild (OSDI) · Wu & Keogh 2022, 10.1109/icde53745.2022.00116 · Kotowski et al. 2024 ESA-ADB, arXiv:2406.17826 · Ruszczak et al. 2025 OPS-SAT benchmark, 10.1038/s41597-025-05035-3 · Helland 2016 Life Beyond Distributed Transactions, 10.1145/3012426.3025012 · Raasveldt & Mühleisen 2019 DuckDB, 10.1145/3299869.3320212
+
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources, source code or by test. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| Atomic state + output commit (Flink, Kafka Streams) | VERIFIED (Flink) / STILL UNVERIFIED (Kafka) | Carbone 2017 p. 8–9 | D-ALM-11 |
+
+CONTRADICTED: none.

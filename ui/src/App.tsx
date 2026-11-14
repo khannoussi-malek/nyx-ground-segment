@@ -69,7 +69,12 @@ function useRunning(ctx: AudioContext | null): boolean {
 
 function SoundBadge({ ctx, running, onArm }: { ctx: AudioContext | null; running: boolean; onArm: (c: AudioContext | null) => void }) {
   if (running) return null;
-  const enable = () => (ctx ? void ctx.resume().catch(() => {}) : onArm(armAudio()));
+  // a closed or failing context is replaced by a fresh one made in this click: never silently without audio (P-pf24)
+  const rearm = () => {
+    void ctx?.close().catch(() => {});
+    onArm(armAudio());
+  };
+  const enable = () => (ctx && ctx.state !== "closed" ? void ctx.resume().catch(rearm) : rearm());
   return (
     <button className="sound-off" onClick={enable}>
       SOUND OFF – click to enable

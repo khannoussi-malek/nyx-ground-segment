@@ -123,6 +123,8 @@ const played: number[] = [];
 class FakeAudio {
   static states: FakeAudio[] = [];
   static startState = "running";
+  static failResume = false;
+  closed = false;
   state = FakeAudio.startState;
   listeners: (() => void)[] = [];
   currentTime = 0;
@@ -130,7 +132,13 @@ class FakeAudio {
   constructor() {
     FakeAudio.states.push(this);
   }
+  close() {
+    this.state = "closed";
+    this.listeners.forEach((f) => f());
+    return Promise.resolve();
+  }
   resume() {
+    if (FakeAudio.failResume) return Promise.reject(new Error("no"));
     return Promise.resolve().then(() => {
       this.state = "running";
       this.listeners.forEach((f) => f());
@@ -160,6 +168,8 @@ async function liveConsole() {
   LiveES.all = [];
   played.length = 0;
   FakeAudio.startState = "running";
+  FakeAudio.failResume = false;
+  FakeAudio.states = [];
   sessionStorage.clear();
   stubApi({
     "/api/me": { status: 200, body: { user: "fc1" } },
@@ -329,4 +339,32 @@ test("a failed login closes the audio context it armed", async () => {
   act(() => root.render(<Login onLogin={vi.fn()} />));
   await submitLogin("fc1", "bad");
   expect(close).toHaveBeenCalledOnce();
+});
+
+test("a closed AudioContext brings the SOUND OFF badge back; the click makes a fresh context and replays what is open (P-pf24)", async () => {
+  const es = await liveConsole();
+  await arm();
+  es.emit("snapshot", snapshot([alarmView()]));
+  expect(played).toEqual([880]);
+  act(() => void FakeAudio.states[0]!.close()); // the browser (or a bug) closed it
+  expect(button("SOUND OFF – click to enable")).toBeDefined();
+  await arm();
+  expect(FakeAudio.states).toHaveLength(2);
+  expect(played).toEqual([880, 880]); // the open unacknowledged RED sounds again on the fresh context
+  expect(button("SOUND OFF – click to enable")).toBeUndefined();
+});
+
+test("a context whose resume fails is replaced by a fresh one", async () => {
+  const es = await liveConsole();
+  await arm();
+  FakeAudio.states[0]!.state = "suspended";
+  act(() => void FakeAudio.states[0]!.listeners.forEach((f) => f()));
+  es.emit("snapshot", snapshot([alarmView()]));
+  expect(played).toEqual([]);
+  FakeAudio.failResume = true;
+  await arm(); // resume rejects -> rearm
+  FakeAudio.failResume = false;
+  await act(async () => {});
+  expect(FakeAudio.states).toHaveLength(2);
+  expect(played).toEqual([880]); // the fresh context replays the open RED
 });

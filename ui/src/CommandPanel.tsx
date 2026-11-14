@@ -1,0 +1,143 @@
+import { useState, useSyncExternalStore } from "react";
+import { listCommands, sendCommand, type CommandRequest, type MissionDb } from "./api";
+import { rejectedText } from "./commandText";
+import { ConfirmDialog } from "./ConfirmDialog";
+import type { Store } from "./store";
+import { Timeline } from "./Timeline";
+
+type Spec = MissionDb["commands"][string];
+type Pending = { req: CommandRequest; hazard: string; token: string; expiresInS: number };
+const SHOWN = 20;
+
+function ArgInput({ name, spec, value, onChange }: {
+  name: string;
+  spec: Spec["args"][string];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  return (
+    <label>
+      {name}
+      {spec.type === "enum" ? (
+        <select value={value} onChange={(e) => onChange(e.target.value)}>
+          <option value="">—</option>
+          {spec.values.map((v) => <option key={v} value={v}>{v}</option>)}
+        </select>
+      ) : (
+        <>
+          <input type="number" min={spec.min} max={spec.max} step="any" value={value} onChange={(e) => onChange(e.target.value)} />
+          {spec.unit && <span className="unit">{spec.unit}</span>}
+        </>
+      )}
+    </label>
+  );
+}
+
+/** Send a command and watch it: typed arguments from the mission db, hazardous ones through ConfirmDialog. */
+export function CommandPanel({ store, mission }: { store: Store; mission: MissionDb | null }) {
+  const vehicles = useSyncExternalStore(store.subscribe, store.vehicles, store.vehicles);
+  const commands = useSyncExternalStore(store.subscribe, store.commands, store.commands);
+  const [vehicle, setVehicle] = useState("");
+  const [name, setName] = useState("");
+  const [values, setValues] = useState<Readonly<Record<string, string>>>({});
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState("");
+  const [note, setNote] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<Pending | null>(null);
+  const target = vehicle || vehicles[0] || "";
+  const spec: Spec | undefined = mission && name && Object.hasOwn(mission.commands, name) ? mission.commands[name] : undefined;
+
+  const build = (): CommandRequest | null => {
+    if (!spec || !target) return null;
+    const args: Record<string, string | number> = {};
+    for (const [k, a] of Object.entries(spec.args)) {
+      const v = values[k] ?? "";
+      if (v === "") {
+        if (a.required) return null;
+        continue;
+      }
+      args[k] = a.type === "enum" ? v : Number(v);
+    }
+    return { vehicle: target, name, args, ...(reason.trim() && { reason: reason.trim() }) };
+  };
+  const req = build();
+
+  /** The new rows show at once: QUEUED / SENT would otherwise wait for the next stream event (R-h). */
+  async function refresh(v: string) {
+    try {
+      for (const c of (await listCommands(v)).reverse()) store.applyCmd(c);
+    } catch (e) {
+      console.warn("could not refresh the command list", e);
+    }
+  }
+  const accepted = (v: string) => {
+    setNote(`Command queued for ${v}`);
+    void refresh(v);
+  };
+  async function send() {
+    if (!req) return;
+    setBusy(true);
+    setError("");
+    setNote("");
+    const r = await sendCommand(req);
+    setBusy(false);
+    if (r.kind === "accepted") accepted(req.vehicle);
+    else if (r.kind === "confirm") setPending({ req, hazard: r.hazard, token: r.token, expiresInS: r.expiresInS });
+    else setError(rejectedText(r));
+  }
+
+  if (!mission) return <section className="commands" aria-label="Commands"><h2>Commands</h2><p className="empty">Loading the mission database…</p></section>;
+  return (
+    <section className="commands" aria-label="Commands">
+      <h2>Commands</h2>
+      <form onSubmit={(e) => { e.preventDefault(); void send(); }}>
+        <label>
+          Vehicle
+          <select value={target} onChange={(e) => setVehicle(e.target.value)}>
+            {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+        </label>
+        <label>
+          Command
+          <select value={name} onChange={(e) => { setName(e.target.value); setValues({}); }}>
+            <option value="">—</option>
+            {Object.keys(mission.commands).map((c) => <option key={c} value={c}>{c}</option>)}
+          </select>
+        </label>
+        {spec && Object.entries(spec.args).map(([k, a]) => (
+          <ArgInput key={k} name={k} spec={a} value={values[k] ?? ""} onChange={(v) => setValues((s) => ({ ...s, [k]: v }))} />
+        ))}
+        <label>
+          Reason
+          <input value={reason} onChange={(e) => setReason(e.target.value)} />
+        </label>
+        <button type="submit" disabled={busy || req === null}>Send</button>
+      </form>
+      {spec && <p className="desc">{spec.description}{spec.hazardous && <strong> – hazardous: {spec.hazard}</strong>}</p>}
+      {error && <p role="alert">{error}</p>}
+      {note && <p role="status">{note}</p>}
+      <ul className="command-list">
+        {commands.slice(0, SHOWN).map((c) => (
+          <li key={c.cmd_id} data-cmd-id={c.cmd_id} data-state={c.state}>
+            <strong>{c.vehicle}</strong> {c.name}
+            {Object.keys(c.args).length > 0 && ` (${Object.entries(c.args).map(([k, v]) => `${k} = ${v}`).join(", ")})`}
+            {" · "}{c.issued_by}{" · "}{c.state}
+            <Timeline c={c} mission={mission} />
+          </li>
+        ))}
+      </ul>
+      {pending && (
+        <ConfirmDialog
+          {...pending}
+          initialReason={reason}
+          onCancel={() => setPending(null)}
+          onSent={() => {
+            accepted(pending.req.vehicle);
+            setPending(null);
+          }}
+        />
+      )}
+    </section>
+  );
+}

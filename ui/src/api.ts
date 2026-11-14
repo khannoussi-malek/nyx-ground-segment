@@ -62,3 +62,48 @@ export async function ackAlarm(alarmId: string, requestId: string, note: string)
     return { ok: false, error: "NETWORK", message: "Could not reach the ground segment" };
   }
 }
+
+export type CommandRequest = components["schemas"]["CommandRequest"];
+export type CommandView = components["schemas"]["CommandView"];
+type CommandAccepted = components["schemas"]["CommandAccepted"];
+type CommandConflict = components["schemas"]["CommandConflict"];
+export type SendResult =
+  | { kind: "accepted"; cmdId: string }
+  | { kind: "confirm"; token: string; hazard: string; expiresInS: number }
+  | { kind: "rejected"; error: string; message: string; by?: string; secondsAgo?: number };
+
+const rejected = (error: string, message: string): SendResult => ({ kind: "rejected", error, message });
+
+/** Send a command. A hazardous one answers 409 HAZARDOUS_CONFIRMATION_REQUIRED with a token: that is `confirm`, not an
+ *  error; resend the same request with `confirm_token` and `reason`. Every other refusal keeps the server's words. */
+export async function sendCommand(req: CommandRequest): Promise<SendResult> {
+  try {
+    const r = await fetch("/api/commands", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...CLIENT },
+      body: JSON.stringify(req),
+    });
+    if (r.status === 202) return { kind: "accepted", cmdId: ((await r.json()) as CommandAccepted).cmd_id };
+    const b = (await r.json().catch(() => null)) as Partial<CommandConflict> | null;
+    if (r.status === 409 && b?.error === "HAZARDOUS_CONFIRMATION_REQUIRED" && b.confirm_token)
+      return { kind: "confirm", token: b.confirm_token, hazard: b.hazard ?? "", expiresInS: b.expires_in_s ?? 60 };
+    return {
+      kind: "rejected",
+      error: b?.error ?? `HTTP_${r.status}`,
+      message: b?.message ?? `Command failed (${r.status})`,
+      ...(b?.by != null && { by: b.by }),
+      ...(b?.seconds_ago != null && { secondsAgo: b.seconds_ago }),
+    };
+  } catch {
+    return rejected("NETWORK", "Could not reach the ground segment");
+  }
+}
+
+/** Newest first, read-only; called after every accepted command so QUEUED / SENT show at once. */
+export async function listCommands(vehicle?: string): Promise<CommandView[]> {
+  const q = vehicle === undefined ? "" : `?vehicle=${encodeURIComponent(vehicle)}`;
+  const r = await fetch(`/api/commands${q}`, { credentials: "same-origin" });
+  if (!r.ok) throw fail("commands", r);
+  return (await r.json()) as CommandView[];
+}

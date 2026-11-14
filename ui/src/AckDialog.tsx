@@ -6,10 +6,11 @@ import type { AlarmView } from "./store";
 
 /** ACK with a required note in a native <dialog>: it shows the alarm, takes the note and keeps its errors inline.
  *  (window.confirm can do none of that and blocks the live page.) One request id per opening: a retry is the same request. */
-export function AckDialog({ alarm, mission, onDone, onCancel }: {
+export function AckDialog({ alarm, mission, opener, onDone, onCancel }: {
   alarm: AlarmView;
   mission: MissionDb | null;
-  onDone: (status: "pending" | "applied" | "superseded" | "rejected") => void;
+  opener: HTMLElement | null; // gets the focus back when the dialog closes
+  onDone: (status: "pending" | "applied" | "superseded" | "rejected", requestId: string) => void;
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -20,18 +21,22 @@ export function AckDialog({ alarm, mission, onDone, onCancel }: {
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) d.showModal();
-  }, []);
+    return () => {
+      d?.close();
+      opener?.focus();
+    };
+  }, [opener]);
   async function submit(e: FormEvent) {
     e.preventDefault();
     setBusy(true);
     setError("");
     const r = await ackAlarm(alarm.alarm_id, requestId, note.trim());
     setBusy(false);
-    if (r.ok) onDone(r.status);
+    if (r.ok) onDone(r.status, requestId);
     else setError(r.message);
   }
   return (
-    <dialog ref={ref} className="ack" aria-labelledby="ack-title" onCancel={onCancel}>
+    <dialog ref={ref} className="ack" aria-labelledby="ack-title" onCancel={(e) => (busy ? e.preventDefault() : onCancel())}>
       <form onSubmit={(e) => void submit(e)}>
         <h2 id="ack-title">Acknowledge alarm</h2>
         <p className="ack-alarm">
@@ -47,7 +52,7 @@ export function AckDialog({ alarm, mission, onDone, onCancel }: {
         </label>
         {error && <p role="alert">{error}</p>}
         <div className="actions">
-          <button type="button" className="secondary" onClick={onCancel}>Cancel</button>
+          <button type="button" className="secondary" disabled={busy} onClick={onCancel}>Cancel</button>
           <button type="submit" disabled={busy || note.trim() === ""}>ACK</button>
         </div>
       </form>

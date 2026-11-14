@@ -37,3 +37,11 @@ test("without the mission db, a unit or a matching bound the text still says wha
 
 test("hash prefixes are 8 hex digits", () =>
   expect(hashText(alarmView({ limits_sha256: "3f9a1c2e77aa", set_sha256: "5d07b8a1ffee" }))).toBe("limits 3f9a1c2e · set 5d07b8a1"));
+
+test("a limit alarm prints its reading, a rate alarm its slope: the two are never mixed up (P-pf25)", () => {
+  const reading = alarmView({ level: "RED_LOW", value: 94.2 }); // limit: the sample
+  const slope = roc({ value: -0.4 }); // roc: signed slope per second
+  expect(alarmText(reading, MDB)).toBe("RED LOW · 94.20 kPa (limit 95)");
+  expect(alarmText(slope, MDB)).toBe("YELLOW · RATE FALLING −0.40 kPa/s (limit 0.15)");
+  expect(alarmText(alarmView({ level: "YELLOW_HIGH", severity: "YELLOW", value: 100.8 }), MDB)).toBe("YELLOW HIGH · 100.80 kPa"); // no yellow_high bound in this check: none invented
+});

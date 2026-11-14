@@ -190,3 +190,59 @@ test("ack_request from the stream: another user's pending ACK, a rejected one sh
   expect(row()).toContain("alarm changed level");
   expect(ackButton("a1")!.disabled).toBe(false);
 });
+
+test("my new pending ACK overrides an older refused request; the server's word on my own request wins", async () => {
+  const old = { by_user: "fc2", request_id: "old", status: "rejected" as const, status_reason: "alarm changed level" };
+  const store = mount([alarmView({ alarm_id: "a1", ack_request: old })]);
+  const row = () => host.querySelector('tr[data-alarm-id="a1"]')!.textContent;
+  expect(row()).toContain("alarm changed level");
+  const f = stubAck(202, { request_id: "r", status: "pending" });
+  act(() => ackButton("a1")!.click());
+  typeNote("seen again");
+  await act(async () => button("ACK")!.click());
+  expect(row()).toContain("ACK PENDING (by fc1)");
+  expect(ackButton("a1")!.disabled).toBe(true); // no double-submit window
+  const mineId = JSON.parse((f.mock.calls[0] as unknown as [string, { body: string }])[1].body).request_id;
+  act(() => ingest(store, "alarm", { kind: "alarm", alarm: alarmView({ alarm_id: "a1", ack_request: { ...old, request_id: mineId, by_user: "fc1", status_reason: "level changed again" } }) }));
+  expect(row()).toContain("level changed again");
+  expect(row()).not.toContain("ACK PENDING");
+});
+
+test("while the ACK request is in flight Cancel is disabled and Esc is ignored", async () => {
+  mount();
+  let release!: (r: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((res) => (release = res))));
+  act(() => ackButton("a1")!.click());
+  typeNote("seen");
+  await act(async () => void button("ACK")!.click());
+  expect(button("Cancel")!.disabled).toBe(true);
+  const esc = new Event("cancel", { cancelable: true });
+  act(() => void host.querySelector("dialog")!.dispatchEvent(esc));
+  expect(esc.defaultPrevented).toBe(true);
+  expect(host.querySelector("dialog")).not.toBeNull();
+  await act(async () => release(new Response(JSON.stringify({ request_id: "r", status: "pending" }), { status: 202 })));
+  expect(host.querySelector('tr[data-alarm-id="a1"]')!.textContent).toContain("ACK PENDING (by fc1)"); // the 202 was not dropped
+});
+
+test("closing the dialog gives the focus back to the ACK button that opened it", () => {
+  mount();
+  const opener = ackButton("a2")!;
+  act(() => opener.focus());
+  act(() => opener.click());
+  act(() => button("Cancel")!.click());
+  expect(document.activeElement).toBe(opener);
+});
+
+test("row ACK buttons name their alarm; the table has column headers", () => {
+  mount();
+  expect(ackButton("a1")!.getAttribute("aria-label")).toBe("Acknowledge NYX-TA1 cabin_pressure_kpa");
+  expect([...host.querySelectorAll('thead th[scope="col"]')].map((h) => h.textContent)).toContain("Opened (UTC)");
+});
+
+test("a vehicle filter whose alarms are all gone resets instead of hiding everything", () => {
+  const store = mount();
+  pick("Vehicle", "NYX-TA2");
+  expect(rows()).toEqual(["a2"]);
+  act(() => ingest(store, "alarm", { kind: "alarm", alarm: alarmView({ alarm_id: "a2", vehicle: "NYX-TA2", state: "CLEARED" }) }));
+  expect(rows()).toEqual(["a1", "a3"]);
+});

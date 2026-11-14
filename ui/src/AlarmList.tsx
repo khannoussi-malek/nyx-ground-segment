@@ -19,19 +19,23 @@ export function AlarmList({ store, mission, user }: { store: Store; mission: Mis
   const alarms = useSyncExternalStore(store.subscribe, store.alarms, store.alarms);
   const link = useSyncExternalStore(store.subscribe, store.link, store.link);
   const wired = useSyncExternalStore(store.subscribe, store.hasSnapshot, store.hasSnapshot);
-  const [vehicle, setVehicle] = useState(ALL);
+  const [vehicleWanted, setVehicle] = useState(ALL);
   const [severity, setSeverity] = useState(ALL);
   const [state, setState] = useState(ALL);
-  const [acking, setAcking] = useState<AlarmView | null>(null);
-  const [mine, setMine] = useState<Readonly<Record<string, string>>>({}); // alarm id -> me, from a 202 "pending"
+  const [acking, setAcking] = useState<{ alarm: AlarmView; opener: HTMLElement } | null>(null);
+  const [mine, setMine] = useState<Readonly<Record<string, { by: string; requestId: string }>>>({}); // from my 202 "pending"
+  const vehicles = [...new Set(alarms.map((a) => a.vehicle))].sort();
+  const vehicle = vehicles.includes(vehicleWanted) ? vehicleWanted : ALL; // a filter whose vehicle has no alarm left resets
   const shown = [...alarms]
     .filter((a) => (vehicle === ALL || a.vehicle === vehicle) && (severity === ALL || a.severity === severity) && (state === ALL || a.state === state))
     .sort((a, b) => (a.severity === b.severity ? b.opened_at.localeCompare(a.opened_at) : a.severity === "RED" ? -1 : 1));
-  const vehicles = [...new Set(alarms.map((a) => a.vehicle))].sort();
 
   function ackStatus(a: AlarmView): { text: string; pending: boolean } | null {
     const ar = a.ack_request;
-    const pendingBy = ar ? (ar.status === "pending" ? ar.by_user : undefined) : mine[a.alarm_id];
+    const m = mine[a.alarm_id];
+    // my newer request overrides an older refused one of the server's (no double-submit window); the server's word on my
+    // own request, or any pending request, wins
+    const pendingBy = ar?.status === "pending" ? ar.by_user : m && ar?.request_id !== m.requestId ? m.by : undefined;
     if (pendingBy !== undefined) {
       const down = link.processing[a.vehicle] === false;
       return { text: down ? "ACK NOT APPLIED – processing down" : `ACK PENDING (by ${pendingBy})`, pending: true };
@@ -62,6 +66,13 @@ export function AlarmList({ store, mission, user }: { store: Store; mission: Mis
         <p className="empty" role="status">{empty}</p>
       ) : (
         <table>
+          <thead>
+            <tr>
+              {["Severity", "Vehicle", "Parameter", "Alarm", "Limits and set", "Opened (UTC)", "State", "Action"].map((h) => (
+                <th key={h} scope="col">{h}</th>
+              ))}
+            </tr>
+          </thead>
           <tbody>
             {shown.map((a) => {
               const status = ackStatus(a);
@@ -80,7 +91,13 @@ export function AlarmList({ store, mission, user }: { store: Store; mission: Mis
                   <td>
                     {status && <span className="ack-status">{status.text}</span>}
                     {(a.state === "UNACK" || a.state === "RTN_UNACK") && (
-                      <button disabled={status?.pending} onClick={() => setAcking(a)}>ACK</button>
+                      <button
+                        disabled={status?.pending}
+                        aria-label={`Acknowledge ${a.vehicle} ${a.param}`}
+                        onClick={(e) => setAcking({ alarm: a, opener: e.currentTarget })}
+                      >
+                        ACK
+                      </button>
                     )}
                   </td>
                 </tr>
@@ -91,11 +108,12 @@ export function AlarmList({ store, mission, user }: { store: Store; mission: Mis
       )}
       {acking && (
         <AckDialog
-          alarm={acking}
+          alarm={acking.alarm}
           mission={mission}
+          opener={acking.opener}
           onCancel={() => setAcking(null)}
-          onDone={(s) => {
-            if (s === "pending") setMine((m) => ({ ...m, [acking.alarm_id]: user }));
+          onDone={(s, requestId) => {
+            if (s === "pending") setMine((m) => ({ ...m, [acking.alarm.alarm_id]: { by: user, requestId } }));
             setAcking(null);
           }}
         />

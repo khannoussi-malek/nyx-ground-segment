@@ -1,0 +1,115 @@
+x-app: &app
+  image: nyx-gs:local
+  build: .
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 5s
+
+services:
+  db:
+    image: timescale/timescaledb:2.32.0-pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: gs
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      GS_OWNER_PASSWORD: ${GS_OWNER_PASSWORD}
+      GS_APP_PASSWORD: ${GS_APP_PASSWORD}
+    volumes: ["pgdata:/var/lib/postgresql/data", "./migrations:/docker-entrypoint-initdb.d:ro"]
+    ports: ["127.0.0.1:${DB_HOST_PORT:-5432}:5432"]
+    healthcheck:   # TCP + sentinel (R2-16): initdb's temporary server is socket-only
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U gs_app -d gs && PGPASSWORD=\"$$GS_APP_PASSWORD\" psql -h 127.0.0.1 -U gs_app -d gs -c 'select 1 from audit_log limit 0'"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+  redis:
+    image: redis:8.10.3
+    restart: unless-stopped
+    command: ["redis-server", "--aclfile", "/etc/redis/users.acl", "--appendonly", "yes", "--appendfsync", "always",
+              "--save", "300 10", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
+    environment: {REDIS_HEALTH_PW: "${REDIS_HEALTH_PW}"}
+    volumes:
+      # long form: a missing generated file must fail `up`, not become a directory (run `make env`)
+      - {type: bind, source: ./redis/users.acl, target: /etc/redis/users.acl, read_only: true, bind: {create_host_path: false}}
+      - redisdata:/data
+    ports: ["127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"]
+    stop_grace_period: 30s
+    healthcheck:   # redis-cli exits 0 on WRONGPASS, hence grep (S3)
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning --user health --pass \"$$REDIS_HEALTH_PW\" ping | grep -q PONG"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  minio:
+    image: bitnamilegacy/minio:2025.5.24@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c
+    restart: unless-stopped
+    environment: {MINIO_ROOT_USER: "${S3_ACCESS_KEY}", MINIO_ROOT_PASSWORD: "${S3_SECRET_KEY}"}
+    volumes: ["miniodata:/bitnami/minio/data"]
+    ports: ["127.0.0.1:${MINIO_HOST_PORT:-9000}:9000"]
+    healthcheck:   # curl ships in the image (S1)
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+  minio-init:   # one-shot; its long-running dependent is api, never named in --wait (S2)
+    image: bitnamilegacy/minio:2025.5.24@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c
+    depends_on: {minio: {condition: service_healthy}}
+    entrypoint: ["/bin/bash", "-c"]
+    # retry: Bitnami's setup runs a temporary MinIO that passes the health check, stops it, then
+    # starts the real one; connecting in that gap is refused (CI run 43591332834). 30 tries x 1 s.
+    command: ["for i in $$(seq 30); do mc alias set s3 http://minio:9000 \"$$S3_ACCESS_KEY\" \"$$S3_SECRET_KEY\" && mc mb --ignore-existing s3/$$S3_BUCKET && exit 0; sleep 1; done; exit 1"]
+    environment: {MC_CONFIG_DIR: /tmp/mc, S3_ACCESS_KEY: "${S3_ACCESS_KEY}", S3_SECRET_KEY: "${S3_SECRET_KEY}", S3_BUCKET: archive}
+    restart: "no"
+  migrate:   # one-shot; its long-running dependent is ingest-1, never named in --wait (S2)
+    <<: *app
+    command: ["gs-migrate"]
+    restart: "no"
+    environment: {DATABASE_URL: "postgresql://gs_owner:${GS_OWNER_PASSWORD}@db:5432/gs", MISSION_DB: /mission}
+    volumes: ["./mission:/mission:ro"]
+    depends_on: {db: {condition: service_healthy}}
+  simulator:
+    <<: *app
+    command: ["gs-sim"]
+    environment: {REDIS_URL: "redis://sim:${REDIS_SIM_PW}@redis:6379/0", SIM_VEHICLES: "NYX-TA1,NYX-TA2",
+                  SIM_SEED: "1", BIND_HOST: "0.0.0.0", HEALTH_PORT: "8081"}
+    ports: ["127.0.0.1:${SIM_HOST_PORT:-8081}:8081"]
+    depends_on: {redis: {condition: service_healthy}}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  ingest-1:
+    <<: *app
+    command: ["gs-ingest"]
+    environment: {REDIS_URL: "redis://ingest:${REDIS_INGEST_PW}@redis:6379/0",
+                  DATABASE_URL: "postgresql://gs_app:${GS_APP_PASSWORD}@db:5432/gs", CONSUMER_NAME: ingest-1,
+                  VEHICLES: "NYX-TA1,NYX-TA2", MISSION_DB: /mission, BIND_HOST: "0.0.0.0", HEALTH_PORT: "8081"}
+    volumes: ["./mission:/mission:ro"]
+    depends_on: {redis: {condition: service_healthy}, db: {condition: service_healthy},
+                 migrate: {condition: service_completed_successfully}}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+  api:
+    <<: *app
+    command: ["gs-api"]
+    environment: {REDIS_URL: "redis://api:${REDIS_API_PW}@redis:6379/0",
+                  DATABASE_URL: "postgresql://gs_app:${GS_APP_PASSWORD}@db:5432/gs", SESSION_SECRET: "${SESSION_SECRET}",
+                  USERS_FILE: /run/users.yaml, MISSION_DB: /mission, VEHICLES: "NYX-TA1,NYX-TA2", BIND_HOST: "0.0.0.0", API_PORT: "8000",
+                  UI_DIST: /app/ui/dist}
+    volumes:
+      - ./mission:/mission:ro
+      - {type: bind, source: ./users.yaml, target: /run/users.yaml, read_only: true, bind: {create_host_path: false}}
+    ports: ["127.0.0.1:${API_HOST_PORT:-8000}:8000"]
+    depends_on: {redis: {condition: service_healthy}, db: {condition: service_healthy},
+                 migrate: {condition: service_completed_successfully},
+                 minio-init: {condition: service_completed_successfully}}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz')"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+volumes: {pgdata: {}, redisdata: {}, miniodata: {}}

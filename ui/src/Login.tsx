@@ -1,0 +1,28 @@
+import { useState, type FormEvent } from "react";
+import { login } from "./api";
+import { attemptLogin } from "./session";
+
+export function Login({ onLogin }: { onLogin: (user: string) => void }) {
+  const [error, setError] = useState("");
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const user = String(f.get("user"));
+    const failure = await attemptLogin(login, user, String(f.get("password")));
+    if (failure === null) onLogin(user);
+    else setError(failure);
+  }
+  return (
+    <form onSubmit={submit}>
+      <h1>Nyx</h1>
+      <label>
+        User <input name="user" autoComplete="username" required />
+      </label>
+      <label>
+        Password <input name="password" type="password" autoComplete="current-password" required />
+      </label>
+      <button type="submit">Log in</button>
+      {error && <p role="alert">{error}</p>}
+    </form>
+  );
+}

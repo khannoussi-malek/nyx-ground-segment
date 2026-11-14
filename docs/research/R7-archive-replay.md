@@ -17,7 +17,7 @@ Handoffs: hot table DDL, the per-(vehicle, hour) DELETE with count check, `drop_
 
 ### Spike S2 (measured 2026-11-13; scripts in the session scratchpad `r7/spike/`)
 
-Machine: Apple M4 Pro, host load average 4–10 from other jobs. pyarrow 26.0.1, duckdb 2.0.0, minio-py 7.2.20, boto3 1.44.2. MinIO = `bitnamilegacy/minio:2025.5.24` (see the MinIO finding below). Data: 1 vehicle-hour = 36,000 rows at 10 Hz, wide schema (below), 8 float params with Gaussian noise. Synthetic noise compresses worse than real telemetry, so sizes are an upper bound (UNVERIFIED for real data).
+Machine: Apple M4 Pro, host load average 4–10 from other jobs. pyarrow 26.0.1, duckdb 2.0.0, minio-py 7.2.20, boto3 1.44.2. MinIO = `bitnamilegacy/minio:2025.5.24` (see the MinIO finding below). Data: 1 vehicle-hour = 36,000 rows at 10 Hz, wide schema (below), 8 float params with Gaussian noise. Synthetic noise compresses worse than real telemetry, so sizes are an upper bound (**STILL UNVERIFIED**: needs real telemetry).
 
 | Measurement | Result |
 | --- | --- |
@@ -48,13 +48,13 @@ Machine: Apple M4 Pro, host load average 4–10 from other jobs. pyarrow 26.0.1,
 
 - **Atomicity.** "Amazon S3 never adds partial objects; if you receive a success response, Amazon S3 added the entire object." For simultaneous writes "it overwrites all but the last object written" — [PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html). Multipart: "Upon receiving this request, Amazon S3 concatenates all the parts … to create a new object" — [CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html). S2 confirms on MinIO: killed single PUT and killed multipart leave no visible object.
 - **Size → single PUT.** Multipart parts must be ≥ 5 MB except the last ([CompleteMultipartUpload](https://docs.aws.amazon.com/AmazonS3/latest/API/API_CompleteMultipartUpload.html), `EntityTooSmall`). minio-py has `MIN_PART_SIZE = 5 MiB` ([helpers.py](https://github.com/minio/minio-py/blob/master/minio/helpers.py)). One vehicle-hour is ~1 MB (≤ ~2 MB with the 100 Hz peak), so it is always a single PUT. No orphaned parts and no multipart ETag questions.
-- **Checksums.** S3 "validates it with the provided value before storing the object". On mismatch "the request is rejected" — [integrity on upload](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html). SHA-256 is supported for single PUT (full object) but for multipart **only as a composite** checksum (a checksum of part checksums); full-object multipart checksums are CRC-only — same page. That is another reason to stay on single PUT: the stored SHA-256 then equals `sha256sum` of the file. S2: MinIO enforces `x-amz-checksum-sha256` and returns it with `x-amz-checksum-mode: ENABLED`. UNVERIFIED: in which MinIO release this started; we only tested 2025.5.24.
+- **Checksums.** S3 "validates it with the provided value before storing the object". On mismatch "the request is rejected" — [integrity on upload](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html). SHA-256 is supported for single PUT (full object) but for multipart **only as a composite** checksum (a checksum of part checksums); full-object multipart checksums are CRC-only — same page. That is another reason to stay on single PUT: the stored SHA-256 then equals `sha256sum` of the file. S2: MinIO enforces `x-amz-checksum-sha256` and returns it with `x-amz-checksum-mode: ENABLED`. **VERIFIED**: since RELEASE.2022-09-01T23-53-36Z (PR #15433, "For now only added to PutObject").
 - **ETag caveat.** For multipart "the object's ETag is not an MD5 digest, regardless of the method of encryption", and it ends in `-<parts>` — [integrity on upload](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html). Never use ETag as the content hash. We store our own SHA-256.
 - **`Content-MD5`** makes S3 check the body and "if they do not match, Amazon S3 returns an error" — [PutObject](https://docs.aws.amazon.com/AmazonS3/latest/API/API_PutObject.html). minio-py adds it on HTTPS. On plain HTTP it signs the real body SHA-256 (`x-amz-content-sha256`), so the server checks the body anyway — [api.py `_build_headers`](https://github.com/minio/minio-py/blob/master/minio/api.py) (read in 7.2.20).
 - **Verify = full re-read.** `GET` the object, sha256 the bytes, compare to the hash stored *before* upload, and parse the footer (`num_rows == row_count`). It costs 3 ms per object (S2). Comparing server-reported checksums alone would trust the server's bookkeeping. The re-read proves the object is readable end to end from the store, which is what DAT-05 asks.
 - **Sidecar** `<HH>.parquet.sha256` with content `<hex>  <HH>.parquet\n` (GNU `sha256sum` format, so `sha256sum -c` works after download in ATP-07). Written only after the data object verifies, also with `x-amz-checksum-sha256`. The authoritative hash is in Postgres. The sidecar is for humans and other tools.
 - **Python client: `minio` (minio-py).** It ships `py.typed` (checked in 7.2.20), so mypy strict works without stubs. Headers that start with `x-amz-` pass through `metadata=` unprefixed ([helpers.py `normalize_headers`](https://github.com/minio/minio-py/blob/master/minio/helpers.py)), which is how S2 sent the checksum. It is sync-only, so call it via `asyncio.to_thread`. boto3 1.44.2 ships no `py.typed` (checked). It needs `types-boto3[s3]` — [types-boto3](https://pypi.org/project/types-boto3/). Newer AWS SDKs also choose a checksum algorithm on their own ("the SDK chooses a checksum algorithm for you" — [integrity on upload](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html)). That is one more behaviour to test against a non-AWS server.
-- **MinIO distribution changed (important for compose).** The repo README says "THIS REPOSITORY IS NO LONGER MAINTAINED" and "The MinIO community edition is now distributed as source code only". The repo was archived on 2026-04-25 — [github.com/minio/minio](https://github.com/minio/minio). S2: `docker pull minio/minio` → "repository does not exist", and `quay.io/minio/minio` → 401. Press coverage: [linuxiac](https://linuxiac.com/minio-ends-active-development/). Pullable today (S2): `bitnamilegacy/minio:2025.5.24` (frozen, built 2025-06-06) and `pgsty/minio:RELEASE.2026-08-04T00-00-00Z` (community rebuild, provenance UNVERIFIED). The minio-py repo is not archived — [minio-py](https://github.com/minio/minio-py). Its future maintenance is UNVERIFIED.
+- **MinIO distribution changed (important for compose).** The repo README says "THIS REPOSITORY IS NO LONGER MAINTAINED" and "The MinIO community edition is now distributed as source code only". The repo was archived on 2026-04-25 — [github.com/minio/minio](https://github.com/minio/minio). S2: `docker pull minio/minio` → "repository does not exist", and `quay.io/minio/minio` → 401. Press coverage: [linuxiac](https://linuxiac.com/minio-ends-active-development/). Pullable today (S2): `bitnamilegacy/minio:2025.5.24` (frozen, built 2025-06-06) and `pgsty/minio:RELEASE.2026-08-04T00-00-00Z` (community rebuild; provenance **VERIFIED**: the Pigsty project (Vonng); renamed `pgsty/silo` on 2026-08-06). The minio-py repo is not archived — [minio-py](https://github.com/minio/minio-py). Its future maintenance is **STILL UNVERIFIED**: no release since 7.2.20 (2025-11-27), but commits continue in 2026 (e.g. 2026-09-29); not archived.
 
 ### 3. Crash safety and late frames
 
@@ -170,11 +170,11 @@ async def run_replay(req: ReplayRequest, out: ReplaySink) -> list[EventKey]:
 
 ## Risks / what would make us switch
 
-- **MinIO is source-only and archived.** If `bitnamilegacy` disappears or a CVE matters, swap the compose image to another S3 server (e.g. Garage, SeaweedFS). The code uses only PUT/GET/HEAD with standard headers. Re-run S2 against the new server, since checksum enforcement differs between servers (UNVERIFIED for alternatives).
+- **MinIO is source-only and archived.** If `bitnamilegacy` disappears or a CVE matters, swap the compose image to another S3 server (e.g. Garage, SeaweedFS). The code uses only PUT/GET/HEAD with standard headers. Re-run S2 against the new server, since checksum enforcement differs between servers (**VERIFIED** for SeaweedFS and Garage v2: both reject a mismatched `x-amz-checksum-sha256`; Garage v1 not checked).
 - **10 vehicles × 100 Hz (Q11):** ~20 MB per vehicle-hour, still a single PUT (max 5 GB — [AWS CLI note](https://docs.aws.amazon.com/AmazonS3/latest/userguide/checking-object-integrity-upload.html)). In-memory export is fine up to ~100s of MB. Beyond that, stream to a temp file and switch to multipart with a CRC64NVME full-object checksum.
 - **Event tables grow forever** (never pruned). At campaign scale this is KB/day. Revisit with a per-campaign export.
 - **Replay equality depends on R8 honouring purity** (no wall clock, no randomness, dict ordering stable) and on ACK `after_seq` being added.
-- **Incomplete multipart uploads** (only if multipart is ever enabled) are invisible but use disk. MinIO's automatic cleanup interval is UNVERIFIED. Add an `AbortIncompleteMultipartUpload` lifecycle rule then.
+- **Incomplete multipart uploads** (only if multipart is ever enabled) are invisible but use disk. MinIO's automatic cleanup: **VERIFIED**, stale uploads cleaned every 6 h with 24 h expiry (`internal/config/api/api.go:129-134`). Add an `AbortIncompleteMultipartUpload` lifecycle rule then.
 
 ## Open questions → assumptions.md
 
@@ -186,3 +186,19 @@ async def run_replay(req: ReplayRequest, out: ReplaySink) -> list[EventKey]:
 - **A-R7-6** (OPEN → R8) ACK rows carry `after_seq`, so replay reproduces ack-dependent transitions. Answers A-R8-11: overlay live ACKs, never ack in replay.
 - **A-R7-7** (OPEN → R9) Is STALE a keyed event that replay must reproduce, or display-only? This decides whether it is in the equality test.
 - **A-R7-8** (ASSUMED) Replay pacing uses `t_onboard` (vehicle time), not `t_received`. A backlog burst seen live is not reproduced as a burst.
+
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources, source code or by test. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| Synthetic sizes are an upper bound | STILL UNVERIFIED | needs real data | D-ARC-01 |
+| MinIO release that enforces x-amz-checksum-sha256 | VERIFIED | minio PR #15433 + release compare | D-ARC-03 |
+| `pgsty/minio` provenance | VERIFIED | repo README, org | D-ARC-09 |
+| minio-py maintained | STILL UNVERIFIED | no 2026 release, commits continue | D-ARC-08 |
+| Alternatives enforce the checksum | VERIFIED (SeaweedFS, Garage v2) | source | D-ARC-09 swap path |
+| MinIO stale multipart cleanup | VERIFIED | minio source | D-ARC-03 (multipart unused) |
+
+CONTRADICTED: none.

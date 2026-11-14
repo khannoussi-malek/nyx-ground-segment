@@ -55,14 +55,14 @@ Handoffs: survey of Yamcs/COSMOS features and licences → R1 (not redone here).
 
 **NASA practice**
 - NPR 7150.2 SWE-134: "Operator overrides of safety-critical software functions require at least two independent actions by an operator"; "prerequisite checks prior to the execution of safety-critical software commands"; "No single software event or action is allowed to initiate an identified hazard"; reject hazardous out-of-sequence commands. Note on (d): "Multiple independent actions by the operator help to reduce potential operator mistakes" — [SWEHB SWE-134](https://swehb.nasa.gov/display/7150/SWE-134+-+Safety+Critical+Software+Requirements)
-- NHB 1700.7A (STS payload safety): for catastrophic hazards, "No combination of two failures, operator errors, or RF … signals shall result in…" injury or loss. A catastrophic function needs "a minimum of three independent inhibits" (critical hazards: two) — [NHB 1700.7A §201–202](https://ntrs.nasa.gov/api/citations/19830024564/downloads/19830024564.pdf). In this rule an operator error counts as a failure, which is why the confirm step and the interlock exist. The current SSP 51700 / NSTS 1700.7B text was not read (UNVERIFIED that the numbers are unchanged).
-- SSP 50038 was not accessible (UNVERIFIED; not cited).
+- NHB 1700.7A (STS payload safety): for catastrophic hazards, "No combination of two failures, operator errors, or RF … signals shall result in…" injury or loss. A catastrophic function needs "a minimum of three independent inhibits" (critical hazards: two) — [NHB 1700.7A §201–202](https://ntrs.nasa.gov/api/citations/19830024564/downloads/19830024564.pdf). In this rule an operator error counts as a failure, which is why the confirm step and the interlock exist. **VERIFIED for NSTS 1700.7B** (JSC, Jan 1989; EverySpec mirror, NTRS has no copy): §200.1a critical hazards "no single failure or operator error", §200.1b catastrophic "no combination of two failures or operator errors", §201.2 "two independent inhibits", §201.3 "a minimum of three independent inhibits". SSP 51700 and the ISS Addendum: **STILL UNVERIFIED** (not read).
+- SSP 50038 was not accessible (**STILL UNVERIFIED**: no accessible copy; not cited).
 
 **Interlock primitive** — `SET key value NX PX ms`: NX = "Only set the key if it does not already exist", PX = expiry in ms. It returns null when NX blocks the write. It is atomic and O(1) — [Redis SET](https://redis.io/docs/latest/commands/set/). Redis discourages it as a *lock* in favour of Redlock. Here we only need a "seen recently" marker, not mutual exclusion.
 
 **Python libraries (PyPI, checked 2026-11-13)**
-- [`spacepackets` 0.32.0](https://pypi.org/project/spacepackets/) (Apache-2.0, 2026-05-03): implements Space Packet per 133.0-B-2, "PUS Telecommand and PUS Telemetry … ECSS-E-ST-70-41C", CDS short timestamp, CFDP and USLP — [docs](https://spacepackets.readthedocs.io/en/latest/). It is the candidate for a per-packet streaming decoder. CUC support is not listed (UNVERIFIED).
-- [`ccsdspy` 2.1.0](https://pypi.org/project/ccsdspy/) (BSD-3, 2026-10-28): `FixedLength`/`VariableLength` layouts, vectorised decoding into arrays per field. The documented examples are file-based (`pkt.load(file)`) — [docs](https://docs.ccsdspy.org/en/latest/). Better suited to batch/archive than to per-message streaming (streaming use UNVERIFIED).
+- [`spacepackets` 0.32.0](https://pypi.org/project/spacepackets/) (Apache-2.0, 2026-05-03): implements Space Packet per 133.0-B-2, "PUS Telecommand and PUS Telemetry … ECSS-E-ST-70-41C", CDS short timestamp, CFDP and USLP — [docs](https://spacepackets.readthedocs.io/en/latest/). It is the candidate for a per-packet streaming decoder. CUC support: **VERIFIED absent** in 0.32.0 (only `spacepackets.ccsds.time.cds` / `CdsShortTimestamp`; package inspected 2026-11-14).
+- [`ccsdspy` 2.1.0](https://pypi.org/project/ccsdspy/) (BSD-3, 2026-10-28): `FixedLength`/`VariableLength` layouts, vectorised decoding into arrays per field. The documented examples are file-based (`pkt.load(file)`) — [docs](https://docs.ccsdspy.org/en/latest/). Better suited to batch/archive than to per-message streaming (streaming use **VERIFIED possible**: `FixedLength.load` accepts a file-like object; one packet decoded from `io.BytesIO`, 2026-11-14. It stays array-oriented, so per-message use pays setup per call).
 - [`yamcs-client` 2.2.0](https://pypi.org/project/yamcs-client/) (LGPL, 2026-10-31): a client for a Yamcs *server* (e.g. `await_acknowledgment("Acknowledge_Sent")`) — [examples](https://docs.yamcs.org/python-yamcs-client/examples/commanding/). It is not a decoder. Relevant only if Yamcs ever replaces our core.
 - PaperLab was not used: the standards above already give the rationale for two-step and interlock, and no paper changed a decision.
 
@@ -181,3 +181,17 @@ Rejected alternatives:
 5. A-R2-5: The two-step confirm is the same user. A second-person approval is out of scope and listed as a next step.
 6. A-R2-6: The simulator executes ≤ 1 command per frame, so `last_cmd_id` cannot skip a command.
 7. A-R2-7: If a command is SENT while the vehicle is in LOS, it still times out normally (no pause of timers during LOS).
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources or by running the code. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| R5's PUS time-next-to-counter item | VERIFIED (earlier, §"Time next to the counter") | ECSS/CCSDS text quoted there | D-ING-13 |
+| NHB 1700.7A inhibit rules unchanged in the current text | VERIFIED for NSTS 1700.7B (§200.1a/b, §201.2/201.3); SSP 51700 and the ISS Addendum STILL UNVERIFIED (not read) | EverySpec mirror of NSTS 1700.7B (Jan 1989) | D-CMD confirm / second-person rationale; no change |
+| SSP 50038 | STILL UNVERIFIED (no accessible copy; not cited) | — | — |
+| `spacepackets` has no CUC timestamp | VERIFIED absent in 0.32.0 | package inspected: only `ccsds.time.cds` | §3 decoder plug point (v1+) |
+| `ccsdspy` usable per message (streaming) | VERIFIED possible | `FixedLength.load(io.BytesIO(...))` decoded one packet | §3 decoder plug point (v1+) |
+
+CONTRADICTED: none.

@@ -1,0 +1,7 @@
+body { font: 14px/1.4 system-ui, sans-serif; margin: 1rem; }
+header { display: flex; gap: 1rem; align-items: center; }
+form { display: grid; gap: 0.5rem; max-width: 18rem; }
+table { border-collapse: collapse; margin-bottom: 1.5rem; }
+th, td { border: 1px solid #ccc; padding: 0.25rem 0.75rem; text-align: left; }
+td[data-param] { font-variant-numeric: tabular-nums; text-align: right; }
+[role="alert"] { color: #b00020; }

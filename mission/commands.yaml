@@ -1,0 +1,14 @@
+version: 1
+defaults: {receive_timeout_s: 5, verify_timeout_s: 15}
+commands:
+  isolate_valve:
+    description: Close the cabin isolation valve
+    hazardous: false
+    args:
+      valve: {type: enum, values: [A, B], required: true}
+  vent_cabin:
+    description: Open the cabin vent valve
+    hazardous: true
+    hazard: Irreversible loss of cabin atmosphere
+    args:
+      duration_s: {type: float, min: 1, max: 10, unit: s, required: true}

@@ -16,7 +16,7 @@ A Redis consumer group gives each entry to whichever consumer asks first. If two
 - XAUTOCLAIM scans the PEL from `start` in ID order and takes up to `COUNT` entries (100 by default). It claims only entries idle longer than `min-idle-time`, adds 1 to their delivery count, and drops PEL entries whose stream entry was trimmed. — [XAUTOCLAIM](https://redis.io/docs/latest/commands/xautoclaim/)
 - On restart, a consumer reads its own PEL first ("start by consuming the history") and then switches to `>`. Processing is at-least-once: "we might process a message multiple times". — [Redis Streams](https://redis.io/docs/latest/develop/data-types/streams/)
 - Consumer-group state (including the PEL) goes to AOF/RDB and is restored after a restart. "AOF must be used with a strong fsync policy if persistence of messages is important." — [Redis Streams, persistence](https://redis.io/docs/latest/develop/data-types/streams/#persistence-replication-and-message-safety). R3 covers the details.
-- XACK "removes one or multiple messages from the Pending Entries List (PEL) of a stream consumer group". The docs never say it checks which consumer owns the entry. So a zombie could ack an entry that another worker has claimed (UNVERIFIED; inferred from the docs; test it in R3). — [XACK](https://redis.io/docs/latest/commands/xack/)
+- XACK "removes one or multiple messages from the Pending Entries List (PEL) of a stream consumer group". The docs never say it checks which consumer owns the entry. So a zombie could ack an entry that another worker has claimed (**VERIFIED** by test, redis 8.2, 2026-11-14: `XACK` takes no consumer; after B claimed an entry, an `XACK` issued from A's connection returned 1 and removed it from the PEL. The design's fence is the DB: a stolen owner's commit fails, so it never reaches XACK). — [XACK](https://redis.io/docs/latest/commands/xack/)
 
 **Leases and fencing (prior art)**
 - A lease holder can pause (GC, SIGSTOP, swapping) past its TTL and keep writing while it still believes it holds the lock. Fencing tokens solve this: the token goes up on every acquire, and the storage "remembers that it has already processed a write with a higher token number" and rejects lower ones. This needs "the storage server to take an active role in checking tokens." — [Kleppmann, How to do distributed locking (2016)](https://martin.kleppmann.com/2016/02/08/how-to-do-distributed-locking.html); rebuttal: [antirez, Is Redlock safe?](http://antirez.com/news/101)
@@ -27,7 +27,7 @@ A Redis consumer group gives each entry to whichever consumer asks first. If two
 - "Once acquired at session level, an advisory lock is held until explicitly released or the session ends." — [PG explicit locking, advisory locks](https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS)
 - Postgres calls `pg_advisory_unlock_all()` "implicitly … at session end, even if the client disconnects ungracefully"; `pg_try_advisory_lock` returns false right away and never waits. — [PG admin functions, advisory locks](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADVISORY-LOCKS)
 - `pg_locks` shows advisory locks and the pid that holds them. — [pg_locks](https://www.postgresql.org/docs/current/view-pg-locks.html). `pg_terminate_backend(pid)` is "allowed if the calling role is a member of the role whose backend is being terminated", so workers that share one DB role can kill each other's sessions without superuser. — [PG server signaling functions](https://www.postgresql.org/docs/current/functions-admin.html#FUNCTIONS-ADMIN-SIGNAL)
-- When the client vanishes without a FIN/RST (host crash, network partition), the server notices only through keepalive or at the next I/O. `tcp_keepalives_idle`/`_interval`/`_count` and `tcp_user_timeout` bound that time. — [PG connection settings](https://www.postgresql.org/docs/current/runtime-config-connection.html). After a SIGKILL the kernel closes the socket, so the session should end within milliseconds (UNVERIFIED; T2 below measures it).
+- When the client vanishes without a FIN/RST (host crash, network partition), the server notices only through keepalive or at the next I/O. `tcp_keepalives_idle`/`_interval`/`_count` and `tcp_user_timeout` bound that time. — [PG connection settings](https://www.postgresql.org/docs/current/runtime-config-connection.html). After a SIGKILL the kernel closes the socket, so the session should end within milliseconds (**VERIFIED** for an idle connection: advisory lock gone ≤ 0.07 s after `docker kill -s KILL`, postgres 17, 2026-11-14. Caveat: a client killed **mid-statement** is not noticed until the statement ends; with `pg_sleep(600)` the lock was still held after 3 min. Covered by the steal path, D-ING-12).
 - Consequence (my reasoning, checked by T2/T3): if the lock and all of a vehicle's writes use **the same DB session**, no write from the old owner can commit after the lock is released. Session end aborts any open transaction and releases the lock in the same backend exit. The new owner's state load then sees every committed write of the old owner. Kleppmann's fence ends up inside the storage, and no token has to be carried around.
 
 **Kafka (design d)**
@@ -44,7 +44,7 @@ A Redis consumer group gives each entry to whichever consumer asks first. If two
 | Redis restart (ENG-02) | **lease keys can be lost** (fsync every second) or all expire during a 10 s outage → re-race; a token from `INCR` can go **backwards** → the fence must live in the DB anyway | ownership is not in Redis, so nothing changes; workers re-read their own PEL from `0`, then `>` | same as the parts it uses | state in Redis can be lost; state in the DB is the same as (a2) without the order | n/a |
 | Postgres restart | writes fail; tokens in the DB survive | all locks dropped; workers reconnect and re-race; each new owner runs the takeover protocol | as (a2) | as (a2) | n/a |
 | Hung owner (SIGSTOP/deadlock) | lease expires → takeover; the zombie is stopped by the DB token check | session stays alive → **no automatic takeover**; ING-08 steal path: entry idle > 30 s → `pg_terminate_backend(holder_pid)` | as (a) | n/a | session timeout → rebalance |
-| Build cost (25 h) | renew task, TTL tuning, token column + check in every write, release script: ~150 LOC (UNVERIFIED estimate) | try-lock poll + rebalance rule + steal: ~60–80 LOC (UNVERIFIED estimate) | two pipelines, a second stream or notify channel: high | small code, wrong under reorder: rejected on correctness | new broker; spec fixes Redis Streams in §3/ING-01 |
+| Build cost (25 h) | renew task, TTL tuning, token column + check in every write, release script: ~150 LOC (**STILL UNVERIFIED** estimate) | try-lock poll + rebalance rule + steal: ~60–80 LOC (**STILL UNVERIFIED** estimate) | two pipelines, a second stream or notify channel: high | small code, wrong under reorder: rejected on correctness | new broker; spec fixes Redis Streams in §3/ING-01 |
 
 ## Decision candidate
 
@@ -97,9 +97,9 @@ sequenceDiagram
 ## Risks / what would make us switch
 
 - **Hung-but-connected owner** keeps its lock. Only the steal path (30 s) recovers, so alarm latency during that window misses ALM-05. Record this as a known limitation.
-- **Silent client loss** (host crash/partition, not a container kill) is detected only by TCP keepalive. Set `tcp_keepalives_idle=5`, `interval=2`, `count=3` (≈ 11 s; UNVERIFIED under Docker networking) or `tcp_user_timeout`.
+- **Silent client loss** (host crash/partition, not a container kill) is detected only by TCP keepalive. Set `tcp_keepalives_idle=5`, `interval=2`, `count=3` (≈ 11 s; **STILL UNVERIFIED** under Docker networking: not tested) or `tcp_user_timeout`.
 - **Zombie side effects outside Postgres**: a frozen old owner that wakes up could XACK, or publish a live UI update for an already-committed frame. XACK after commit is harmless. The UI must ignore updates older than what it shows (handoff R9).
-- **Connection pooling** must not be used for the owned connection (PgBouncer in transaction mode breaks session locks; UNVERIFIED, check the PgBouncer docs if a pooler is ever added).
+- **Connection pooling** must not be used for the owned connection (PgBouncer in transaction mode breaks session locks: **VERIFIED**, pgbouncer.org feature map "Session-level advisory locks | Yes | Never").
 - **Takeover warm-up** depends on checks being pure functions of (initial state, ordered frames). If R8 makes them stateful in other ways, the warm-up must persist that state in the same transaction instead.
 - **Parallelism ceiling** = number of vehicles. One hot vehicle cannot use two workers (same as Kafka partitions). Answer for Q11: 10 vehicles × 100 Hz is about 1000 frames/s spread over ≤ 10 workers; the first thing to break is probably DB insert rate, not ordering (R6/R10 to measure).
 - **Switch to Kafka (or Redpanda)** when: vehicles ≫ workers and the hand-written rebalance grows beyond one page; several consumer groups need broker-side retention and replay; one Redis cannot hold the rate (Redis docs: a single stream "is not automatically partitioned to multiple instances"); or exactly-once transactions are required. Kafka gives the same per-key order and fencing as built-ins ([Kafka intro](https://kafka.apache.org/23/getting-started/introduction/), [Confluent transactions](https://www.confluent.io/blog/transactions-apache-kafka/)).
@@ -111,3 +111,19 @@ sequenceDiagram
 3. Is a takeover gap of ~1–3 s (latency spike, no loss) acceptable during OPS-4? Assume yes, and exclude the takeover window from the ALM-05/ING-09 p95 with a note.
 4. Can workers share one DB role so the steal path works without superuser? Assume yes.
 5. Handoffs: XACK ownership semantics, delivery count, AOF fsync policy → **R3**. Dedup key, seq reset/boot epoch, "no alarm duplicated" key → **R5**. `ingest_order` column cost on a hypertable → **R6**. Warm-up state for hysteresis/persistence/ROC → **R8**. UI ignoring stale late updates → **R9**.
+
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources, source code or by test. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| A zombie can XACK an entry another consumer claimed | VERIFIED | redis 8.2 test | D-ING-02, D-ING-12 (fenced by DB) |
+| Session ends within ms after client SIGKILL | VERIFIED (idle) / caveat mid-statement | postgres 17 test | D-ING-10, D-ING-12 |
+| LOC estimates (lease option) | STILL UNVERIFIED | estimate | none |
+| LOC estimates (lock option) | STILL UNVERIFIED | estimate | none |
+| Keepalive ≈ 11 s under Docker networking | STILL UNVERIFIED | not tested | D-ING-10 |
+| PgBouncer transaction mode breaks session locks | VERIFIED | pgbouncer.org features | D-ING-09 |
+
+CONTRADICTED: none.

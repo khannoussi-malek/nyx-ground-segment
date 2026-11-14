@@ -143,3 +143,7 @@ Integration (real Postgres): insert the same 100 frames twice → `count(*) = 10
 5. A-R5-5: frame format stays as §3 (no `boot_id`); proposal for a reset counter recorded as a future interface change.
 6. Report (DAT-02, Q5): "lost frames" in a session = sum of `GAP.lost` over all epochs in the session; `SEQ_JUMP` listed separately. Does the conductor want SEQ_RESET listed as a gap of unknown size (CCSDS note 2: completeness "cannot be determined")?
 7. Replay (R7): replayed frames get the same deterministic keys, so replay output must go to a separate table/namespace or be in-memory only.
+
+## Verification pass (2026-11-14)
+
+No claim in this note is marked UNVERIFIED. Its one open item (PUS time next to the counter) was answered and VERIFIED in [R2](R2-standards-and-command-safety.md). CONTRADICTED: none.

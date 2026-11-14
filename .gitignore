@@ -17,3 +17,10 @@ dist/
 users.yaml
 
 .DS_Store
+.superpowers/
+
+redis/users.acl
+coverage/
+playwright-report/
+test-results/
+.coverage

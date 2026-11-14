@@ -1,0 +1,88 @@
+name: ci
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  pull_request:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # no floating major tag upstream
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - run: uv sync --frozen
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            ui/package-lock.json
+            e2e/package-lock.json
+      - run: cd ui && npm ci
+      - run: cd e2e && npm ci && npx tsc --noEmit
+      - run: cd ui && npx tsc --noEmit
+      - run: cd ui && npm test
+      - run: uv run ruff check
+      - run: uv run ruff format --check
+      - run: uv run mypy --strict src tests scripts
+      - run: |
+          make gen && git diff --exit-code -- interfaces ui/src/api || (echo "generated code is stale, run make gen"; exit 1)
+
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # no floating major tag upstream
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - run: uv sync --frozen
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: cd ui && npm ci
+      - run: make env
+      - run: docker compose up -d --wait redis db minio
+      - run: docker compose run --rm minio-init
+      - run: docker compose run --rm --build migrate
+      - run: uv run pytest --cov=gs --cov-fail-under=80
+
+  e2e:
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # no floating major tag upstream
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - run: uv sync --frozen
+      - run: make up && make down && make up
+      - run: uv run pytest tests/system -v
+      - run: uv run python scripts/check_acl_log.py
+      - run: make up # system tests stop app containers
+      - run: cd e2e && npm ci && npx playwright install --with-deps chromium && npx playwright test
+      - run: uv run python scripts/check_acl_log.py # the browser flow must not trip ACLs either
+      - if: failure()
+        run: docker compose logs > compose.log
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: e2e-failure
+          path: |
+            e2e/playwright-report
+            compose.log
+      - if: always()
+        run: make down

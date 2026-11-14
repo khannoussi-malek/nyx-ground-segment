@@ -1,0 +1,11 @@
+.git
+.venv
+**/node_modules
+e2e
+docs
+graphify-out
+.env
+users.yaml
+redis
+ui/dist
+ui/coverage

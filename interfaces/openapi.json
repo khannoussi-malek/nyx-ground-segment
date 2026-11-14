@@ -1,0 +1,553 @@
+{
+  "components": {
+    "schemas": {
+      "DlqRecord": {
+        "additionalProperties": false,
+        "properties": {
+          "deliveries": {
+            "minimum": 1,
+            "title": "Deliveries",
+            "type": "integer"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          },
+          "dlq_at": {
+            "format": "date-time",
+            "title": "Dlq At",
+            "type": "string"
+          },
+          "entry_id": {
+            "title": "Entry Id",
+            "type": "string"
+          },
+          "first_seen": {
+            "format": "date-time",
+            "title": "First Seen",
+            "type": "string"
+          },
+          "raw": {
+            "title": "Raw",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "json_invalid",
+              "schema",
+              "vehicle_mismatch",
+              "t_onboard_range",
+              "poison"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "stream": {
+            "title": "Stream",
+            "type": "string"
+          }
+        },
+        "required": [
+          "reason",
+          "detail",
+          "raw",
+          "stream",
+          "entry_id",
+          "deliveries",
+          "first_seen",
+          "dlq_at"
+        ],
+        "title": "DlqRecord",
+        "type": "object"
+      },
+      "ErrorBody": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "ErrorBody",
+        "type": "object"
+      },
+      "FrameHeader": {
+        "additionalProperties": true,
+        "properties": {
+          "last_cmd_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Cmd Id"
+          },
+          "mode": {
+            "enum": [
+              "SAFE",
+              "STANDBY",
+              "TEST",
+              "FAULT"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "seq": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "t_onboard": {
+            "format": "date-time",
+            "title": "T Onboard",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle",
+          "seq",
+          "t_onboard",
+          "mode",
+          "last_cmd_id"
+        ],
+        "title": "FrameHeader",
+        "type": "object"
+      },
+      "Hb": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "hb",
+            "default": "hb",
+            "title": "Kind",
+            "type": "string"
+          },
+          "server_ms": {
+            "title": "Server Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "server_ms"
+        ],
+        "title": "Hb",
+        "type": "object"
+      },
+      "Health": {
+        "additionalProperties": false,
+        "properties": {
+          "checks": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "title": "Checks",
+            "type": "object"
+          },
+          "status": {
+            "enum": [
+              "ok",
+              "down"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "checks"
+        ],
+        "title": "Health",
+        "type": "object"
+      },
+      "Hello": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "hello",
+            "default": "hello",
+            "title": "Kind",
+            "type": "string"
+          },
+          "server_ms": {
+            "title": "Server Ms",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "server_ms"
+        ],
+        "title": "Hello",
+        "type": "object"
+      },
+      "LoginRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "password": {
+            "title": "Password",
+            "type": "string"
+          },
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user",
+          "password"
+        ],
+        "title": "LoginRequest",
+        "type": "object"
+      },
+      "Me": {
+        "additionalProperties": false,
+        "properties": {
+          "user": {
+            "title": "User",
+            "type": "string"
+          }
+        },
+        "required": [
+          "user"
+        ],
+        "title": "Me",
+        "type": "object"
+      },
+      "Snapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "snapshot",
+            "default": "snapshot",
+            "title": "Kind",
+            "type": "string"
+          },
+          "vehicles": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Tm"
+            },
+            "title": "Vehicles",
+            "type": "object"
+          }
+        },
+        "required": [
+          "vehicles"
+        ],
+        "title": "Snapshot",
+        "type": "object"
+      },
+      "Tm": {
+        "additionalProperties": false,
+        "properties": {
+          "age_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Age Ms"
+          },
+          "kind": {
+            "const": "tm",
+            "default": "tm",
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_cmd_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Cmd Id"
+          },
+          "mode": {
+            "enum": [
+              "SAFE",
+              "STANDBY",
+              "TEST",
+              "FAULT"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "seq": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "t_onboard": {
+            "format": "date-time",
+            "title": "T Onboard",
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Values",
+            "type": "object"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle",
+          "seq",
+          "t_onboard",
+          "mode",
+          "last_cmd_id",
+          "values"
+        ],
+        "title": "Tm",
+        "type": "object"
+      }
+    }
+  },
+  "info": {
+    "title": "Nyx ground segment",
+    "version": "0.2.0"
+  },
+  "openapi": "3.1.0",
+  "paths": {
+    "/api/events": {
+      "get": {
+        "operationId": "events_api_events_get",
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Events"
+      }
+    },
+    "/api/login": {
+      "post": {
+        "operationId": "login_api_login_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LoginRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Login"
+      }
+    },
+    "/api/logout": {
+      "post": {
+        "operationId": "logout_api_logout_post",
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Logout"
+      }
+    },
+    "/api/me": {
+      "get": {
+        "operationId": "me_api_me_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Me"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Me"
+      }
+    },
+    "/healthz": {
+      "get": {
+        "operationId": "healthz_healthz_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Health"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Healthz"
+      }
+    }
+  },
+  "x-generated": "make gen - do not edit"
+}

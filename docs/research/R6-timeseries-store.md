@@ -38,7 +38,7 @@ Only the wide table was in memory for the low-load runs. In the loaded runs, all
 - **Continuous aggregates are overkill here.** They are TSL-only — [editions](https://www.tigerdata.com/docs/about/latest/timescaledb-editions). Real-time aggregation is "DISABLED by default" from v2.13, so a cagg without it lags behind the refresh policy — [real-time aggregates](https://www.tigerdata.com/docs/use-timescale/latest/continuous-aggregates/real-time-aggregates). In S1, aggregating the raw 24 h took 58–424 ms against a 2 s budget. Revisit them at 10 vehicles × 100 Hz (see Risks).
 - **Compression (columnstore/Hypercore) is TSL-only** — [editions](https://www.tigerdata.com/docs/about/latest/timescaledb-editions). We don't need it, because 24 h of hot data is about 0.45 GB.
 - `drop_chunks` removes chunks "if and only if their time range falls fully before" the cut-off. It works on whole chunks only — [drop_chunks](https://www.tigerdata.com/docs/api/latest/hypertable/drop_chunks). Retention by time alone is blind to whether the archive was verified. `add_retention_policy` is TSL — [editions](https://www.tigerdata.com/docs/about/latest/timescaledb-editions). Neither should be used for DAT-05.
-- **Licensing.** Hypertables, `time_bucket` and `drop_chunks` are in both the Apache-2 and Community (TSL) editions. Retention policies, columnstore and continuous aggregates are Community only — [editions](https://www.tigerdata.com/docs/about/latest/timescaledb-editions). The default `timescale/timescaledb:latest-pg17` image reports `SHOW timescaledb.license` = `timescale`, i.e. TSL (S1). Docker Hub also lists `-oss` tags such as `latest-pg16-oss` — [tags](https://hub.docker.com/r/timescale/timescaledb/tags). It is UNVERIFIED that `-oss` means Apache-only.
+- **Licensing.** Hypertables, `time_bucket` and `drop_chunks` are in both the Apache-2 and Community (TSL) editions. Retention policies, columnstore and continuous aggregates are Community only — [editions](https://www.tigerdata.com/docs/about/latest/timescaledb-editions). The default `timescale/timescaledb:latest-pg17` image reports `SHOW timescaledb.license` = `timescale`, i.e. TSL (S1). Docker Hub also lists `-oss` tags such as `latest-pg16-oss` — [tags](https://hub.docker.com/r/timescale/timescaledb/tags). `-oss` means Apache-only: **VERIFIED** (timescaledb-docker `Makefile:43` builds with `-DAPACHE_ONLY=1`; the Dockerfile removes `timescaledb-tsl-*.so`; `license_guc.h` defaults to apache).
 
 ### 2. Table layout
 
@@ -50,10 +50,10 @@ Only the wide table was in memory for the low-load runs. In the loaded runs, all
 ### 3. Alternatives
 
 - **Plain PG 17 + B-tree on (vehicle, t_onboard)** would meet every target at this size, because S1's queries are index range scans and `date_bin` replaces `time_bucket`. What Timescale adds is automatic hourly chunks (no partition-creation job), `drop_chunks`, and the "time-series DB" bonus point from the job post. Native partitioning gives fast `DROP`/`DETACH` and avoids "VACUUM overhead" of bulk DELETE, but we would have to create partitions ourselves — [PG partitioning](https://www.postgresql.org/docs/current/ddl-partitioning.html)
-- **BRIN** is "designed for … very large tables in which certain columns have some natural correlation with their physical location" — [PG BRIN](https://www.postgresql.org/docs/current/brin.html). 1.7 M rows/day is not "very large", and our deletes free space at the old end. Our own reasoning (UNVERIFIED) is that new rows reuse that space, which erodes the physical correlation BRIN depends on. A B-tree is the safer default.
-- **InfluxDB 3 Core.** Retention can only be set when the database is created. Rows outside it are "filtered out of query results" rather than deleted under our control — [Influx retention](https://docs.influxdata.com/influxdb3/core/reference/internals/data-retention/), [manage DBs](https://docs.influxdata.com/influxdb3/core/admin/databases/). There is a reported default cap of 432 Parquet files (≈72 h) per query — [community thread](https://community.influxdata.com/t/influxdb-3-core-seems-to-ignore-the-72-hour-query-time-range-limit/57443) (UNVERIFIED in official docs). Postgres would still be needed for alarms, commands and audit.
+- **BRIN** is "designed for … very large tables in which certain columns have some natural correlation with their physical location" — [PG BRIN](https://www.postgresql.org/docs/current/brin.html). 1.7 M rows/day is not "very large", and our deletes free space at the old end. Our own reasoning (**STILL UNVERIFIED**: consistent with the PG docs, which say summaries only widen and can go stale, but deletes and free-space reuse are not discussed) is that new rows reuse that space, which erodes the physical correlation BRIN depends on. A B-tree is the safer default.
+- **InfluxDB 3 Core.** Retention can only be set when the database is created. Rows outside it are "filtered out of query results" rather than deleted under our control — [Influx retention](https://docs.influxdata.com/influxdb3/core/reference/internals/data-retention/), [manage DBs](https://docs.influxdata.com/influxdb3/core/admin/databases/). There is a reported default cap of 432 Parquet files (≈72 h) per query — [community thread](https://community.influxdata.com/t/influxdb-3-core-seems-to-ignore-the-72-hour-query-time-range-limit/57443) (**VERIFIED**: `query-file-limit` default 432, "up to a 72 hours of data, but potentially less", docs.influxdata.com config options). Postgres would still be needed for alarms, commands and audit.
 - **QuestDB.** Old data is removed with `DROP PARTITION`, or by TTL once the "whole time range" of a partition expires — [QuestDB retention](https://questdb.com/docs/operations/data-retention/), [TTL](https://questdb.com/docs/concepts/ttl). Row-level deletes are weak, which makes per-vehicle verify-then-delete awkward. It is also a second database.
-- **ClickHouse.** DELETE "marks rows as deleted without immediately removing them". Bulk removal should use `DROP PARTITION` — [CH lightweight delete](https://clickhouse.com/docs/guides/developer/lightweight-delete). It is very strong at large-scale aggregation, but it would be a second database to run in 25 h and has no transactional `ON CONFLICT` dedup (UNVERIFIED that its replacing engines would satisfy ING-03).
+- **ClickHouse.** DELETE "marks rows as deleted without immediately removing them". Bulk removal should use `DROP PARTITION` — [CH lightweight delete](https://clickhouse.com/docs/guides/developer/lightweight-delete). It is very strong at large-scale aggregation, but it would be a second database to run in 25 h and has no transactional `ON CONFLICT` dedup (**VERIFIED** that they would not: ReplacingMergeTree dedups "only during a merge" and "does not guarantee the absence of duplicates"; `FINAL` at query time).
 - **The case for one DB:** one backup, one connection pool, and one transaction that can write a frame batch together with its alarm transitions. That last point helps "no alarm duplicated" (R4/R5 handoff). The session report (DAT-02) becomes one SQL query joining telemetry, alarms, commands and gaps over the session window. Compose already includes Postgres.
 
 ### 4. Append-only audit log (CMD-04)
@@ -74,9 +74,9 @@ Only the wide table was in memory for the low-load runs. In the loaded runs, all
 
 - Rows/day, nominal: 2 × 10 Hz × 86,400 s = **1,728,000**. Peak: 2 × 100 Hz × 300 s = 60,000 extra rows (≈ 16 MB).
 - Disk: S1 measured 436–455 MB for 1.728 M rows, ≈ 263 B/row including two B-tree indexes. Hot data is therefore ≈ **0.45 GB/day**. If archiving is blocked and retention has to grow to 72 h: ≈ 1.4 GB.
-- 1 h of one parameter is 36,000 rows ≈ 5 MB of heap from cache, measured at 2–24 ms. Serializing 36 k points to JSON in the API is the larger cost (UNVERIFIED; measure in ATP-08).
+- 1 h of one parameter is 36,000 rows ≈ 5 MB of heap from cache, measured at 2–24 ms. Serializing 36 k points to JSON in the API is the larger cost (**STILL UNVERIFIED**: measure in ATP-08).
 - A 24 h band reads 864,000 rows ≈ 124 MB and returns 1,440 buckets, measured at 58–424 ms. That leaves 5–30× margin against 2 s.
-- Q11 (10 vehicles × 100 Hz): 86.4 M rows/day ≈ 22 GB/day. A 24 h band for one vehicle would cover 8.64 M rows, which by linear extrapolation from S1 is ≈ 0.6–4 s (UNVERIFIED). That is the point at which a 1-minute rollup becomes necessary.
+- Q11 (10 vehicles × 100 Hz): 86.4 M rows/day ≈ 22 GB/day. A 24 h band for one vehicle would cover 8.64 M rows, which by linear extrapolation from S1 is ≈ 0.6–4 s (**STILL UNVERIFIED**: extrapolation). That is the point at which a 1-minute rollup becomes necessary.
 
 ## Decision candidate
 
@@ -175,3 +175,19 @@ Session report (DAT-02): one `SELECT min(p1), max(p1), avg(p1), …, count(*)` o
 4. Can a session be longer than the 24 h hot window? Assumed ≤ 24 h. The report is frozen into a `session_report` row at stop, so it survives retention.
 5. Hot retention is "≥ 24 h, and until archived". If MinIO is down for days, the disk grows by ≈ 0.45 GB/day. Assume a health alert above 72 h of hot data.
 6. Use the TSL default image or the `-oss` image? Assumed the default pinned image, using Apache-2 features only.
+
+
+## Verification pass (2026-11-14)
+
+Claims that were marked UNVERIFIED, checked against primary sources, source code or by test. Marked in place above.
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| `-oss` tags are Apache-only | VERIFIED | timescaledb-docker + timescaledb source | D-DB-01 |
+| Deletes erode BRIN correlation | STILL UNVERIFIED | PG docs consistent, not explicit | D-DB (index choice) |
+| InfluxDB 3 Core 432-file / 72 h cap | VERIFIED | official config docs | D-DB-01 (rejected alternative) |
+| ClickHouse replacing engines can't satisfy ING-03 | VERIFIED | ClickHouse docs | D-DB-01 (rejected alternative) |
+| JSON serialization dominates 1 h query | STILL UNVERIFIED | measurement pending | D-DB-04 |
+| Q11 24 h band query time | STILL UNVERIFIED | extrapolation | D-PERF-09 |
+
+CONTRADICTED: none.

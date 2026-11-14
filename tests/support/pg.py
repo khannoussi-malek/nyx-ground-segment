@@ -7,6 +7,7 @@ from pathlib import Path
 
 import psycopg
 from psycopg import sql
+from psycopg.rows import dict_row
 
 from tests.support.env import REPO, dotenv
 
@@ -56,3 +57,24 @@ def column_types(conn: psycopg.Connection, table: str) -> dict[str, str]:
         (table,),
     ).fetchall()
     return {name: dtype for name, dtype in rows}
+
+
+def stored(vehicle: str) -> int:
+    with psycopg.connect(app_dsn("gs")) as c:
+        row = c.execute("select count(*) from telemetry where vehicle=%s", (vehicle,)).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def seqs_by_t_received(vehicle: str) -> list[int]:
+    with psycopg.connect(app_dsn("gs")) as c:
+        rows = c.execute(
+            "select seq from telemetry where vehicle=%s order by t_received", (vehicle,)
+        ).fetchall()
+    return [r[0] for r in rows]
+
+
+def stored_row(vehicle: str, seq: int) -> dict[str, object]:
+    with psycopg.connect(app_dsn("gs"), row_factory=dict_row) as c:
+        cur = c.execute("select * from telemetry where vehicle=%s and seq=%s", (vehicle, seq))
+        return cur.fetchone() or {}

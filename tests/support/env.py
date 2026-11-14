@@ -1,8 +1,11 @@
 """Shared helpers for tests that touch .env, scripts and test vehicle ids."""
 
+import asyncio
 import secrets
 import subprocess
 import sys
+import time
+from collections.abc import Callable
 from pathlib import Path
 
 import yaml
@@ -40,3 +43,12 @@ def vid() -> str:
 
 def dotenv() -> dict[str, str]:
     return parse_env(REPO / ".env")
+
+
+async def until(cond: Callable[[], bool], timeout: float) -> None:
+    """Poll `cond` every 50 ms; AssertionError when it is still false after `timeout` seconds."""
+    deadline = time.monotonic() + timeout
+    while not cond():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"condition not met within {timeout}s")
+        await asyncio.sleep(0.05)

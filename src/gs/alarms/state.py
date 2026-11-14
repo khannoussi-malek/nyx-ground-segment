@@ -15,10 +15,24 @@ from gs.common.time import iso_z
 
 
 def shape_version(*extra: type) -> int:
-    """crc32 of every persisted dataclass's (qualname, field, type); a shape change changes it."""
+    """crc32 of every persisted dataclass's (qualname, field, type) and of each check kind's State
+    name (a fieldless State counts too); a shape change changes it. crc32, not hash(): stable
+    across processes."""
     classes = {Slot, Alarm, *(c.State for c in CHECKS.values()), *extra}
     rows = sorted((c.__qualname__, f.name, repr(f.type)) for c in classes for f in fields(c))
-    return zlib.crc32(repr(rows).encode()) & 0x7FFFFFFF
+    kinds = sorted((k, c.State.__qualname__) for k, c in CHECKS.items())
+    return zlib.crc32(repr((rows, kinds)).encode()) & 0x7FFFFFFF
+
+
+_SCALARS = (int, float, str, bool, datetime)
+
+
+def round_trips(tp: object) -> bool:
+    """True if a check-State field annotated `tp` survives dump -> JSON -> load exactly."""
+    if typing.get_origin(tp) is tuple:
+        args = typing.get_args(tp)
+        return len(args) == 2 and args[1] is Ellipsis and args[0] in _SCALARS
+    return tp in _SCALARS
 
 
 def _to_json(v: object) -> object:
@@ -134,6 +148,9 @@ def rebuild(open_alarms: Sequence[OpenAlarm], cset: CompiledSet) -> EngineState:
     """A-E1-5 approximation from the `alarms` rows: fresh slots, except each open (not RTN_UNACK)
     alarm's trigger check, seeded at its severity so a still-bad value neither clears nor
     re-alerts (ruling G2 item 6). Side, rings and ROC windows are lost."""
+    closed = [a.param for a in open_alarms if a.state == "CLEARED"]
+    if closed:
+        raise ValueError(f"rebuild takes open alarms; CLEARED rows for {', '.join(closed)}")
     alarms = {
         a.param: Alarm(
             a.alarm_id, a.state, a.severity, None, a.acked_sev, a.trigger_check, a.opened_at

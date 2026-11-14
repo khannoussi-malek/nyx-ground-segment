@@ -1,13 +1,18 @@
 import json
+import os
 import random
+import subprocess
+import sys
 from collections.abc import Callable
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, make_dataclass, replace
 from datetime import datetime
 from typing import Any, ClassVar
 from uuid import UUID
 
 import pytest
 
+import gs.alarms.engine as engine_mod
+import gs.alarms.state as state_mod
 from gs.alarms.checks import CHECKS, CheckConfig, Reading, Sample
 from gs.alarms.checks.roc import RocState
 from gs.alarms.contract import AlarmState, Level, OpenAlarm, Transition
@@ -335,3 +340,118 @@ def test_check_state_datetimes_roundtrip_exactly(monkeypatch: pytest.MonkeyPatch
     bad["slots"][0]["state"]["since"] = 5
     with pytest.raises(ValueError, match="expected an ISO time"):
         load(bad, cset)
+
+
+# ---- Task 5 fix round 1
+def test_shape_version_sees_types_and_names() -> None:
+    @dataclass(frozen=True)
+    class A:
+        x: int
+
+    @dataclass(frozen=True)
+    class AStr:
+        x: str
+
+    @dataclass(frozen=True)
+    class A2:
+        x: int
+
+    assert shape_version(A) != shape_version(AStr)
+    int_a, str_a = make_dataclass("A", [("x", int)]), make_dataclass("A", [("x", str)])
+    assert shape_version(int_a) != shape_version(str_a)  # same name and field: the type counts
+    assert shape_version(A) != shape_version(A2)  # same fields, other class: qualname counts
+
+
+@pytest.mark.parametrize("cls", [engine_mod.Slot, engine_mod.Alarm])
+def test_shape_version_tracks_slot_and_alarm(cls: type, monkeypatch: pytest.MonkeyPatch) -> None:
+    before = shape_version()
+    grown = make_dataclass(cls.__name__, [(f.name, f.type) for f in fields(cls)] + [("x", int)])
+    monkeypatch.setattr(state_mod, cls.__name__, grown)
+    assert shape_version() != before
+
+
+def test_shape_version_is_stable_across_processes() -> None:  # crc32, not hash()
+    code = "from gs.alarms.state import shape_version; print(shape_version())"
+    outs = {
+        subprocess.run(
+            [sys.executable, "-c", code],
+            env={**os.environ, "PYTHONHASHSEED": seed},
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        for seed in ("1", "2")
+    }
+    assert outs == {f"{shape_version()}\n"}
+
+
+def test_shape_version_counts_fieldless_check_states(monkeypatch: pytest.MonkeyPatch) -> None:
+    @dataclass(frozen=True)
+    class Empty:
+        pass
+
+    class Fieldless(Timed):
+        kind: ClassVar[str] = "fieldless"
+        State: ClassVar[type] = Empty
+
+    before = shape_version()
+    monkeypatch.setitem(CHECKS, "fieldless", Fieldless)
+    assert shape_version() != before
+
+
+def test_every_registered_check_state_round_trips() -> (
+    None
+):  # a plug-in fails the build, not ingest
+    bad = [
+        (k, f.name, f.type)
+        for k, c in CHECKS.items()
+        for f in fields(c.State)
+        if not state_mod.round_trips(f.type)
+    ]
+    assert bad == []
+    assert not state_mod.round_trips(dict[str, int]) and not state_mod.round_trips(Level)
+    assert state_mod.round_trips(tuple[datetime, ...]) and state_mod.round_trips(float)
+    assert not state_mod.round_trips(tuple[int, int]) and not state_mod.round_trips(
+        tuple[Level, ...]
+    )
+
+
+def test_rebuild_seeds_yellow_at_yellow() -> None:  # G2 item 6 with a non-RED alarm
+    yellow = OpenAlarm(ID, TEMP, "UNACK", Level.YELLOW, None, "limit", T)
+    st = rebuild([yellow], CSET)
+    assert st.slots[(TEMP, "limit")].level == Level.YELLOW
+    _, trs = feed(st, CSET, temp_frames(28.0, 0))
+    assert trs == []  # still yellow: no ESCALATE, no RTN
+
+
+def test_rebuild_seeds_only_the_trigger_check() -> None:
+    a = OpenAlarm(ID, PRESS, "UNACK", Level.RED, None, "limit", T)
+    st = rebuild([a], CSET)
+    assert st.slots[(PRESS, "limit")].level == Level.RED
+    assert st.slots[(PRESS, "roc")].level == Level.NOMINAL
+
+
+def test_rebuild_rejects_a_cleared_row() -> None:
+    with pytest.raises(ValueError, match="CLEARED"):
+        rebuild([open_alarm("CLEARED")], CSET)
+
+
+@pytest.mark.parametrize(("row_state", "kind"), [("UNACK", "RTN"), ("ACKED", "CLEAR")])
+def test_switch_closes_orphaned_alarm(row_state: AlarmState, kind: str) -> None:
+    orphan = OpenAlarm(ID, "gone_param", row_state, Level.RED, None, "limit", T)
+    st = rebuild([orphan], CSET)
+    st, trs = switch(st, CSET, CSET)
+    assert [(t.param, t.kind, t.note) for t in trs] == [("gone_param", kind, LIMITS_CHANGED)]
+
+
+def test_shape_version_tracks_check_state_fields(monkeypatch: pytest.MonkeyPatch) -> None:
+    class V1(Timed):
+        State: ClassVar[type] = make_dataclass("S", [("n", int)])
+
+    class V2(Timed):
+        State: ClassVar[type] = make_dataclass("S", [("n", str)])
+
+    monkeypatch.setitem(CHECKS, "zz", V1)
+    v1 = shape_version()
+    monkeypatch.setitem(CHECKS, "zz", V2)
+    assert shape_version() != v1  # same kind and State name: the field type counts

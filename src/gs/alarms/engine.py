@@ -261,7 +261,8 @@ def switch_set(
     """Apply a new mission-db set per slot (param, kind) (D-ALM-12, D-EXT-06, R8 7-8).
 
     In both sets: keep level, side and check state, reset the ring. Only in old: dropped, so its
-    contribution is NOMINAL. Only in new: `initial()`. Resulting transitions say LIMITS_CHANGED.
+    contribution is NOMINAL. Only in new: `initial()`. Resulting transitions say LIMITS_CHANGED;
+    an alarm on a param with checks in neither set is judged too, so it closes.
     """
     f = _Frame(vehicle, epoch, seq, t)
     slots: dict[tuple[str, str], Slot] = {}
@@ -272,7 +273,7 @@ def switch_set(
             slots[(param, chk.kind)] = replace(kept, ring=()) if kept else fresh
     alarms = dict(state.alarms)
     out: list[Transition] = []
-    for param in sorted(set(old.checks) | set(new.checks)):
+    for param in sorted(set(old.checks) | set(new.checks) | set(state.alarms)):  # + orphans
         mine = [slots[(param, c.kind)] for c, _ in new.checks.get(param, ())]
         tr = _judge(f, param, alarms, mine)
         if tr is not None:

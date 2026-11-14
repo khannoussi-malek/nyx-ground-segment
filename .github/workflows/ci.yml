@@ -29,4 +29,6 @@ jobs:
           version: "0.12.18"
           enable-cache: true
       - run: uv sync --frozen
+      - run: make env
+      - run: docker compose up -d --wait db
       - run: uv run pytest --cov=gs --cov-fail-under=80

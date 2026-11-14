@@ -1,0 +1,18 @@
+services:
+  db:
+    image: timescale/timescaledb:2.32.0-pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: gs
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      GS_OWNER_PASSWORD: ${GS_OWNER_PASSWORD}
+      GS_APP_PASSWORD: ${GS_APP_PASSWORD}
+    volumes: ["pgdata:/var/lib/postgresql/data", "./migrations:/docker-entrypoint-initdb.d:ro"]
+    ports: ["127.0.0.1:5432:5432"]
+    healthcheck:   # TCP + sentinel (R2-16): initdb's temporary server is socket-only
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U gs_app -d gs && PGPASSWORD=\"$$GS_APP_PASSWORD\" psql -h 127.0.0.1 -U gs_app -d gs -c 'select 1 from audit_log limit 0'"]
+      interval: 1s
+      timeout: 3s
+      retries: 60
+volumes: {pgdata: {}}

@@ -36,3 +36,7 @@ def run_init_env(root: Path) -> subprocess.CompletedProcess[str]:
 def vid() -> str:
     """Test vehicle id; the Redis ACL scopes streams to NYX-*."""
     return "NYX-T" + secrets.token_hex(4).upper()
+
+
+def dotenv() -> dict[str, str]:
+    return parse_env(REPO / ".env")

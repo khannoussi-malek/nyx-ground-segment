@@ -1,7 +1,236 @@
-body { font: 14px/1.4 system-ui, sans-serif; margin: 1rem; }
-header { display: flex; gap: 1rem; align-items: center; }
-form { display: grid; gap: 0.5rem; max-width: 18rem; }
-table { border-collapse: collapse; margin-bottom: 1.5rem; }
-th, td { border: 1px solid #ccc; padding: 0.25rem 0.75rem; text-align: left; }
-td[data-param] { font-variant-numeric: tabular-nums; text-align: right; }
-[role="alert"] { color: #b00020; }
+/* Nyx console. Brand: The Exploration Company (warm off-white, near-black, yellow
+   accent, Inter). Console rules win over brand: grey when nominal, colour only for
+   abnormal states, every state also as text + glyph, light work area (D-UI-07).
+   Tokens are named by meaning; contrast is checked in style.test.ts. */
+:root {
+  color-scheme: light;
+
+  /* surfaces and ink (brand --bg, --bg-darker, --white, --black) */
+  --bg: #F3F1EF;
+  --surface: #F8F8F8;
+  --surface-sunken: #E4E0DC;
+  --ink: #0E0E0E;
+  --ink-muted: #57534E;
+  --border: #D8D3CD; /* decorative separators only */
+  --field-border: #857F78; /* input outlines, 3:1 (WCAG 1.4.11) */
+  --focus: #0E0E0E;
+
+  /* top bar */
+  --bar: #0E0E0E;
+  --on-bar: #F8F8F8;
+  --on-bar-muted: #A8A39C;
+
+  /* actions: brand yellow, pill-shaped. Alarm CAUTION is a square, bordered,
+     labelled badge, never a pill, so the two read differently. */
+  --action: #F4D828;
+  --action-hover: #E0C410;
+  --on-action: #0E0E0E;
+
+  /* limit gauge: position only, grey; the alarm engine owns state colour */
+  --gauge-track: #E4E0DC;
+  --gauge-normal: #C9C3BC;
+  --gauge-marker: #0E0E0E;
+
+  /* telemetry states (D-UI-06/07) */
+  --nominal-ink: #0E0E0E;
+  --stale-ink: #57534E; /* + italic + clock glyph */
+  --red: #B3141B;
+  --on-red: #FFFFFF;
+  --yellow: #FFDD6E;
+  --yellow-ink: #7A5C00; /* border and text on yellow */
+  --red-tint: #F8E1E1; /* row behind a live RED */
+  --yellow-tint: #FFF3C4; /* row behind a live YELLOW */
+  --replay: #6B2FA3; /* REPLAY only, nothing else */
+  --on-replay: #FFFFFF;
+
+  --font-ui: "Inter Variable", Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-data: var(--font-ui); /* + tabular, slashed-zero figures */
+  --radius: 16px; /* brand --radius--small */
+  --radius-field: 10px;
+  --shadow: 0 1px 2px rgb(14 14 14 / 0.06), 0 4px 12px rgb(14 14 14 / 0.04);
+  --dur: 150ms;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--ink);
+  font: 1rem/1.5 var(--font-ui);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1 { margin: 0; font-size: 1.125rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase; }
+
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+button {
+  min-height: 44px;
+  padding: 0 1.25rem;
+  border: 0;
+  border-radius: 100vw;
+  background: var(--action);
+  color: var(--on-action);
+  font: 500 1rem var(--font-ui);
+  cursor: pointer;
+  touch-action: manipulation;
+  transition: background-color var(--dur) ease-out;
+}
+button:hover { background: var(--action-hover); }
+
+input {
+  min-height: 44px;
+  padding: 0 0.875rem;
+  border: 1px solid var(--field-border);
+  border-radius: var(--radius-field);
+  background: var(--surface);
+  color: var(--ink);
+  font: 1rem var(--font-ui);
+}
+
+[role="alert"] {
+  margin: 0;
+  padding: 0.5rem 0.75rem;
+  border-left: 4px solid var(--red);
+  background: var(--surface-sunken);
+  color: var(--red);
+  font-weight: 600;
+}
+
+/* top bar */
+header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1.5rem;
+  background: var(--bar);
+  color: var(--on-bar);
+}
+header > span { margin-left: auto; color: var(--on-bar-muted); font-size: 0.875rem; }
+header button:focus-visible { outline-color: var(--on-bar); }
+
+/* vehicle grid */
+main {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 24rem), 1fr));
+  gap: 1.5rem;
+  align-items: start;
+  padding: 1.5rem;
+}
+
+table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-top: 0;
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: var(--shadow);
+}
+caption {
+  padding: 1rem 1.25rem 0.75rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+  text-align: left;
+}
+caption .head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; }
+caption .vehicle { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em; }
+caption .meta { display: block; margin-top: 0.125rem; color: var(--ink-muted); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+caption time { white-space: nowrap; }
+
+th, td { padding: 0.625rem 1.25rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+tr:last-child > * { border-bottom: 0; }
+th[scope="row"] { color: var(--ink); font-weight: 500; text-align: left; }
+th .label { display: block; line-height: 1.3; }
+th .pid { display: block; color: var(--ink-muted); font-size: 0.75rem; font-weight: 400; }
+
+/* state marks: square, labelled, never pill-shaped (pills are actions) */
+.glyph { flex: none; }
+.badge, .acq, .summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.125rem 0.375rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  font-style: normal;
+  letter-spacing: 0.04em;
+  line-height: 1.4;
+  vertical-align: middle;
+}
+th .marks { display: flex; flex-wrap: wrap; gap: 0.25rem 0.375rem; margin-top: 0.25rem; }
+[data-tone="red"] { background: var(--red); color: var(--on-red); }
+[data-tone="yellow"] { background: var(--yellow); color: var(--yellow-ink); box-shadow: inset 0 0 0 1.5px var(--yellow-ink); }
+[data-tone="was"], [data-tone="muted"], .acq { color: var(--stale-ink); box-shadow: inset 0 0 0 1.5px currentColor; }
+[data-tone="nominal"] { color: var(--ink-muted); box-shadow: inset 0 0 0 1px var(--field-border); }
+[data-tone="down"] { background: var(--ink); color: var(--surface); }
+.summary { letter-spacing: 0.06em; }
+
+/* rows: grey when nominal; a live violation tints its row */
+tr[data-acq="OK"][data-level="RED"] > * { background: var(--red-tint); }
+tr[data-acq="OK"][data-level="YELLOW"] > * { background: var(--yellow-tint); }
+tr[data-acq]:not([data-acq="OK"]) .num { color: var(--stale-ink); font-style: italic; }
+
+td.value { white-space: nowrap; text-align: right; }
+.num {
+  color: var(--nominal-ink);
+  font-family: var(--font-data);
+  font-size: 1.125rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums slashed-zero;
+}
+.unit { display: inline-block; min-width: 3.25rem; margin-left: 0.375rem; color: var(--ink-muted); font-size: 0.8125rem; text-align: left; }
+
+/* limit gauge: grey, position only */
+td.gauge-cell { width: 7.5rem; padding-inline: 0.5rem; }
+.gauge { position: relative; display: block; height: 8px; border-radius: 4px; background: var(--gauge-track); }
+.gauge-normal { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: var(--gauge-normal); }
+.gauge-tick { position: absolute; top: -3px; bottom: -3px; width: 2px; margin-left: -1px; background: var(--ink-muted); }
+.gauge-tick.red { background: var(--ink); }
+.gauge-marker {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  margin: -6px 0 0 -6px;
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  background: var(--gauge-marker);
+}
+.gauge-marker[data-clamped] { border-radius: 2px; } /* off the track: square, pinned to the edge */
+
+/* login: brand dark page, light card */
+main.login {
+  grid-template-columns: 1fr;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 1rem;
+  background: var(--bar);
+}
+main.login form {
+  display: grid;
+  gap: 1rem;
+  width: min(100%, 24rem);
+  padding: 2rem;
+  background: var(--surface);
+  border-radius: var(--radius);
+}
+main.login label { display: grid; gap: 0.25rem; font-size: 0.875rem; font-weight: 500; }
+
+@media (max-width: 40rem) {
+  header, main { padding-inline: 1rem; }
+  th, td { padding-inline: 0.75rem; }
+  td.gauge-cell { width: 4.5rem; padding-inline: 0.25rem; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; }
+}

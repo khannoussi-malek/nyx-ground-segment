@@ -13,16 +13,18 @@ export function Login({ onLogin }: { onLogin: (user: string) => void }) {
     else setError(failure);
   }
   return (
-    <form onSubmit={submit}>
-      <h1>Nyx</h1>
-      <label>
-        User <input name="user" autoComplete="username" required />
-      </label>
-      <label>
-        Password <input name="password" type="password" autoComplete="current-password" required />
-      </label>
-      <button type="submit">Log in</button>
-      {error && <p role="alert">{error}</p>}
-    </form>
+    <main className="login">
+      <form onSubmit={submit}>
+        <h1>Nyx</h1>
+        <label>
+          User <input name="user" autoComplete="username" required />
+        </label>
+        <label>
+          Password <input name="password" type="password" autoComplete="current-password" required />
+        </label>
+        <button type="submit">Log in</button>
+        {error && <p role="alert">{error}</p>}
+      </form>
+    </main>
   );
 }

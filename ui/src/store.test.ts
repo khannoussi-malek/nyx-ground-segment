@@ -98,3 +98,16 @@ test("an empty snapshot is valid and clears the table", () => {
   ingest(s, "snapshot", { kind: "snapshot", vehicles: {} });
   expect(s.vehicles()).toEqual([]);
 });
+
+test("the store stamps when each vehicle's latest tm arrived", () => {
+  let now = 100;
+  const s = createStore(() => now);
+  expect(s.receivedAt("NYX-TA1")).toBeUndefined();
+  s.applyTm(tm(1, "2026-11-14T10:00:01.000000Z"));
+  expect(s.receivedAt("NYX-TA1")).toBe(100);
+  now = 250;
+  s.applyTm(tm(1, "2026-11-14T10:00:01.000000Z")); // dropped: stamp unchanged
+  expect(s.receivedAt("NYX-TA1")).toBe(100);
+  s.applySnapshot(snap(tm(2, "2026-11-14T10:00:02.000000Z"), tm(2, "2026-11-14T10:00:02.000000Z", "NYX-TA2")));
+  expect([s.receivedAt("NYX-TA1"), s.receivedAt("NYX-TA2")]).toEqual([250, 250]);
+});

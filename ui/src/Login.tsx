@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from "react";
 import { login } from "./api";
+import { attemptLogin } from "./session";
 
 export function Login({ onLogin }: { onLogin: (user: string) => void }) {
   const [error, setError] = useState("");
@@ -7,13 +8,9 @@ export function Login({ onLogin }: { onLogin: (user: string) => void }) {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
     const user = String(f.get("user"));
-    try {
-      if (await login(user, String(f.get("password")))) onLogin(user);
-      else setError("Wrong user or password");
-    } catch (err) {
-      console.error(err);
-      setError("Login failed, try again");
-    }
+    const failure = await attemptLogin(login, user, String(f.get("password")));
+    if (failure === null) onLogin(user);
+    else setError(failure);
   }
   return (
     <form onSubmit={submit}>

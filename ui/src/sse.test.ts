@@ -38,7 +38,7 @@ beforeEach(() => {
 
 test("dispatches snapshot and tm as parsed JSON, ignores hello and hb", () => {
   const got: [string, unknown][] = [];
-  connectEvents("/api/events", (k, d) => got.push([k, d]), deps);
+  connectEvents("/api/events", (k, d) => got.push([k, d]), () => {}, deps);
   const es = FakeEventSource.all[0]!;
   expect(es.url).toBe("/api/events");
   es.emit("snapshot", '{"kind":"snapshot","vehicles":{}}');
@@ -50,15 +50,30 @@ test("dispatches snapshot and tm as parsed JSON, ignores hello and hb", () => {
 test("malformed JSON is logged and skipped, not thrown", () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const onEvent = vi.fn();
-  connectEvents("/u", onEvent, deps);
+  connectEvents("/u", onEvent, () => {}, deps);
   FakeEventSource.all[0]!.emit("tm", "{not json");
   expect(onEvent).not.toHaveBeenCalled();
   expect(warn).toHaveBeenCalledOnce();
   warn.mockRestore();
 });
 
+test("a throwing onEvent is not swallowed as malformed JSON", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  connectEvents("/u", () => { throw new Error("handler bug"); }, () => {}, deps);
+  expect(() => FakeEventSource.all[0]!.emit("tm", '{"a":1}')).toThrow("handler bug");
+  expect(warn).not.toHaveBeenCalled();
+  warn.mockRestore();
+});
+
+test("every error also calls onError", () => {
+  const onError = vi.fn();
+  connectEvents("/u", () => {}, onError, deps);
+  FakeEventSource.all[0]!.listeners.get("error")!({ data: "" });
+  expect(onError).toHaveBeenCalledOnce();
+});
+
 test("error closes the source and reopens once after 1000 ms", () => {
-  connectEvents("/u", () => {}, deps);
+  connectEvents("/u", () => {}, () => {}, deps);
   const first = FakeEventSource.all[0]!;
   first.listeners.get("error")!({ data: "" });
   first.listeners.get("error")!({ data: "" }); // a second error while one reopen is pending
@@ -73,13 +88,13 @@ test("error closes the source and reopens once after 1000 ms", () => {
 });
 
 test("the returned function closes the source and cancels a pending reopen", () => {
-  const stop = connectEvents("/u", () => {}, deps);
+  const stop = connectEvents("/u", () => {}, () => {}, deps);
   FakeEventSource.all[0]!.listeners.get("error")!({ data: "" });
   stop();
   expect(cleared).toEqual([1]);
   timers[0]!.fn(); // even if the timer fires anyway
   expect(FakeEventSource.all).toHaveLength(1);
-  const stop2 = connectEvents("/u", () => {}, deps);
+  const stop2 = connectEvents("/u", () => {}, () => {}, deps);
   stop2();
   expect(FakeEventSource.all[1]!.closed).toBe(true);
 });

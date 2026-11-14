@@ -1,27 +1,28 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { logout, me } from "./api";
 import { LiveTable } from "./LiveTable";
 import { Login } from "./Login";
+import { bootUser, checkSession, safeLogout } from "./session";
 import { connectEvents } from "./sse";
 import { createStore, ingest } from "./store";
 
 function Console({ user, onLogout }: { user: string; onLogout: () => void }) {
   const [store] = useState(createStore);
-  useEffect(() => connectEvents("/api/events", (kind, data) => ingest(store, kind, data)), [store]);
-  async function out() {
-    try {
-      await logout();
-    } catch (err) {
-      console.error(err); // the session is dropped client-side either way
-    }
-    onLogout();
-  }
+  useEffect(
+    () =>
+      connectEvents(
+        "/api/events",
+        (kind, data) => ingest(store, kind, data),
+        () => void checkSession(me, onLogout), // unmounting stops the reconnect loop
+      ),
+    [store, onLogout],
+  );
   return (
     <>
       <header>
         <h1>Nyx</h1>
         <span>{user}</span>
-        <button onClick={out}>Log out</button>
+        <button onClick={() => void safeLogout(logout).then(onLogout)}>Log out</button>
       </header>
       <LiveTable store={store} />
     </>
@@ -30,12 +31,8 @@ function Console({ user, onLogout }: { user: string; onLogout: () => void }) {
 
 export function App() {
   const [user, setUser] = useState<string | null | undefined>(undefined);
-  useEffect(() => {
-    me().then(setUser, (err) => {
-      console.error(err);
-      setUser(null);
-    });
-  }, []);
+  useEffect(() => void bootUser(me).then(setUser), []);
+  const out = useCallback(() => setUser(null), []);
   if (user === undefined) return null;
-  return user === null ? <Login onLogin={setUser} /> : <Console user={user} onLogout={() => setUser(null)} />;
+  return user === null ? <Login onLogin={setUser} /> : <Console user={user} onLogout={out} />;
 }

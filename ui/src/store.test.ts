@@ -77,3 +77,24 @@ test("ingest routes snapshot and tm and ignores other kinds", () => {
   ingest(s, "hello", { kind: "hello", server_ms: 1 });
   expect(s.vehicles()).toEqual(["NYX-TA1"]);
 });
+
+test("ingest rejects wrong-shape events with a log and leaves state alone", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const s = createStore();
+  ingest(s, "tm", tm(1, "2026-11-14T10:00:01.000000Z"));
+  for (const bad of [null, "x", {}, { kind: "snapshot" }, { vehicles: { a: {} } }])
+    ingest(s, "snapshot", bad);
+  for (const bad of [null, 5, {}, { vehicle: "V" }, { vehicle: "V", t_onboard: "t" }, { ...tm(2, "t"), values: null }])
+    ingest(s, "tm", bad);
+  expect(s.vehicles()).toEqual(["NYX-TA1"]);
+  expect(s.vehicle("NYX-TA1")?.seq).toBe(1);
+  expect(warn).toHaveBeenCalledTimes(11);
+  warn.mockRestore();
+});
+
+test("an empty snapshot is valid and clears the table", () => {
+  const s = createStore();
+  ingest(s, "tm", tm(1, "2026-11-14T10:00:01.000000Z"));
+  ingest(s, "snapshot", { kind: "snapshot", vehicles: {} });
+  expect(s.vehicles()).toEqual([]);
+});

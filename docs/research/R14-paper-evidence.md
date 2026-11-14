@@ -15,7 +15,7 @@ FT = full text read, Abs = abstract only, Meta = metadata only. "Supports" names
 | a | Gyasi & Wang 2022, PSEP, [10.1016/j.psep.2022.05.006](https://doi.org/10.1016/j.psep.2022.05.006) | FT | Deadbands alone or delay timers alone are "suitable only for one type of false alarms". The deadband goes **before** the delay timer. A deadband of width d removes false alarms with deviation < d; a timer t removes those with duration < t (pp. 1–2) | D-ALM-02 + D-ALM-03 order (hysteresis inside the check, ring after it) · → E-2 |
 | a | Izadi et al. 2009, IFAC, [10.3182/20090630-4-ES-2003.00108](https://doi.org/10.3182/20090630-4-ES-2003.00108) | FT | The ROC curve shows both trade-offs: false vs missed alarms, and accuracy vs latency (p. 6). Delay is the most effective technique and deadband the least (p. 6). Delay "will decrease the probabilities of false and missed alarms significantly", but with a badly placed trip point "adding a time delay will only make the situation worse" (p. 5). Sweeps: delay 2–10 samples, deadband 2–20 % (pp. 5–6). Design needs normal **and** abnormal data (p. 6). EEMUA delays: pressure 15 s, temperature 60 s (p. 4, Table 1) | → E-2 |
 | a | Wang, Yang, Chen & Shah 2016, IEEE T-ASE, [10.1109/TASE.2015.2464234](https://doi.org/10.1109/TASE.2015.2464234) | FT | Four causes of overload; chattering is listed first (p. 1, p. 14). Floods: "begins when ten or more alarms occur within a 10-min time period until the alarm rate drops below five", serious = ≥ 100 in 10 min (p. 7). In loss incidents "the true reason … is that too many **correct** alarms arise in a short time", from abnormality propagation (p. 7) | → E-3; weakens R8 §5 (see §3) |
-| a | Xu et al. 2012, IEEE T-ASE, [10.1109/TASE.2011.2176490](https://doi.org/10.1109/TASE.2011.2176490) | Abs | FAR, MAR and AAD computed for a trip point and for on/off delays; design follows from their trade-off | D-ALM-03 · → E-2 (needs access) |
+| a | Xu et al. 2012, IEEE T-ASE, [10.1109/TASE.2011.2176490](https://doi.org/10.1109/TASE.2011.2176490) | Abs | FAR, MAR and AAD computed for a trip point and for on/off delays; design follows from their trade-off. **VERIFIED** (2026-11-15, full text): trip point §II, on/off delay Props. 1–3 pp. 3–5, design procedure p. 1, 11; samples assumed i.i.d. (p. 3). Applied in R20 | D-ALM-03 · → E-2 |
 | a | Beebe et al. 2013, Process Saf. Prog., [10.1002/prs.11539](https://doi.org/10.1002/prs.11539) | Abs | Static rationalization lowers the average alarm rate but does not control floods | → E-3 |
 | a | Rodrigo et al. 2016, IFAC-PapersOnLine, [10.1016/j.ifacol.2016.07.269](https://doi.org/10.1016/j.ifacol.2016.07.269) | Abs | Alarm log + process data + connectivity isolate consequence alarms of one abnormality (ethylene plant) | not built (§4); E-3 measures first |
 | a | Dorgo & Abonyi 2018, IEEE Access, [10.1109/ACCESS.2018.2797247](https://doi.org/10.1109/ACCESS.2018.2797247) | Abs | Correlation-based suppression is static; sequence mining captures temporal fault → alarm patterns | not built (§4) |
@@ -91,7 +91,7 @@ Verdicts are my reading of the quoted passage (PaperLab model not used, see Meth
 | Deadband trade-off: removes nuisance alarms, adds detection delay, optimum = weighted balance | Wang, Bai, Wang & Yang 2019 | **Supported (abstract only)**; owner upload recorded, full text not yet ingested | abstract |
 | Deadbands handle small deviations, delay timers short durations; a deadband followed by a timer in series handles both | Gyasi & Wang 2022 | **Supported** | p. 1 (abstract), p. 2 (§1) |
 | Delay timers and deadbands lower false and nuisance alarms "significantly"; detection delay traded against false/missed rates | Izadi et al. 2009 | **Partly supported**: trade-offs yes (p. 6); "significantly" applies to delay only (p. 5); deadband least effective (p. 6). Markov-chain analysis is also in Izadi (p. 4) | p. 4–6 |
-| Detection delay computed with Markov chains | Adnan, Izadi & Chen 2011 | **Not checkable yet**: the owner upload is recorded (R15 session) but still metadata-only in PaperLab | — |
+| Detection delay computed with Markov chains | Adnan, Izadi & Chen 2011 | **VERIFIED** (2026-11-15, owner upload ingested): Markov models for deadband and delay timer; "significantly reduce" is Adnan's wording | p. 1, 3–5 |
 | Chatter can be measured from run-length distributions | Kondaveeti et al. 2010 | **Supported** | p. 3 |
 | Online method removes chattering alarms using alarm durations and intervals ("title only, not read") | Wang & Chen 2014 | **Supported**; R8's "title only" is now out of date | p. 4 (Rules 3a/3b, delay timer), p. 9 (conclusion) |
 | Flood: > 10 new alarms / 10 min, ends < 5 (secondary, UNVERIFIED) | (Chemical Engineering magazine) | **Now supported by a peer-reviewed source**: Wang 2016 p. 7, citing Rothenberg 2009 and ISA/EEMUA. The "< 1 % of time in flood" target is still UNVERIFIED (2026-11-14: confirmed only by a secondary source, Siemens' reproduction of the ISA-18.2 metrics table; see the R8 verification pass) | Wang 2016 p. 7 |
@@ -101,9 +101,9 @@ Suggested R8 tag updates: Wang 2016 → `verified: full text p. 1, 7 (read)`. Gy
 
 ## 5. Papers that need the owner's institutional access (most valuable first)
 
-1. Adnan, Izadi & Chen 2011, J. Process Control, [10.1016/j.jprocont.2011.06.019](https://doi.org/10.1016/j.jprocont.2011.06.019): closed-form expected detection delay for deadband + delay timer; the analytic check for E-2, and the only R8 citation not yet checked. **Owner upload already recorded**; re-run the §4 row once it is ingested.
-2. Xu, Wang, Izadi & Chen 2012, IEEE T-ASE, [10.1109/TASE.2011.2176490](https://doi.org/10.1109/TASE.2011.2176490): FAR/MAR/AAD for on/off delays, exactly D-ALM-03; lets E-2 compare simulation with theory.
-3. Wang, Bai, Wang & Yang 2019, IEEE TIE, [10.1109/TIE.2018.2885718](https://doi.org/10.1109/TIE.2018.2885718): deadband index and width design for **non-i.i.d.** signals; the bench-noise re-run in E-2 and the correlated ROC slope. **Owner upload already recorded.**
+1. Adnan, Izadi & Chen 2011, J. Process Control, [10.1016/j.jprocont.2011.06.019](https://doi.org/10.1016/j.jprocont.2011.06.019): closed-form expected detection delay for deadband + delay timer; the analytic check for E-2, and **Ingested 2026-11-15; §4 row VERIFIED.**
+2. Xu, Wang, Izadi & Chen 2012, IEEE T-ASE, [10.1109/TASE.2011.2176490](https://doi.org/10.1109/TASE.2011.2176490): FAR/MAR/AAD for on/off delays, exactly D-ALM-03; lets E-2 compare simulation with theory. **Ingested 2026-11-15; applied in R20.**
+3. Wang, Bai, Wang & Yang 2019, IEEE TIE, [10.1109/TIE.2018.2885718](https://doi.org/10.1109/TIE.2018.2885718): deadband index and width design for **non-i.i.d.** signals; the bench-noise re-run in E-2 and the correlated ROC slope. **Uploaded, but the PDF is a scan with no text layer (PaperLab: "Run OCR on it and upload again"); still abstract only.**
 4. Laberge, Bullemer, Tolsma & Reising 2014, Int. J. Ind. Ergon., [10.1016/j.ergon.2013.11.008](https://doi.org/10.1016/j.ergon.2013.11.008): alarm summary display during floods; the evidence base for D-UI-09 and any E-3 follow-up.
 5. Errington et al. 2005, Proc. HFES, [10.1177/154193120504902308](https://doi.org/10.1177/154193120504902308): what the tested interface contained (grey or not); settles §3 item 5.
 6. Dixon, Wickens & McCarley 2007, Hum. Factors, [10.1518/001872007X215656](https://doi.org/10.1518/001872007X215656): the effect sizes behind E-1's rationale.
@@ -119,5 +119,15 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | Claim | Verdict | Evidence | Touches |
 | --- | --- | --- | --- |
 | "< 1 % of time in flood" target | PARTLY VERIFIED (secondary) | Siemens/processonline reproduction of the ISA-18.2 table | D-ALM-15 |
+
+CONTRADICTED: none.
+
+### Verification pass, owner uploads (2026-11-15)
+
+| Claim | Verdict | Evidence | Touches |
+| --- | --- | --- | --- |
+| Xu 2012: FAR/MAR/AAD for trip point and on/off delays; design from their trade-off | VERIFIED | Xu p. 1, 3–5, 11 (full text) | D-ALM-03, D-ALM-16 (see R20) |
+| Adnan 2011: detection delay by Markov chains | VERIFIED | Adnan p. 1, 3–5 (full text) | D-ALM-16 |
+| Wang 2019: deadband design for non-i.i.d. signals | STILL UNVERIFIED | scanned PDF, no text layer | D-ALM-16 bench re-run |
 
 CONTRADICTED: none.

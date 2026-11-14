@@ -31,6 +31,7 @@ from gs.api.auth import (
 )
 from gs.api.openapi import build_openapi
 from gs.api.settings import Settings
+from gs.common.interfaces.missiondb import MissionDbView, Vehicles
 from gs.common.missiondb import load_dir
 
 CLIENT_HEADER = "X-GS-Client"
@@ -100,6 +101,19 @@ async def logout(request: Request, _user: User) -> Response:
 @ROUTER.get("/api/me", responses=_errors(401, 503))
 async def me(user: User) -> Me:
     return Me(user=user)
+
+
+@ROUTER.get("/api/vehicles", responses=_errors(401, 503))
+async def vehicles(request: Request, _user: User) -> Vehicles:
+    return Vehicles(
+        vehicles=list(request.app.state.vehicles), parameters=request.app.state.mission.parameters
+    )
+
+
+# ponytail: the set loaded at api start; follows a reload once the api watches mission/ too
+@ROUTER.get("/api/mission-db", responses=_errors(401, 503))
+async def mission_db(request: Request, _user: User) -> MissionDbView:
+    return MissionDbView.of(request.app.state.mission)
 
 
 async def _check_redis(request: Request) -> None:

@@ -1,6 +1,111 @@
 {
   "components": {
     "schemas": {
+      "CheckConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "persistence": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persistence"
+          },
+          "type": {
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "CheckConfig",
+        "type": "object"
+      },
+      "Command": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "additionalProperties": {
+              "discriminator": {
+                "mapping": {
+                  "enum": "#/components/schemas/EnumArg",
+                  "float": "#/components/schemas/NumArg",
+                  "int": "#/components/schemas/NumArg"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/EnumArg"
+                },
+                {
+                  "$ref": "#/components/schemas/NumArg"
+                }
+              ]
+            },
+            "default": {},
+            "title": "Args",
+            "type": "object"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "hazard": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hazard"
+          },
+          "hazardous": {
+            "title": "Hazardous",
+            "type": "boolean"
+          },
+          "receive_timeout_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 5.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Receive Timeout S"
+          },
+          "verify_timeout_s": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "maximum": 15.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verify Timeout S"
+          }
+        },
+        "required": [
+          "description",
+          "hazardous"
+        ],
+        "title": "Command",
+        "type": "object"
+      },
       "DlqRecord": {
         "additionalProperties": false,
         "properties": {
@@ -58,6 +163,35 @@
           "dlq_at"
         ],
         "title": "DlqRecord",
+        "type": "object"
+      },
+      "EnumArg": {
+        "additionalProperties": false,
+        "properties": {
+          "required": {
+            "default": false,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "type": {
+            "const": "enum",
+            "title": "Type",
+            "type": "string"
+          },
+          "values": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Values",
+            "type": "array"
+          }
+        },
+        "required": [
+          "type",
+          "values"
+        ],
+        "title": "EnumArg",
         "type": "object"
       },
       "ErrorBody": {
@@ -197,6 +331,132 @@
         "title": "Hello",
         "type": "object"
       },
+      "LimitCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "hysteresis_abs": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hysteresis Abs"
+          },
+          "hysteresis_pct": {
+            "anyOf": [
+              {
+                "exclusiveMinimum": 0.0,
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hysteresis Pct"
+          },
+          "persistence": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persistence"
+          },
+          "red_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Red High"
+          },
+          "red_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Red Low"
+          },
+          "type": {
+            "const": "limit",
+            "title": "Type",
+            "type": "string"
+          },
+          "yellow_high": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yellow High"
+          },
+          "yellow_low": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Yellow Low"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "title": "LimitCheck",
+        "type": "object"
+      },
+      "LimitView": {
+        "additionalProperties": false,
+        "properties": {
+          "checks": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "limit": "#/components/schemas/LimitCheck",
+                  "roc": "#/components/schemas/RocCheck"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/components/schemas/LimitCheck"
+                },
+                {
+                  "$ref": "#/components/schemas/RocCheck"
+                }
+              ]
+            },
+            "title": "Checks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "checks"
+        ],
+        "title": "LimitView",
+        "type": "object"
+      },
       "LoginRequest": {
         "additionalProperties": false,
         "properties": {
@@ -228,6 +488,180 @@
           "user"
         ],
         "title": "Me",
+        "type": "object"
+      },
+      "MissionDbView": {
+        "additionalProperties": false,
+        "properties": {
+          "commands": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Command"
+            },
+            "title": "Commands",
+            "type": "object"
+          },
+          "commands_sha256": {
+            "title": "Commands Sha256",
+            "type": "string"
+          },
+          "limits": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/LimitView"
+            },
+            "title": "Limits",
+            "type": "object"
+          },
+          "limits_sha256": {
+            "title": "Limits Sha256",
+            "type": "string"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ParameterEntry"
+            },
+            "title": "Parameters",
+            "type": "object"
+          },
+          "parameters_sha256": {
+            "title": "Parameters Sha256",
+            "type": "string"
+          },
+          "set_sha256": {
+            "title": "Set Sha256",
+            "type": "string"
+          }
+        },
+        "required": [
+          "set_sha256",
+          "limits_sha256",
+          "commands_sha256",
+          "parameters_sha256",
+          "parameters",
+          "limits",
+          "commands"
+        ],
+        "title": "MissionDbView",
+        "type": "object"
+      },
+      "NumArg": {
+        "additionalProperties": false,
+        "properties": {
+          "max": {
+            "title": "Max",
+            "type": "number"
+          },
+          "min": {
+            "title": "Min",
+            "type": "number"
+          },
+          "required": {
+            "default": false,
+            "title": "Required",
+            "type": "boolean"
+          },
+          "type": {
+            "enum": [
+              "float",
+              "int"
+            ],
+            "title": "Type",
+            "type": "string"
+          },
+          "unit": {
+            "default": "",
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "min",
+          "max"
+        ],
+        "title": "NumArg",
+        "type": "object"
+      },
+      "ParameterEntry": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "default": "",
+            "title": "Description",
+            "type": "string"
+          },
+          "type": {
+            "const": "float",
+            "title": "Type",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unit",
+          "type"
+        ],
+        "title": "ParameterEntry",
+        "type": "object"
+      },
+      "RocCheck": {
+        "additionalProperties": false,
+        "properties": {
+          "direction": {
+            "default": "both",
+            "enum": [
+              "rising",
+              "falling",
+              "both"
+            ],
+            "title": "Direction",
+            "type": "string"
+          },
+          "limit_per_s": {
+            "exclusiveMinimum": 0.0,
+            "title": "Limit Per S",
+            "type": "number"
+          },
+          "persistence": {
+            "anyOf": [
+              {
+                "minimum": 1.0,
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Persistence"
+          },
+          "severity": {
+            "enum": [
+              "YELLOW",
+              "RED"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "type": {
+            "const": "roc",
+            "title": "Type",
+            "type": "string"
+          },
+          "window_s": {
+            "exclusiveMinimum": 0.0,
+            "title": "Window S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "type",
+          "limit_per_s",
+          "window_s",
+          "severity"
+        ],
+        "title": "RocCheck",
         "type": "object"
       },
       "Snapshot": {
@@ -336,6 +770,32 @@
           "values"
         ],
         "title": "Tm",
+        "type": "object"
+      },
+      "Vehicles": {
+        "additionalProperties": false,
+        "properties": {
+          "parameters": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ParameterEntry"
+            },
+            "title": "Parameters",
+            "type": "object"
+          },
+          "vehicles": {
+            "items": {
+              "pattern": "^[A-Z0-9-]{1,32}$",
+              "type": "string"
+            },
+            "title": "Vehicles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "vehicles",
+          "parameters"
+        ],
+        "title": "Vehicles",
         "type": "object"
       }
     }
@@ -518,6 +978,82 @@
           }
         },
         "summary": "Me"
+      }
+    },
+    "/api/mission-db": {
+      "get": {
+        "operationId": "mission_db_api_mission_db_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MissionDbView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Mission Db"
+      }
+    },
+    "/api/vehicles": {
+      "get": {
+        "operationId": "vehicles_api_vehicles_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Vehicles"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Vehicles"
       }
     },
     "/healthz": {

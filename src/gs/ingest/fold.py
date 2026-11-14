@@ -6,9 +6,9 @@ from datetime import datetime
 from typing import Any
 
 from gs.alarms import engine
-from gs.alarms.contract import Transition
-from gs.alarms.engine import CompiledSet, EngineState
-from gs.alarms.state import dump, shape_version
+from gs.alarms.contract import OpenAlarm, Transition
+from gs.alarms.engine import Alarm, CompiledSet, EngineState
+from gs.alarms.state import dump, rebuild, shape_version
 from gs.common.interfaces import FrameHeader
 from gs.common.missiondb import MissionDb
 from gs.common.time import iso_z
@@ -44,6 +44,11 @@ def empty_state(cset: CompiledSet) -> VehicleState:
     return VehicleState(
         None, LinkState(), FrozenState(), cset.set_sha256, engine.initial_state(cset)
     )
+
+
+def _open(param: str, a: Alarm) -> OpenAlarm:
+    return OpenAlarm(a.alarm_id, param, a.state, a.severity, a.acked_sev, a.trigger_check,
+                     a.opened_at)  # fmt: skip
 
 
 def _applied(vehicle: str, mdb: MissionDb, epoch: datetime, f: FrameHeader) -> GroundEvent:
@@ -95,8 +100,8 @@ def fold(
         if fev is not None:
             events.append(fev)
         if applied != cset.set_sha256:  # first new frame of a set: apply it, then classify
-            if old is None:
-                es = engine.initial_state(cset)
+            if old is None:  # no snapshot yet: only open alarm rows, re-seeded for this set
+                es = rebuild([_open(p, a) for p, a in es.alarms.items()], cset)
             else:
                 es, trs = engine.switch_set(es, old, cset, vehicle, s.epoch, f.seq, f.t_onboard)
                 transitions += trs

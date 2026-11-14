@@ -15,6 +15,7 @@ from gs.alarms.contract import Level, Transition
 from gs.alarms.engine import ack, compile_set, initial_state, step
 from gs.common.hooks import Hooks
 from gs.common.missiondb import load_dir
+from gs.ingest.fold import state_version
 from gs.ingest.store import write_transitions
 from gs.simulator.frames import build_frame
 from gs.simulator.nominals import NOMINALS
@@ -24,7 +25,7 @@ from tests.support.ingest import ensure_set, worker
 from tests.support.mission import MISSION_DIR
 from tests.support.missionfiles import edit, mission_copy
 from tests.support.pg import admin_dsn, alarm_events_for, app_dsn, events_for, stored
-from tests.support.redisx import drained, pending, xadd_raw
+from tests.support.redisx import dlq_entries, drained, pending, xadd_raw
 
 TEMP = "cabin_temp_c"
 MISSION = load_dir(MISSION_DIR)
@@ -210,16 +211,15 @@ async def test_snapshot_of_older_set_switches_to_current(tmp_path: Path) -> None
 BOGUS = "b" * 64
 
 
-@pytest.mark.parametrize("corrupt", ["engine", "set"])
+@pytest.mark.parametrize("corrupt", ["engine", "link", "set"])
 async def test_unloadable_snapshot_never_crash_loops(corrupt: str) -> None:  # G18
     v, base = vid(), now() - timedelta(minutes=1)
     produce_values(v, base, [22.0] * 5 + [31.0] * 5)
     await drain(v)
-    if corrupt == "engine":  # current version, but a snapshot `load` rejects → rebuild
-        admin(
-            "update engine_state set state = jsonb_set(state, '{engine}', '{}') where vehicle=%s",
-            v,
-        )
+    if corrupt in ("engine", "link"):  # current version, a snapshot that doesn't load → rebuild
+        bad = "{}" if corrupt == "engine" else '"x"'  # ValueError / TypeError
+        admin(f"update engine_state set state = jsonb_set(state, '{{{corrupt}}}', '{bad}')"
+              " where vehicle=%s", v)  # fmt: skip
     else:  # a stored set that no longer validates → loaded with the current set
         admin(
             "insert into limits_versions values (%s, 'x', 'x', 'x', 'version: 2', '', '')"
@@ -233,7 +233,51 @@ async def test_unloadable_snapshot_never_crash_loops(corrupt: str) -> None:  # G
         assert not w.done()
     assert stored(v) == 15 and kinds(v) == ["RAISE"]  # the open alarm carries on, no re-alert
     resets = events_for(v, "ENGINE_STATE_RESET")
-    assert len(resets) == (corrupt == "engine")
+    assert len(resets) == (corrupt != "set")
     with psycopg.connect(app_dsn("gs")) as c:
         row = c.execute("select set_sha256 from engine_state where vehicle=%s", (v,)).fetchone()
     assert row == (MISSION.set_sha256,)
+
+
+async def test_reset_while_silent_commits_once() -> None:  # D-ALM-11: no frame after the reset
+    v, base = vid(), now() - timedelta(minutes=1)
+    produce_values(v, base, [22.0] * 10)
+    await drain(v)
+    admin("update engine_state set schema_version = -1 where vehicle=%s", v)
+    for _ in range(2):  # the second start finds the rewritten snapshot: no second reset
+        async with worker([v]):
+            await until(lambda: bool(events_for(v, "ENGINE_STATE_RESET")), 5)
+            await asyncio.sleep(0.5)
+        assert len(events_for(v, "ENGINE_STATE_RESET")) == 1
+        with psycopg.connect(app_dsn("gs")) as c:
+            row = c.execute("select schema_version from engine_state where vehicle=%s", (v,))
+            assert row.fetchone() == (state_version(),)
+
+
+async def test_stray_open_alarm_without_snapshot_is_kept(tmp_path: Path) -> None:
+    v, base = vid(), now() - timedelta(minutes=1)  # an open alarm row, no engine_state row
+    cset = compile_set(MISSION)
+    await ensure_set()
+    es, trs = initial_state(cset), list[Transition]()
+    for seq, t, values in frames_of([31.0] * 3):
+        es, out = step(es, cset, v, base, seq, base + timedelta(seconds=t), 0.1, values, False)
+        trs += out
+    async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as c:
+        await write_transitions(c, cset.set_sha256, trs)
+    produce_values(v, base, [31.0] * 5, start_seq=10)
+    await drain(v)  # rebuilt from the row: still RED, so no second alarm (alarms_one_open)
+    assert stored(v) == 5 and dlq_entries(v) == [] and kinds(v) == ["RAISE"]
+
+
+async def test_seq_state_without_snapshot_survives_silence() -> None:
+    v, base = vid(), now() - timedelta(minutes=1)
+    produce_values(v, base, [22.0] * 5)
+    await drain(v)
+    admin("delete from engine_state where vehicle=%s", v)  # e.g. a row from before Gate 3a
+    async with worker([v]) as w:  # no frame: the silence path writes LOS
+        await until(lambda: bool(events_for(v, "LOS")), 5)
+        assert not w.done()
+    produce_values(v, base, [22.0] * 3, start_seq=5)
+    await drain(v)
+    applied = [e["details"]["first_seq"] for e in events_for(v, "LIMITS_APPLIED")]
+    assert applied == [0, 5]  # the set is applied again at the first frame after

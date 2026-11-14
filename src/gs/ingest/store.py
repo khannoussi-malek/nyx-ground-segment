@@ -164,7 +164,8 @@ async def write_outcome(
         )
     await insert_events(conn, outcome.events)
     await write_transitions(conn, vs.set_sha256, outcome.transitions)
-    if s is not None:  # a vehicle with no frame yet has no state to keep
+    # no frame yet, or no set applied yet ("": seq_state without a snapshot): nothing to keep
+    if s is not None and vs.set_sha256:
         await conn.execute(
             "INSERT INTO engine_state (vehicle, last_seq, epoch, set_sha256, schema_version, state)"
             " VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (vehicle) DO UPDATE SET"

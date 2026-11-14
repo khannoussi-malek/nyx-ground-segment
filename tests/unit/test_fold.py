@@ -8,7 +8,7 @@ from gs.alarms import state
 from gs.alarms.engine import compile_set, initial_state
 from gs.common.interfaces import FrameHeader, build_frame_model
 from gs.common.missiondb import MissionDb, load, load_dir
-from gs.ingest.events import applied_key, details_json
+from gs.ingest.events import applied_key, details_json, transition_key
 from gs.ingest.fold import (
     VehicleState,
     dump_vehicle,
@@ -186,10 +186,15 @@ def test_engine_snapshot_continues_exactly() -> None:  # D-ALM-10 at the fold le
     assert len(whole) >= 2 and a.transitions + b.transitions == whole
 
 
+def shipped_raw() -> list[bytes]:
+    return [
+        (MISSION_DIR / n).read_bytes() for n in ("limits.yaml", "commands.yaml", "parameters.yaml")
+    ]
+
+
 def unchecked_temp() -> MissionDb:
     """The shipped set with cabin_temp_c's limit check removed."""
-    names = ("limits.yaml", "commands.yaml", "parameters.yaml")
-    raw = [(MISSION_DIR / n).read_bytes() for n in names]
+    raw = shipped_raw()
     line = next(ln for ln in raw[0].decode().splitlines() if "cabin_temp_c" in ln)
     raw[0] = raw[0].replace(line.encode(), b"  cabin_temp_c: {checks: []}")
     return load(*raw)
@@ -223,3 +228,36 @@ def test_new_set_switches_before_the_frame_is_classified() -> None:  # D-ALM-12,
     assert [e.kind for e in out.events] == ["LIMITS_APPLIED"]
     ((kind, seq, note),) = [(t.kind, t.trigger_seq, t.note) for t in out.transitions]
     assert (kind, seq, note) == ("RTN", 3, "LIMITS_CHANGED") and vs.set_sha256 == new.set_sha256
+
+
+def test_seq_reset_restarts_persistence() -> None:  # reboot < 2 s later: SEQ_RESET, no GAP/STALE
+    pre = [nf(i, i / 10, 22.0 if i < 5 else 31.0) for i in range(7)]
+    post = [nf(i, 0.7 + i / 10, 31.0) for i in range(3)]  # seq back to 0, 100 ms later
+    vs, _ = fold(empty_state(CSET), V, pre, MDB, CSET)
+    _, out = fold(vs, V, post, MDB, CSET)  # a batch that starts in the old epoch
+    assert [e.kind for e in out.events] == ["SEQ_RESET"]
+    (t,) = out.transitions
+    epoch = T0 + timedelta(seconds=0.7)  # the new boot's epoch
+    assert (t.kind, t.trigger_seq) == ("RAISE", 2)
+    assert t.key == transition_key(V, "cabin_temp_c", epoch, 2, "RAISE")
+
+
+def test_no_snapshot_rows_reseeded_for_the_applied_set() -> None:  # set changed before frame 1
+    vs, _ = fold(empty_state(CSET), V, [nf(i, i / 10, 31.0) for i in range(3)], MDB, CSET)
+    fresh = replace(empty_state(CSET), set_sha256="", engine=vs.engine)  # as load_state builds
+    mdb = unchecked_temp()
+    vs, out = fold(fresh, V, [nf(0, 9.0, 31.0)], mdb, compile_set(mdb))
+    assert [e.kind for e in out.events] == ["LIMITS_APPLIED"] and out.transitions == ()
+    assert "cabin_temp_c" in vs.engine.alarms and ("cabin_temp_c", "limit") not in vs.engine.slots
+
+
+def test_reboot_frame_keyed_in_new_epoch() -> None:  # N = 1: the revealing frame itself raises
+    raw = shipped_raw()
+    raw[0] = raw[0].replace(b"persistence: 3", b"persistence: 1")
+    mdb = load(*raw)
+    cset = compile_set(mdb)
+    vs, _ = fold(empty_state(cset), V, [nf(i, i / 10) for i in range(7)], mdb, cset)
+    _, out = fold(vs, V, [nf(0, 0.7, 31.0)], mdb, cset)
+    (t,) = out.transitions
+    epoch = T0 + timedelta(seconds=0.7)
+    assert t.key == transition_key(V, "cabin_temp_c", epoch, 0, "RAISE")

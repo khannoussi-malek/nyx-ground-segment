@@ -16,7 +16,7 @@ import psycopg
 import redis.asyncio
 import redis.exceptions
 
-from gs.alarms.engine import CompiledSet, compile_set, initial_state
+from gs.alarms.engine import CompiledSet, compile_set
 from gs.alarms.state import load, rebuild
 from gs.common.hooks import Hooks
 from gs.common.interfaces import DlqRecord, FrameHeader, Tm, build_frame_model
@@ -257,7 +257,7 @@ async def _isolate(
     now: datetime,
 ) -> tuple[VehicleState, int, list[FrameHeader], list[DlqRecord]]:
     """Re-run one frame per transaction from the pre-batch state; a frame failing RETRIES times
-    goes to the DLQ as poison, the rest commit (D-ING-04). Pending events (`extra`, POISON) ride
+    goes to the DLQ as poison, the rest commit (D-ING-04). Pending events (POISON) ride
     in the next per-frame commit that succeeds. Operational errors propagate."""
     vehicle = stream.removeprefix("tm:")
     dup = 0
@@ -321,8 +321,9 @@ async def load_state(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str) -> V
     _, cset = _current(ctx)
     s = await load_seq_state(conn, vehicle)
     row = await load_engine_row(conn, vehicle)
-    if row is None or s is None:  # no snapshot: initial(); "" → LIMITS_APPLIED on 1st frame
-        return load_vehicle(s, None, "", initial_state(cset))
+    if row is None or s is None:  # no snapshot; "" → LIMITS_APPLIED on the first frame
+        # = initial() without open rows; a stray open alarm is kept, not raised twice
+        return load_vehicle(s, None, "", rebuild(await load_open_alarms(conn, vehicle), cset))
     version, set_sha, obj = row
     old = cset
     if set_sha != cset.set_sha256:
@@ -335,7 +336,7 @@ async def load_state(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str) -> V
         if version != state_version():
             raise ValueError(f"state version {version} != {state_version()}")
         vs = load_vehicle(s, obj, old.set_sha256, load(obj["engine"], old))
-    except (ValueError, KeyError) as e:
+    except (ValueError, KeyError, TypeError) as e:
         log.warning("engine state of %s rebuilt from open alarms (%r)", vehicle, e)
         vs = load_vehicle(
             s, None, old.set_sha256, rebuild(await load_open_alarms(conn, vehicle), old)

@@ -24,6 +24,7 @@ test("ageAt adds the time since receipt to the server's age (D-UI-05)", () => {
   expect(ageAt(120, 1000, 1350)).toBe(470);
   expect(ageAt(null, 1000, 1350)).toBeNull(); // no server age: unknown, never receipt-only
   expect(ageAt(120, undefined, 1350)).toBeNull();
+  expect(ageAt(120, 1000, 950)).toBe(120); // read before the receipt stamp: never fresher than the server said
 });
 
 test("formatAge: tenths under 10 s, whole seconds under 2 min, then minutes", () => {

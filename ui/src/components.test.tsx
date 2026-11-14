@@ -83,3 +83,30 @@ test("live values merged with the mission db render label, unit and gauge", asyn
   expect(html).toContain('class="gauge"');
   expect(html).not.toContain('class="summary"'); // statesWired stays false until day 3
 });
+
+test("an unwired row asserts no state in the DOM", () => {
+  const html = row(cabin);
+  expect(html).not.toContain("data-level");
+  expect(html).not.toContain("data-acq");
+});
+
+test("LiveTable from a real store + mission db: labels and gauges, no state marks while unwired", async () => {
+  const { createStore } = await import("./store");
+  const { LiveTable } = await import("./LiveTable");
+  const store = createStore(() => 0);
+  store.applyTm({
+    kind: "tm", vehicle: "NYX-TA1", seq: 3, t_onboard: T, mode: "TEST",
+    last_cmd_id: null, values: { cabin_pressure_kpa: 101.3, unknown_p: 1 }, age_ms: 40,
+  });
+  const mission = {
+    parameters: { cabin_pressure_kpa: { unit: "kPa", type: "float", description: "Cabin total pressure" } },
+    limits: { cabin_pressure_kpa: { checks: [{ type: "limit", red_low: 95, red_high: 106 }] } },
+  } as unknown as import("./api").MissionDb;
+  const html = renderToStaticMarkup(<LiveTable store={store} mission={mission} />);
+  expect(html).toContain("Cabin total pressure");
+  expect(html).toContain('class="gauge"');
+  expect(html).toContain('class="label">unknown_p');
+  for (const mark of ['class="summary"', 'class="badge"', 'class="acq"', "data-level", "data-acq"]) {
+    expect(html).not.toContain(mark);
+  }
+});

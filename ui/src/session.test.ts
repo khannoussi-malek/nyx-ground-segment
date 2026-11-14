@@ -46,7 +46,7 @@ test("checkSession: a transient error with a valid session keeps reconnecting", 
 });
 
 test("loadMission: the set, or back to login on 401, or ids-only (logged) on any error", async () => {
-  const set = { set_sha256: "ab" } as unknown as MissionDb;
+  const set = { set_sha256: "ab", parameters: {}, limits: { p: { checks: [] } } } as unknown as MissionDb;
   const expired = vi.fn();
   expect(await loadMission(async () => set, expired)).toBe(set);
   expect(await loadMission(async () => null, expired)).toBeNull();
@@ -55,5 +55,25 @@ test("loadMission: the set, or back to login on 401, or ids-only (logged) on any
   expect(await loadMission(async () => { throw new Error("503"); }, expired)).toBeNull();
   expect(expired).toHaveBeenCalledOnce(); // an API error is not a dead session
   expect(err).toHaveBeenCalledOnce();
+  err.mockRestore();
+});
+
+test("loadMission: a 200 with the wrong shape is logged and gives ids only, never a crash", async () => {
+  const expired = vi.fn();
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  const bad: unknown[] = [
+    {},
+    { parameters: {}, limits: null },
+    { parameters: { p: "kPa" }, limits: {} },
+    { parameters: {}, limits: { p: {} } },
+    { parameters: {}, limits: { p: { checks: "limit" } } },
+    { parameters: {}, limits: { p: { checks: [null] } } },
+    null,
+  ];
+  for (const body of bad) {
+    expect(await loadMission(async () => body as MissionDb, expired)).toBeNull();
+  }
+  expect(err).toHaveBeenCalledTimes(bad.length - 1); // null is the 401 case, not a shape error
+  expect(expired).toHaveBeenCalledOnce();
   err.mockRestore();
 });

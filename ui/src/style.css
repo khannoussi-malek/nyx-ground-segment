@@ -177,7 +177,7 @@ th .marks { display: flex; flex-wrap: wrap; gap: 0.25rem 0.375rem; margin-top: 0
 /* rows: grey when nominal; a live violation tints its row */
 tr[data-acq="OK"][data-level="RED"] > * { background: var(--red-tint); }
 tr[data-acq="OK"][data-level="YELLOW"] > * { background: var(--yellow-tint); }
-tr:not([data-acq="OK"]) .num { color: var(--stale-ink); font-style: italic; }
+tr[data-acq]:not([data-acq="OK"]) .num { color: var(--stale-ink); font-style: italic; }
 
 td.value { white-space: nowrap; text-align: right; }
 .num {

@@ -37,7 +37,7 @@ export function ParamRow({ vehicle, seq, tOnboard, p }: { vehicle: string; seq: 
   const acq = acqMark(state.acq);
   const badge = limitBadge(state);
   return (
-    <tr data-level={state.level} data-acq={state.acq}>
+    <tr data-level={p.state?.level} data-acq={p.state?.acq}>
       <th scope="row">
         <span className="label">{p.label || p.id}</span>
         {p.label && <span className="pid">{p.id}</span>}

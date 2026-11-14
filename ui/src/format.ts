@@ -10,7 +10,7 @@ export const sortedEntries = (values: Readonly<Record<string, number | null>>) =
 
 /** Age now = server age at send (api_now − t_onboard) + time since receipt, one browser clock (D-UI-05). */
 export const ageAt = (ageMs: number | null | undefined, receivedAt: number | undefined, now: number) =>
-  ageMs == null || receivedAt === undefined ? null : ageMs + (now - receivedAt);
+  ageMs == null || receivedAt === undefined ? null : ageMs + Math.max(0, now - receivedAt);
 
 export function formatAge(ms: number | null): string {
   if (ms === null) return "—";

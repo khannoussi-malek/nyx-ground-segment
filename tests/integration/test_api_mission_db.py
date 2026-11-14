@@ -42,7 +42,7 @@ async def test_mission_db_returns_the_loaded_set(api_client: httpx.AsyncClient) 
 
 
 async def test_mission_db_keeps_every_check_field(api_client: httpx.AsyncClient) -> None:
-    # LimitEntry dumps a check as its CheckConfig base and drops red_low etc.; the view must not
+    # a check dumped as its CheckConfig base would drop red_low etc. (G21)
     await login(api_client, "fc1", FC1_PW)
     body = (await api_client.get("/api/mission-db")).json()
     limit, roc = body["limits"]["cabin_pressure_kpa"]["checks"]
@@ -54,4 +54,12 @@ async def test_mission_db_keeps_every_check_field(api_client: httpx.AsyncClient)
         106.0,
     )
     assert roc["type"] == "roc" and roc["limit_per_s"] == 0.15 and roc["direction"] == "falling"
+    # resolved defaults (G20): hysteresis, persistence, the ROC window
+    assert (limit["hysteresis_pct"], limit["persistence"]) == (15.0, 3)
+    assert (roc["window_s"], roc["persistence"]) == (1.0, 3)
+    vent = body["commands"]["vent_cabin"]
+    assert vent["hazard"] == "Irreversible loss of cabin atmosphere"
+    assert vent["args"]["duration_s"] == {
+        "type": "float", "min": 1.0, "max": 10.0, "unit": "s", "required": True
+    }  # fmt: skip
     assert MissionDbView.model_validate(body, strict=False).set_sha256 == MISSION.set_sha256

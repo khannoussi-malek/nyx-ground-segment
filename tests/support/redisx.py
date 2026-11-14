@@ -143,3 +143,11 @@ def dlq_entry_for(entry_id: str) -> str:
     entries: Any = client("admin").xrange("tm:dlq")
     (data,) = [f["data"] for _, f in entries if json.loads(f["data"]).get("entry_id") == entry_id]
     return str(data)
+
+
+def redis_time_offset(r: redis.Redis) -> float:
+    """Redis server clock minus the host clock (s), host time taken at the midpoint of TIME."""
+    t0 = time.time()
+    sec, usec = r.time()
+    t1 = time.time()
+    return sec + usec / 1e6 - (t0 + t1) / 2

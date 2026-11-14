@@ -17,6 +17,8 @@ class GracefulServer(uvicorn.Server):
         assert isinstance(app, FastAPI)
         app.state.shutdown.set()
         super().handle_exit(sig, frame)
+        # uvicorn re-raises captured signals after shutdown (exit 143); a clean stop must exit 0
+        self._captured_signals.clear()
 
 
 def build_server(app: FastAPI, host: str, port: int) -> GracefulServer:

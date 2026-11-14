@@ -7,6 +7,8 @@ import signal
 from dataclasses import dataclass
 
 import redis.asyncio
+from redis.asyncio.retry import Retry
+from redis.backoff import NoBackoff
 
 from gs.common.config import require
 from gs.common.health import State, serve_health
@@ -49,7 +51,12 @@ def sim_status(buf: FrameBuffer) -> tuple[State, dict[str, object]]:
 
 async def run(s: SimSettings, stop: asyncio.Event) -> None:
     buf = FrameBuffer()
-    r = redis.asyncio.Redis.from_url(s.redis_url, socket_timeout=2)
+    r = redis.asyncio.Redis.from_url(
+        s.redis_url,
+        socket_timeout=2,
+        # retry OFF: send_loop owns retries, so an XADD is never silently re-sent (D-SIM-05)
+        retry=Retry(NoBackoff(), 0),
+    )
 
     server = await serve_health(s.bind_host, s.health_port, lambda: sim_status(buf))
     try:

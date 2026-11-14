@@ -15,4 +15,18 @@ services:
       interval: 1s
       timeout: 3s
       retries: 60
-volumes: {pgdata: {}}
+  redis:
+    image: redis:8.10.3
+    restart: unless-stopped
+    command: ["redis-server", "--aclfile", "/etc/redis/users.acl", "--appendonly", "yes", "--appendfsync", "always",
+              "--save", "300 10", "--maxmemory", "512mb", "--maxmemory-policy", "noeviction"]
+    environment: {REDIS_HEALTH_PW: "${REDIS_HEALTH_PW}"}
+    volumes: ["./redis/users.acl:/etc/redis/users.acl:ro", "redisdata:/data"]
+    ports: ["127.0.0.1:${REDIS_HOST_PORT:-6379}:6379"]
+    stop_grace_period: 30s
+    healthcheck:   # redis-cli exits 0 on WRONGPASS, hence grep (S3)
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning --user health --pass \"$$REDIS_HEALTH_PW\" ping | grep -q PONG"]
+      interval: 1s
+      timeout: 3s
+      retries: 30
+volumes: {pgdata: {}, redisdata: {}}

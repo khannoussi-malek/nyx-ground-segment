@@ -32,4 +32,5 @@ jobs:
       - run: make env
       - run: docker compose up -d --wait redis db minio
       - run: docker compose run --rm minio-init
+      - run: docker compose run --rm --build migrate
       - run: uv run pytest --cov=gs --cov-fail-under=80

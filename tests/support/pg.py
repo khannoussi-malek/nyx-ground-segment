@@ -48,3 +48,11 @@ def throwaway_db(apply: bool = True) -> Iterator[str]:
     finally:
         with psycopg.connect(admin_dsn("postgres"), autocommit=True) as c:
             c.execute(sql.SQL("DROP DATABASE {} WITH (FORCE)").format(sql.Identifier(name)))
+
+
+def column_types(conn: psycopg.Connection, table: str) -> dict[str, str]:
+    rows = conn.execute(
+        "select column_name, data_type from information_schema.columns where table_name=%s",
+        (table,),
+    ).fetchall()
+    return {name: dtype for name, dtype in rows}

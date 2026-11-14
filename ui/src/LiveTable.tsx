@@ -1,5 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { ageAt, sortedEntries } from "./format";
+import type { MissionDb } from "./api";
+import { ageAt } from "./format";
+import { paramViews } from "./params";
 import type { Store } from "./store";
 import { VehicleCard } from "./VehicleCard";
 
@@ -14,12 +16,12 @@ function useNow(ms: number): number {
   return now;
 }
 
-function Vehicle({ store, v }: { store: Store; v: string }) {
+function Vehicle({ store, v, mission }: { store: Store; v: string; mission: MissionDb | null }) {
   const tm = useSyncExternalStore(store.subscribe, () => store.vehicle(v));
   const now = useNow(AGE_TICK_MS);
   if (!tm) return null;
-  // ponytail: ids only until GET /api/mission-db lands here (labels, units, limits), states on day 3
-  const params = sortedEntries(tm.values).map(([id, value]) => ({ id, value }));
+  // states (ParamView.state, statesWired) are wired on day 3 from SSE (G20)
+  const params = paramViews(tm.values, mission);
   return (
     <VehicleCard
       vehicle={v}
@@ -32,12 +34,12 @@ function Vehicle({ store, v }: { store: Store; v: string }) {
   );
 }
 
-export function LiveTable({ store }: { store: Store }) {
+export function LiveTable({ store, mission }: { store: Store; mission: MissionDb | null }) {
   const vehicles = useSyncExternalStore(store.subscribe, store.vehicles);
   return (
     <>
       {vehicles.map((v) => (
-        <Vehicle key={v} store={store} v={v} />
+        <Vehicle key={v} store={store} v={v} mission={mission} />
       ))}
     </>
   );

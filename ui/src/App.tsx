@@ -1,13 +1,21 @@
 import { useCallback, useEffect, useState } from "react";
-import { logout, me } from "./api";
+import { logout, me, missionDb, type MissionDb } from "./api";
 import { LiveTable } from "./LiveTable";
 import { Login } from "./Login";
-import { bootUser, checkSession, safeLogout } from "./session";
+import { bootUser, checkSession, loadMission, safeLogout } from "./session";
 import { connectEvents } from "./sse";
 import { createStore, ingest } from "./store";
 
 function Console({ user, onLogout }: { user: string; onLogout: () => void }) {
   const [store] = useState(createStore);
+  const [mission, setMission] = useState<MissionDb | null>(null);
+  useEffect(() => {
+    let mounted = true; // a logout before the answer must not set state on an unmounted console
+    void loadMission(missionDb, onLogout).then((m) => mounted && setMission(m));
+    return () => {
+      mounted = false;
+    };
+  }, [onLogout]);
   useEffect(
     () =>
       connectEvents(
@@ -25,7 +33,7 @@ function Console({ user, onLogout }: { user: string; onLogout: () => void }) {
         <button onClick={() => void safeLogout(logout).then(onLogout)}>Log out</button>
       </header>
       <main>
-        <LiveTable store={store} />
+        <LiveTable store={store} mission={mission} />
       </main>
     </>
   );

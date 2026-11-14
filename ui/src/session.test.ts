@@ -1,5 +1,6 @@
 import { expect, test, vi } from "vitest";
-import { attemptLogin, bootUser, checkSession, safeLogout } from "./session";
+import type { MissionDb } from "./api";
+import { attemptLogin, bootUser, checkSession, loadMission, safeLogout } from "./session";
 
 test("attemptLogin: null on success, message on wrong password, message on error", async () => {
   const err = vi.spyOn(console, "error").mockImplementation(() => {});
@@ -40,6 +41,19 @@ test("checkSession: a transient error with a valid session keeps reconnecting", 
   const err = vi.spyOn(console, "error").mockImplementation(() => {});
   await checkSession(async () => { throw new Error("network"); }, expired);
   expect(expired).not.toHaveBeenCalled();
+  expect(err).toHaveBeenCalledOnce();
+  err.mockRestore();
+});
+
+test("loadMission: the set, or back to login on 401, or ids-only (logged) on any error", async () => {
+  const set = { set_sha256: "ab" } as unknown as MissionDb;
+  const expired = vi.fn();
+  expect(await loadMission(async () => set, expired)).toBe(set);
+  expect(await loadMission(async () => null, expired)).toBeNull();
+  expect(expired).toHaveBeenCalledOnce();
+  const err = vi.spyOn(console, "error").mockImplementation(() => {});
+  expect(await loadMission(async () => { throw new Error("503"); }, expired)).toBeNull();
+  expect(expired).toHaveBeenCalledOnce(); // an API error is not a dead session
   expect(err).toHaveBeenCalledOnce();
   err.mockRestore();
 });

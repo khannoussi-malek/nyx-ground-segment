@@ -70,3 +70,16 @@ test("the meta line shows mode, seq and the age clock", () => {
   expect(card()).toContain(">0.3 s ago</time>");
   expect(card({ ageMs: null })).toContain(">—</time>");
 });
+
+test("live values merged with the mission db render label, unit and gauge", async () => {
+  const { paramViews } = await import("./params");
+  const mission = {
+    parameters: { cabin_pressure_kpa: { unit: "kPa", type: "float", description: "Cabin total pressure" } },
+    limits: { cabin_pressure_kpa: { checks: [{ type: "limit", red_low: 95, red_high: 106 }] } },
+  } as unknown as import("./api").MissionDb;
+  const html = card({ params: paramViews({ cabin_pressure_kpa: 101.32 }, mission) });
+  expect(html).toContain("Cabin total pressure");
+  expect(html).toContain('class="unit">kPa');
+  expect(html).toContain('class="gauge"');
+  expect(html).not.toContain('class="summary"'); // statesWired stays false until day 3
+});

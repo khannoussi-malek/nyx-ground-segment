@@ -1,4 +1,5 @@
 /** Session logic kept out of the components so it is counted and tested. */
+import type { MissionDb } from "./api";
 
 export async function attemptLogin(
   login: (u: string, p: string) => Promise<boolean>,
@@ -36,5 +37,20 @@ export async function checkSession(me: () => Promise<string | null>, onExpired: 
     if ((await me()) === null) onExpired();
   } catch (err) {
     console.error(err); // API unreachable: stay and keep reconnecting
+  }
+}
+
+/** Once after login: a dead session goes back to login; any other failure shows ids only. */
+export async function loadMission(
+  missionDb: () => Promise<MissionDb | null>,
+  onExpired: () => void,
+): Promise<MissionDb | null> {
+  try {
+    const m = await missionDb();
+    if (m === null) onExpired();
+    return m;
+  } catch (err) {
+    console.error(err); // live values never wait for it
+    return null;
   }
 }

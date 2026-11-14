@@ -21,7 +21,7 @@ Handoffs: per-vehicle single owner and the takeover protocol → [R4](R4-per-veh
 - In ISA-18.2 practice, a deadband is "a defined increment of percentage of the range" that the value must clear before the alarm returns to normal. ISA-18.2 §10.5.5.2: "The control system shall provide the capability for implementing the deadband functionality." Starting values in the EEMUA 191 table are flow 5 %, level 2 %, pressure 2 %, temperature 1 % (all **% of range**). Secondary source: the standards are paywalled — [exida blog](https://www.exida.com/Blog/why-should-i-use-an-alarm-deadband)
 - COSMOS LIMITS has no hysteresis field, only persistence — [COSMOS telemetry config](https://docs.openc3.com/docs/configuration/telemetry). Yamcs alarm definitions have no deadband either (**VERIFIED**: GitHub code search of `yamcs/yamcs` for "hysteresis" and "deadband" returns nothing, while persistence exists as `AlarmType.minViolations`; 2026-11-14).
 - Chattering is the main cause of alarm overload. Wang et al. list "chattering alarms due to noise and disturbance" first of four causes — [Wang, Yang, Chen, Shah 2016, IEEE T-ASE, doi:10.1109/TASE.2015.2464234](https://doi.org/10.1109/TASE.2015.2464234) (abstract)
-- A deadband is a trade-off. It removes nuisance alarms but adds "delay in detecting abnormal conditions". Wang et al. pick the optimal width as a "weighted balance" between the two — [Wang, Bai, Wang, Yang 2019, IEEE TIE, doi:10.1109/TIE.2018.2885718](https://doi.org/10.1109/TIE.2018.2885718) (abstract)
+- A deadband is a trade-off. It removes nuisance alarms but adds "delay in detecting abnormal conditions". Wang et al. pick the optimal width as a "weighted balance" between the two — [Wang, Bai, Wang, Yang 2019, IEEE TIE, doi:10.1109/TIE.2018.2885718](https://doi.org/10.1109/TIE.2018.2885718) (**VERIFIED**, full text after OCR: p. 1, 5)
 - Deadbands and delay timers each remove only one type of false alarm: deadbands handle small deviations, delay timers handle short durations. A deadband followed in series by a delay timer handles both — [Gyasi & Wang 2022, PSEP, doi:10.1016/j.psep.2022.05.006](https://doi.org/10.1016/j.psep.2022.05.006) (abstract)
 
 **Persistence (delay timers)**
@@ -155,7 +155,7 @@ Appended after the paper-evidence round [R14](R14-paper-evidence.md) (§3 and §
 | R8 claim | Paper | R14 verdict | Page |
 | --- | --- | --- | --- |
 | "Chattering is the main cause of alarm overload … first of four causes" | Wang, Yang, Chen & Shah 2016 | **Partly supported**: chattering is listed first of **four** main causes, not "the main cause"; for floods the true reason is "too many **correct** alarms" in a short time, from abnormality propagation. Read: "one of four main causes, listed first" | p. 1, 7, 14 (full text) |
-| Deadband trade-off: removes nuisance alarms, adds detection delay, optimum = weighted balance | Wang, Bai, Wang & Yang 2019 | **Supported (abstract only)**; owner upload recorded, full text not yet ingested | abstract |
+| Deadband trade-off: removes nuisance alarms, adds detection delay, optimum = weighted balance | Wang, Bai, Wang & Yang 2019 | **VERIFIED** (2026-11-15, OCR'd owner upload): "the best weighted balance between the time duration of nuisance alarms and the delay in detecting abnormal conditions" (p. 1); "increased time delay in detecting abnormal conditions" (p. 5) | p. 1, 5 (full text) |
 | Deadbands handle small deviations, delay timers short durations; a deadband followed by a timer in series handles both | Gyasi & Wang 2022 | **Supported** | p. 1–2 (full text) |
 | Delay timers **and deadbands** lower false and nuisance alarms "significantly"; detection delay traded against false/missed rates | Izadi et al. 2009 | **Partly supported**: the trade-offs yes (p. 6); "significantly" is said of delay only (p. 5); deadband is the least effective technique (p. 6). The Markov-chain analysis is also in Izadi (p. 4) | p. 4–6 (full text) |
 | Detection delay computed with Markov chains | Adnan, Izadi & Chen 2011 | **VERIFIED** (2026-11-15, owner upload ingested): Markov chains for deadband (Fig. 3) and delay timer n = 3, m = 2 (Fig. 4); "significantly reduce" is Adnan's own wording (p. 1) | p. 1, 3–5 (full text) |
@@ -189,6 +189,6 @@ CONTRADICTED: none.
 | Claim | Verdict | Evidence | Touches |
 | --- | --- | --- | --- |
 | Delay timers and deadbands lower false and nuisance alarms "significantly"; delay computed with Markov chains, traded against false/missed rates | VERIFIED | Adnan 2011 p. 1, 3–5 (full text) | D-ALM-02/03 rationale |
-| Deadband trade-off, optimum = weighted balance | STILL UNVERIFIED | Wang 2019 uploaded as a scan without text layer; needs OCR and re-upload | D-ALM-16 (bench re-run) |
+| Deadband trade-off, optimum = weighted balance | VERIFIED | Wang 2019 p. 1, 5 (OCR'd re-upload, 2026-11-15) | D-ALM-16 (bench re-run) |
 
 CONTRADICTED: none.

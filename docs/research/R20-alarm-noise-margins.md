@@ -2,7 +2,7 @@
 
 **Drives:** D-ALM-02, D-ALM-03, D-ALM-16, §3.5 ICD-B-06   **Answers review Q:** 2 (alarm tuning)
 
-PaperLab workspace: **Nyx ground segment design**. The owner uploaded the full texts on 2026-11-15. Xu et al. 2012 (IEEE T-ASE, 10.1109/TASE.2011.2176490) and Adnan, Izadi & Chen 2011 (J. Process Control, 10.1016/j.jprocont.2011.06.019) are now readable. Wang et al. 2019 (10.1109/TIE.2018.2885718) was uploaded as a scan with no text layer and is still unreadable (OCR and re-upload needed). Verification results are marked in R8 and R14.
+PaperLab workspace: **Nyx ground segment design**. The owner uploaded the full texts on 2026-11-15. Xu et al. 2012 (IEEE T-ASE, 10.1109/TASE.2011.2176490) and Adnan, Izadi & Chen 2011 (J. Process Control, 10.1016/j.jprocont.2011.06.019) are now readable. Wang et al. 2019 (10.1109/TIE.2018.2885718) was uploaded as a scan; it was OCR'd and re-uploaded the same day and is now full text (used in F3). Verification results are marked in R8 and R14.
 
 ## Question
 
@@ -60,7 +60,7 @@ D-ALM-16 plans a simulation study to check that N = 3 and the deadbands sit on t
 - **Change (no code now; §3.5 ICD-B-06, the bench-noise re-run before the first campaign):**
   1. Estimate σ per parameter from a recorded nominal run (sample standard deviation of the residual around a moving median).
   2. Pass rule per limit check: **d ≥ 2.2 σ** and **nearest yellow distance ≥ 2.3 σ**, the N = 3 / 8 h values above; a failing parameter gets a wider deadband in `mission/limits.yaml` before the campaign.
-  3. Check the residual's autocorrelation. If lag-1 autocorrelation is above ~0.2, the samples are not i.i.d. and the chain is optimistic, so use Monte Carlo on the recorded noise (Wang 2019's case, still unread).
+  3. Check the residual's autocorrelation. If lag-1 autocorrelation is above ~0.2, the samples are not i.i.d. and the chain is optimistic, so the chain is not valid. Use **Wang et al. 2019** instead, which is written for this case: the IID assumption "is not satisfied by a large number of signals, for which it is often observed that several consecutive data samples are overpassing alarm thresholds" (p. 2). Its method, from recorded data: (a) a **deadband index** from normalized alarm durations and deviations; above 45° a deadband is the right tool, otherwise a delay timer (p. 1–2); (b) the deadband width at the best weighted balance between the nuisance-alarm duration ratio and the pseudo-detection delay, which beat IID-based designs on their industrial example (p. 2). Correlated noise also weakens N = 3, since consecutive samples exceed together (R8: 39× for the correlated ROC slope), so for such a signal the deadband, not N, has to carry the margin.
 - **Optional now:** raise bus current's `hysteresis_abs` from 0.2 to 0.3 A. That gives 2.8× margin at the simulator noise, and the floor rule still holds. It is the owner's call: it changes a shipped value with no bench evidence yet, so the default is no change, and the table goes into `docs/perf/alarm-tuning.md`.
 
 ### F4 – Detection delay grows with noise (confirmation, one line in the study)
@@ -111,4 +111,4 @@ The full script, with the engine Monte Carlo and the margin table, is in the res
 
 ## Sources (PaperLab: Nyx ground segment design)
 
-Xu, Wang, Izadi & Chen 2012, Performance Assessment and Design for Univariate Alarm Systems Based on FAR, MAR, and AAD, IEEE T-ASE, 10.1109/TASE.2011.2176490 (full text, owner upload) · Adnan, Izadi & Chen 2011, On expected detection delays for alarm systems with deadbands and delay-timers, J. Process Control, 10.1016/j.jprocont.2011.06.019 (full text, owner upload) · Gyasi & Wang 2022, 10.1016/j.psep.2022.05.006 · Wang, Bai, Wang & Yang 2019, 10.1109/TIE.2018.2885718 (scan, unreadable)
+Xu, Wang, Izadi & Chen 2012, Performance Assessment and Design for Univariate Alarm Systems Based on FAR, MAR, and AAD, IEEE T-ASE, 10.1109/TASE.2011.2176490 (full text, owner upload) · Adnan, Izadi & Chen 2011, On expected detection delays for alarm systems with deadbands and delay-timers, J. Process Control, 10.1016/j.jprocont.2011.06.019 (full text, owner upload) · Gyasi & Wang 2022, 10.1016/j.psep.2022.05.006 · Wang, Bai, Wang & Yang 2019, Indexing and Designing Deadbands for Industrial Alarm Signals, IEEE TIE, 10.1109/TIE.2018.2885718 (full text after OCR)

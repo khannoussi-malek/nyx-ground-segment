@@ -3,7 +3,12 @@
 export type Acq = "OK" | "STALE" | "FROZEN" | "NO_DATA";
 export type Level = "NOMINAL" | "YELLOW" | "RED";
 export type Side = "LOW" | "HIGH";
-export type ParamState = { acq: Acq; level: Level; side?: Side };
+export type ParamState = {
+  acq: Acq;
+  level: Level;
+  side?: Side;
+  check_kind?: string; // the engine Transition's check_kind ("limit", "roc", ...): which check set the level
+};
 export type Banner =
   | "NO LIVE CONNECTION"
   | "GROUND PROCESSING DOWN"

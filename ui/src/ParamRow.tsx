@@ -13,16 +13,28 @@ export type ParamView = {
 };
 
 const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
-const limitText = (v: number) => String(v).replace("-", "\u2212");
+/** G26: only a live LIMIT alarm names a position zone; a rate alarm has a side too but no zone */
+const fillsZone = (s: ParamState | undefined) => s?.acq === "OK" && s.check_kind === "limit" && s.side !== undefined;
+const limitText = (v: number) => String(v).replaceAll("-", "\u2212");
 
 /** Grey zones (normal, yellow range, red range), a pointer at the value and the outer limits
  *  printed under the track. Decorative for screen readers: the value cell carries the number. */
-function GaugeBar({ g }: { g: Gauge }) {
+function GaugeBar({ g, live }: { g: Gauge; live: ParamState | null }) {
+  // the engine's live, sided state fills its zone; display only, nothing derived from limits (G20)
+  const isActive = (z: Gauge["zones"][number]) =>
+    live !== null && z.side === live.side && z.kind === live.level.toLowerCase();
   return (
     <div className="gauge" aria-hidden="true">
       <div className="gauge-track">
         {g.zones.map((z) => (
-          <span key={z.from} className="zone" data-kind={z.kind} style={{ left: pct(z.from), width: pct(z.to - z.from) }} />
+          <span
+            key={z.from}
+            className="zone"
+            data-kind={z.kind}
+            data-side={z.side}
+            data-active={isActive(z) || undefined}
+            style={{ left: pct(z.from), width: pct(z.to - z.from) }}
+          />
         ))}
       </div>
       {g.pos !== null && (
@@ -74,7 +86,7 @@ export function ParamRow({ vehicle, seq, tOnboard, p }: { vehicle: string; seq: 
       {g && (
         <tr className="gauge-row">
           <td colSpan={2}>
-            <GaugeBar g={g} />
+            <GaugeBar g={g} live={fillsZone(p.state) ? p.state! : null} />
           </td>
         </tr>
       )}

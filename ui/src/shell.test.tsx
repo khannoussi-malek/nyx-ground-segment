@@ -368,3 +368,17 @@ test("a context whose resume fails is replaced by a fresh one", async () => {
   expect(FakeAudio.states).toHaveLength(2);
   expect(played).toEqual([880]); // the fresh context replays the open RED
 });
+
+test("a browser-suspended context that resumes by itself (statechange to running) sounds what was pending", async () => {
+  const es = await liveConsole();
+  await arm();
+  const ctx = FakeAudio.states[0]!;
+  const change = (state: string) => act(() => void ((ctx.state = state), ctx.listeners.forEach((f) => f())));
+  change("suspended");
+  expect(button("SOUND OFF – click to enable")).toBeDefined();
+  es.emit("snapshot", snapshot([alarmView()]));
+  expect(played).toEqual([]); // pending while the audio is off
+  change("running"); // the browser resumed it, no click
+  expect(played).toEqual([880]);
+  expect(button("SOUND OFF – click to enable")).toBeUndefined();
+});

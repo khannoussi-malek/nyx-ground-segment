@@ -13,7 +13,7 @@ const cabin: ParamView = {
 };
 const row = (p: ParamView) =>
   renderToStaticMarkup(
-    <table><tbody><ParamRow vehicle="NYX-TA1" seq={7} tOnboard={T} p={p} /></tbody></table>,
+    <table><ParamRow vehicle="NYX-TA1" seq={7} tOnboard={T} p={p} /></table>,
   );
 const card = (over: Partial<VehicleCardProps> = {}) =>
   renderToStaticMarkup(
@@ -48,9 +48,31 @@ test("a STALE value keeps its last limit as 'was' and says STALE", () => {
   expect(html).toMatch(/class="acq">.*STALE/);
 });
 
-test("the gauge marker sits at the value's track position; no limits, no gauge", () => {
-  expect(row(cabin)).toMatch(/class="gauge-marker" style="left:\d+\.\d{2}%"/);
-  expect(row({ ...cabin, limits: undefined })).not.toContain('class="gauge"');
+test("one parameter = one tbody: name and value on top, the full-width gauge row under it", () => {
+  const html = row(cabin);
+  expect(html).toMatch(/^<table><tbody><tr>.*<\/tr><tr class="gauge-row"><td colSpan="2">/);
+  expect(html.match(/<tbody/g)).toHaveLength(1);
+});
+
+test("the gauge: grey zones, pointer at the value, the red limits printed, hidden from screen readers", () => {
+  const html = row(cabin);
+  expect(html).toContain('class="gauge" aria-hidden="true"');
+  expect(html.match(/class="zone" data-kind="(\w+)"/g)?.map((z) => z.split('"')[3])).toEqual([
+    "red", "yellow", "normal", "yellow", "red",
+  ]);
+  expect(html).toMatch(/class="gauge-pointer" style="left:\d+\.\d{2}%"/);
+  expect(html).toMatch(/class="gauge-mark" style="left:[\d.]+%">95<.*class="gauge-mark" style="left:[\d.]+%">106</);
+});
+
+test("a one-sided limit renders only its zones; negative limits print a true minus", () => {
+  const html = row({ ...cabin, limits: { yellow_high: 8, red_high: 10 } });
+  expect(html.match(/data-kind="(\w+)"/g)).toEqual(['data-kind="normal"', 'data-kind="yellow"', 'data-kind="red"']);
+  expect(row({ ...cabin, limits: { red_low: -5, red_high: 5 } })).toContain(">\u22125<");
+});
+
+test("no limits, no gauge row; no value, no pointer", () => {
+  expect(row({ ...cabin, limits: undefined })).not.toContain("gauge");
+  expect(row({ ...cabin, value: null })).not.toContain("gauge-pointer");
   expect(row({ id: "x", value: null })).toContain('class="num">—');
 });
 

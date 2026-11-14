@@ -40,11 +40,9 @@ export function VehicleCard(c: VehicleCardProps) {
           </time>
         </span>
       </caption>
-      <tbody>
-        {c.params.map((p) => (
-          <ParamRow key={p.id} vehicle={c.vehicle} seq={c.seq} tOnboard={c.tOnboard} p={p} />
-        ))}
-      </tbody>
+      {c.params.map((p) => (
+        <ParamRow key={p.id} vehicle={c.vehicle} seq={c.seq} tOnboard={c.tOnboard} p={p} />
+      ))}
     </table>
   );
 }

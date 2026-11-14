@@ -62,7 +62,8 @@ def frozen_step(
     t: datetime,
     values: tuple[float | None, ...],
 ) -> tuple[FrozenState, GroundEvent | None]:
-    """`values` = every analog mission parameter in order; `==` so -0.0 equals 0.0."""
+    """`values` = every analog mission parameter in order; `==` so -0.0 equals 0.0.
+    A NaN never equals itself, so it would never count as frozen (frames reject NaN anyway)."""
     if s.values is None or s.t_from is None or values != s.values:
         return FrozenState(values, seq, t, False), None
     if s.reported or (t - s.t_from).total_seconds() < FROZEN_S:

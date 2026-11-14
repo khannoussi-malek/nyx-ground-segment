@@ -1,6 +1,7 @@
 """In-process ingest harness: run_vehicle tasks / single batches against the compose redis + db."""
 
 import asyncio
+from collections import Counter
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -11,6 +12,8 @@ from redis.backoff import NoBackoff
 
 from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
+from gs.ingest.events import insert_set
+from gs.ingest.fold import empty_state
 from gs.ingest.validate import FieldStats
 from gs.ingest.worker import Ctx, process_batch, run_vehicle
 from tests.support.mission import MISSION_DIR
@@ -18,15 +21,23 @@ from tests.support.pg import app_dsn
 from tests.support.redisx import aclient
 
 
+async def ensure_set() -> None:
+    """The start set row engine_state references, as main.run inserts it."""
+    async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as c:
+        await insert_set(c, load_dir(MISSION_DIR))
+
+
 def make_ctx(consumer: str) -> Ctx:
-    names = load_dir(MISSION_DIR).param_names
+    mdb = load_dir(MISSION_DIR)
     return Ctx(
         consumer,
-        build_frame_model(names),
-        names,
+        build_frame_model(mdb.param_names),
+        mdb.param_names,
         aclient("ingest", decode=False, retry=Retry(NoBackoff(), 0)),
         FieldStats(),
         {},
+        mdb.set_sha256,
+        Counter(),
     )
 
 
@@ -41,6 +52,7 @@ class Running:
 
 @asynccontextmanager
 async def worker(vehicles: list[str], consumer: str = "ingest-test") -> AsyncIterator[Running]:
+    await ensure_set()
     ctx, stop = make_ctx(consumer), asyncio.Event()
     tasks = [asyncio.create_task(run_vehicle(ctx, v, app_dsn("gs"), stop)) for v in vehicles]
     try:
@@ -59,6 +71,8 @@ async def process_batch_once(
     ctx = make_ctx(consumer)
     try:
         async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as conn:
-            return await process_batch(ctx, conn, f"tm:{v}", entries)
+            await ensure_set()
+            _, n = await process_batch(ctx, conn, f"tm:{v}", entries, empty_state(ctx.set_sha256))
+            return n
     finally:
         await ctx.redis.aclose()

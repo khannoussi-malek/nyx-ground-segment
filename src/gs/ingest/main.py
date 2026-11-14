@@ -4,9 +4,11 @@ import asyncio
 import logging
 import signal
 import time
+from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
+import psycopg
 import redis.asyncio
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
@@ -15,6 +17,7 @@ from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import State, serve_health
 from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
+from gs.ingest.events import insert_set
 from gs.ingest.validate import FieldStats
 from gs.ingest.worker import Ctx, run_vehicle
 
@@ -55,6 +58,8 @@ def ingest_status(
 
 async def run(s: IngestSettings, stop: asyncio.Event) -> None:
     mdb = load_dir(Path(s.mission_db))
+    async with await psycopg.AsyncConnection.connect(s.database_url, autocommit=True) as conn:
+        await insert_set(conn, mdb)  # engine_state.set_sha256 references it
     # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
     # no client-side retry: every connection error must reach run_vehicle's backoff loop, which
     # re-reads our PEL and never re-sends a non-idempotent XADD behind our back (D-ING-03/08)
@@ -63,7 +68,14 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
     )
     seen = {v: time.monotonic() for v in s.vehicles}  # startup grace
     ctx = Ctx(
-        s.consumer_name, build_frame_model(mdb.param_names), mdb.param_names, r, FieldStats(), seen
+        s.consumer_name,
+        build_frame_model(mdb.param_names),
+        mdb.param_names,
+        r,
+        FieldStats(),
+        seen,
+        mdb.set_sha256,
+        Counter(),
     )
     server = await serve_health(
         s.bind_host, s.health_port, lambda: ingest_status(seen, s.vehicles, time.monotonic())

@@ -24,9 +24,7 @@ from gs.ingest.events import insert_set
 from gs.ingest.liveness import ingest_status, refresh_memory, run_ticks
 from gs.ingest.owner import parse_homes
 from gs.ingest.validate import FieldStats
-from gs.ingest.worker import Ctx, run_vehicle
-
-SOCKET_TIMEOUT_S = 5  # must exceed the 1 s XREADGROUP block
+from gs.ingest.worker import SOCKET_TIMEOUT_S, Ctx, run_vehicle
 
 
 @dataclass(frozen=True)

@@ -72,13 +72,16 @@ async def test_no_heartbeat_from_a_standby_task() -> None:
 
 
 @asynccontextmanager
-async def ghost_owner(v: str, app: str) -> AsyncIterator[psycopg.AsyncConnection]:
+async def ghost_owner(
+    v: str, app: str, read: bool = True
+) -> AsyncIterator[psycopg.AsyncConnection]:
     """A session holding the vehicle's lock whose consumer read once and then stopped."""
     async with await psycopg.AsyncConnection.connect(
         app_dsn("gs"), autocommit=True, application_name=app
     ) as c:
         await c.execute(LOCK_SQL, ("tm:" + v,))
-        read_without_ack(v, app)
+        if read:
+            read_without_ack(v, app)
         yield c
 
 
@@ -98,8 +101,8 @@ async def test_no_steal_of_a_reading_owner() -> None:
     v = vid()
     async with worker([v], "w0", {v: "w0"}, FAST):
         await until(lambda: lock_holder(v) == "w0", 5)
-        async with worker([v], "w1", {v: "w0"}, FAST, steal_idle_ms=2000) as w1:
-            await asyncio.sleep(3.0)  # six steal ticks: w0 reads at least once per BLOCK
+        async with worker([v], "w1", {v: "w0"}, FAST, steal_idle_ms=3000) as w1:
+            await asyncio.sleep(4.0)  # eight steal ticks: w0 reads at least once per BLOCK
             assert lock_holder(v) == "w0" and w1.ctx.owned == set()
 
 
@@ -116,18 +119,18 @@ async def test_no_steal_right_after_own_reconnect() -> None:  # R2-23
 async def test_tick_rearms_watchdog_only_for_live_owned_loops(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    armed: list[float] = []
-    monkeypatch.setattr(faulthandler, "dump_traceback_later", lambda t, **_: armed.append(t))
-    ctx = make_ctx("w1", {}, Timing(watchdog_s=30.0))
+    armed: list[tuple[float, dict[str, Any]]] = []
+    monkeypatch.setattr(faulthandler, "dump_traceback_later", lambda t, **k: armed.append((t, k)))
+    ctx = make_ctx("w1", {}, Timing(watchdog_s=7.5))
     try:
         async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as c:
             ctx.owned.add("NYX-A")
             ctx.loop_seen["NYX-A"] = time.monotonic()
             await liveness.tick(ctx, c, watchdog=True)
-            assert armed == [30.0] and (ctx.used_memory[0] or 0) > 0
-            ctx.loop_seen["NYX-A"] = time.monotonic() - 31  # a hung owned loop
+            assert armed == [(7.5, {"exit": True})] and (ctx.used_memory[0] or 0) > 0
+            ctx.loop_seen["NYX-A"] = time.monotonic() - 8  # a hung owned loop
             await liveness.tick(ctx, c, watchdog=True)
-            assert armed == [30.0]  # not re-armed: the pending dump fires and exits
+            assert len(armed) == 1  # not re-armed: the pending dump fires and exits
     finally:
         await ctx.redis.aclose()
 
@@ -190,22 +193,62 @@ async def test_tick_survives_redis_failing_mid_steal(monkeypatch: pytest.MonkeyP
         await ctx.redis.aclose()
 
 
-async def test_ticks_start_the_hold_off_after_a_redis_outage(
+async def test_no_steal_on_the_tick_that_finds_redis_back(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    answers = iter([True, False, True])
-    stop = asyncio.Event()
+) -> None:  # the holder's idle kept counting through the outage: not a hang
+    v = vid()
+    calls = 0
+    real_info = redis.asyncio.Redis.info
 
-    async def fake_tick(*_: Any, **__: Any) -> bool:
-        ok = next(answers, True)
-        if ok and ctx.reconnected_at[0] is not None:
+    async def info_after_outage(self: redis.asyncio.Redis, *a: Any, **k: Any) -> Any:
+        nonlocal calls
+        calls += 1
+        if calls in (2, 3):  # tick 1 sees the idle holder once; ticks 2-3: outage
+            raise redis.exceptions.ConnectionError("redis down")
+        return await real_info(self, *a, **k)
+
+    async with ghost_owner(v, "ghost-owner"):
+        await asyncio.sleep(1.2)  # the holder's consumer is idle > 1 s
+        monkeypatch.setattr(redis.asyncio.Redis, "info", info_after_outage)
+        ctx = make_ctx("w1", {}, Timing(tick_s=0.05), (v,), steal_idle_ms=1000)
+        stop = asyncio.Event()
+        try:
+            ticks = asyncio.create_task(liveness.run_ticks(ctx, app_dsn("gs"), stop, False))
+            await until(lambda: calls >= 9, 3)  # 1 good, 2 down, then 6 good ticks
+            assert ctx.reconnected_at[0] is not None and lock_holder(v) == "ghost-owner"
             stop.set()
-        return ok
+            await asyncio.wait_for(ticks, 3)
+        finally:
+            await ctx.redis.aclose()
 
-    monkeypatch.setattr(liveness, "tick", fake_tick)
-    ctx = make_ctx("w1", {}, Timing(tick_s=0.05))
+
+async def test_steal_needs_the_same_holder_twice() -> None:  # G24
+    v = vid()
+    ctx = make_ctx("w1", {}, FAST, (v,), steal_idle_ms=1000)
     try:
-        await asyncio.wait_for(liveness.run_ticks(ctx, app_dsn("gs"), stop, watchdog=False), 3)
-        assert ctx.reconnected_at[0] is not None  # set on the first good tick after a bad one
+        async with (
+            ghost_owner(v, "ghost-owner") as ghost,
+            await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as c,
+        ):
+            await asyncio.sleep(1.2)
+            assert await liveness.steal_tick(ctx, c) == []  # first sighting over threshold
+            assert await liveness.steal_tick(ctx, c) == [v]  # same pid on the next tick
+            with pytest.raises(psycopg.OperationalError):
+                await ghost.execute("SELECT 1")
+    finally:
+        await ctx.redis.aclose()
+
+
+async def test_no_steal_when_the_holder_changed_between_ticks() -> None:  # G24
+    v = vid()
+    ctx = make_ctx("w1", {}, FAST, (v,), steal_idle_ms=1000)
+    try:
+        async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as c:
+            async with ghost_owner(v, "ghost-owner"):
+                await asyncio.sleep(1.2)
+                assert await liveness.steal_tick(ctx, c) == []
+            async with ghost_owner(v, "ghost-owner", read=False):  # new pid, same idle consumer
+                assert await liveness.steal_tick(ctx, c) == []
+                assert await liveness.steal_tick(ctx, c) == [v]  # now twice in a row
     finally:
         await ctx.redis.aclose()

@@ -1,6 +1,7 @@
 import pytest
 
-from gs.ingest.liveness import should_steal, watchdog_ok
+from gs.ingest.liveness import HOLDOFF_MIN_MS, should_steal, watchdog_ok
+from gs.ingest.worker import BACKOFF_MAX_S, BLOCK_MS, SOCKET_TIMEOUT_S
 
 
 @pytest.mark.parametrize(
@@ -8,13 +9,26 @@ from gs.ingest.liveness import should_steal, watchdog_ok
     [
         (3001, None, True),
         (3000, None, False),
-        (10_000, 500, False),  # R2-23: idle kept counting through our own Redis outage
-        (10_000, 2999, False),
-        (10_000, 3000, True),
+        # G23: the hold-off after our own reconnect is max(STEAL_IDLE_MS, a holder's worst
+        # reconnect = (BACKOFF_MAX_S + SOCKET_TIMEOUT_S) s + 2 x BLOCK = 12 s), so CI's 3 s
+        # threshold does not shorten it
+        (10_000, 500, False),
+        (10_000, 3000, False),
+        (10_000, HOLDOFF_MIN_MS - 1, False),
+        (10_000, HOLDOFF_MIN_MS, True),
     ],
 )
 def test_should_steal(idle: int, since: int | None, want: bool) -> None:
     assert should_steal(idle, 3000, since) is want
+
+
+def test_hold_off_follows_a_longer_steal_threshold() -> None:  # default 30 s > 12 s
+    assert not should_steal(40_000, 30_000, 29_999)
+    assert should_steal(40_000, 30_000, 30_000)
+
+
+def test_hold_off_floor_is_the_owner_worst_reconnect() -> None:
+    assert HOLDOFF_MIN_MS == (BACKOFF_MAX_S + SOCKET_TIMEOUT_S) * 1000 + 2 * BLOCK_MS == 12_000
 
 
 def test_watchdog_ok_only_when_every_owned_loop_passed() -> None:

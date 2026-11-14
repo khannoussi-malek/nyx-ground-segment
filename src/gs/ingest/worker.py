@@ -34,6 +34,7 @@ UI_MAXLEN = 3000
 DLQ = "tm:dlq"
 BACKOFF_START_S = 0.5
 BACKOFF_MAX_S = 5.0
+SOCKET_TIMEOUT_S = 5  # Redis client socket timeout; must exceed the 1 s XREADGROUP block
 Entry = tuple[str, dict[bytes, bytes]]
 Item = tuple[str, dict[bytes, bytes], int, FrameHeader]  # entry id, fields, deliveries, frame
 
@@ -69,6 +70,7 @@ class Ctx:
     owned: set[str] = field(default_factory=set)  # mutated only by each vehicle's own task
     reconnected_at: list[float | None] = field(default_factory=lambda: [None])  # monotonic
     used_memory: list[int | None] = field(default_factory=lambda: [None])  # Redis INFO
+    suspects: dict[str, int] = field(default_factory=dict)  # vehicle -> holder pid over idle
 
 
 def to_tm(frame: FrameHeader, params: Sequence[str]) -> Tm:

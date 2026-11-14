@@ -16,17 +16,22 @@ import redis.exceptions
 from gs.common.health import State
 from gs.ingest.errors import OperationalDbError
 from gs.ingest.owner import holder
-from gs.ingest.worker import GROUP, Ctx
+from gs.ingest.worker import BACKOFF_MAX_S, BLOCK_MS, GROUP, SOCKET_TIMEOUT_S, Ctx
 
 log = logging.getLogger(__name__)
 
 STALE_S = 10.0  # an owned loop that has not passed for this long makes the service down
+# G23: a holder's worst own reconnect after an outage (max backoff + a socket timeout + two
+# blocked reads); the hold-off after OUR reconnect is never shorter than that
+HOLDOFF_MIN_MS = int((BACKOFF_MAX_S + SOCKET_TIMEOUT_S) * 1000) + 2 * BLOCK_MS
 
 
 def should_steal(idle_ms: int, steal_idle_ms: int, since_reconnect_ms: int | None) -> bool:
-    """R2-23: no steal within steal_idle_ms of our own Redis reconnect (idle counts through it)."""
+    """R2-23/G23: no steal within max(STEAL_IDLE_MS, HOLDOFF_MIN_MS) of our own Redis reconnect,
+    because the holder's `idle` kept counting through the same outage."""
+    hold_off = max(steal_idle_ms, HOLDOFF_MIN_MS)
     return idle_ms > steal_idle_ms and (
-        since_reconnect_ms is None or since_reconnect_ms >= steal_idle_ms
+        since_reconnect_ms is None or since_reconnect_ms >= hold_off
     )
 
 
@@ -64,19 +69,26 @@ async def _consumer_idle(ctx: Ctx, vehicle: str, consumer: str) -> int | None:
 
 async def steal_tick(ctx: Ctx, conn: psycopg.AsyncConnection) -> list[str]:
     """For each vehicle we don't own: terminate the holder's lock session when its consumer has
-    not attempted a read for STEAL_IDLE_MS; our waiting task then takes over (D-ING-12)."""
+    not attempted a read for STEAL_IDLE_MS on two consecutive ticks with the same holder pid
+    (G24), re-checked right before the terminate; our waiting task then takes over (D-ING-12)."""
     t = ctx.reconnected_at[0]
     since = None if t is None else int((time.monotonic() - t) * 1000)
     stolen: list[str] = []
     for v in ctx.vehicles:
         h = None if v in ctx.owned else await holder(conn, v)
-        if h is None or h[1] == ctx.consumer:
+        idle = None if h is None or h[1] == ctx.consumer else await _consumer_idle(ctx, v, h[1])
+        if h is None or idle is None or not should_steal(idle, ctx.steal_idle_ms, since):
+            ctx.suspects.pop(v, None)
             continue
-        idle = await _consumer_idle(ctx, v, h[1])
-        if idle is not None and should_steal(idle, ctx.steal_idle_ms, since):
-            log.warning("stealing %s from %s (consumer idle %d ms)", v, h[1], idle)
-            await conn.execute("SELECT pg_terminate_backend(%s)", (h[0],))
-            stolen.append(v)
+        if ctx.suspects.get(v) != h[0]:
+            ctx.suspects[v] = h[0]  # first sighting: steal on the next tick if still so
+            continue
+        ctx.suspects.pop(v)
+        if await holder(conn, v) != h:  # the lock moved since the lookup
+            continue
+        log.warning("stealing %s from %s (consumer idle %d ms)", v, h[1], idle)
+        await conn.execute("SELECT pg_terminate_backend(%s)", (h[0],))
+        stolen.append(v)
     return stolen
 
 
@@ -92,9 +104,14 @@ async def refresh_memory(ctx: Ctx) -> bool:
     return True
 
 
-async def tick(ctx: Ctx, conn: psycopg.AsyncConnection, watchdog: bool) -> bool:
-    """One worker tick; returns whether Redis answered."""
+async def tick(
+    ctx: Ctx, conn: psycopg.AsyncConnection, watchdog: bool, was_ok: bool = True
+) -> bool:
+    """One worker tick; returns whether Redis answered. Redis back after a failed tick starts the
+    steal hold-off BEFORE this tick's steal check (the holder's idle grew through the outage)."""
     ok = await refresh_memory(ctx)
+    if ok and not was_ok:
+        ctx.reconnected_at[0] = time.monotonic()
     if ok:
         try:
             await steal_tick(ctx, conn)
@@ -108,16 +125,13 @@ async def tick(ctx: Ctx, conn: psycopg.AsyncConnection, watchdog: bool) -> bool:
 
 
 async def run_ticks(ctx: Ctx, dsn: str, stop: asyncio.Event, watchdog: bool) -> None:
-    redis_ok = True
+    ok = True
     try:
         async with await psycopg.AsyncConnection.connect(
             dsn, autocommit=True, application_name=f"{ctx.consumer}:tick"
         ) as conn:
             while not stop.is_set():
-                ok = await tick(ctx, conn, watchdog)
-                if ok and not redis_ok:  # back after an outage: start the steal hold-off
-                    ctx.reconnected_at[0] = time.monotonic()
-                redis_ok = ok
+                ok = await tick(ctx, conn, watchdog, was_ok=ok)
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), ctx.timing.tick_s)
     except psycopg.Error as e:

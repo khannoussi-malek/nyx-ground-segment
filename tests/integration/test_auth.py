@@ -147,3 +147,14 @@ async def test_redis_failure_is_logged(users_file: Path, caplog: pytest.LogCaptu
             with caplog.at_level(logging.WARNING, logger="gs.api"):
                 await login(c, "fc1", FC1_PW)
     assert any("ConnectionError" in r.getMessage() for r in caplog.records)
+
+
+async def test_ui_served_without_session(api_client: httpx.AsyncClient) -> None:
+    r = await api_client.get("/")
+    assert r.status_code == 200 and r.headers["content-type"].startswith("text/html")
+    assert "<title>Nyx</title>" in r.text
+
+
+async def test_ui_mount_does_not_shadow_api(api_client: httpx.AsyncClient) -> None:
+    assert (await api_client.get("/api/me")).status_code == 401  # the router, not index.html
+    assert (await api_client.get("/healthz")).headers["content-type"] == "application/json"

@@ -93,7 +93,8 @@ services:
     command: ["gs-api"]
     environment: {REDIS_URL: "redis://api:${REDIS_API_PW}@redis:6379/0",
                   DATABASE_URL: "postgresql://gs_app:${GS_APP_PASSWORD}@db:5432/gs", SESSION_SECRET: "${SESSION_SECRET}",
-                  USERS_FILE: /run/users.yaml, MISSION_DB: /mission, VEHICLES: "NYX-TA1,NYX-TA2", BIND_HOST: "0.0.0.0", API_PORT: "8000"}
+                  USERS_FILE: /run/users.yaml, MISSION_DB: /mission, VEHICLES: "NYX-TA1,NYX-TA2", BIND_HOST: "0.0.0.0", API_PORT: "8000",
+                  UI_DIST: /app/ui/dist}
     volumes: ["./mission:/mission:ro", "./users.yaml:/run/users.yaml:ro"]
     ports: ["127.0.0.1:${API_HOST_PORT:-8000}:8000"]
     depends_on: {redis: {condition: service_healthy}, db: {condition: service_healthy},

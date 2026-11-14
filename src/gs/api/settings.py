@@ -12,6 +12,7 @@ class Settings:
     users_file: Path
     mission_db: Path
     vehicles: tuple[str, ...]
+    ui_dist: Path
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -22,4 +23,5 @@ class Settings:
             users_file=Path(require("USERS_FILE")),
             mission_db=Path(require("MISSION_DB")),
             vehicles=vehicle_list(require("VEHICLES")),
+            ui_dist=Path(require("UI_DIST")),
         )

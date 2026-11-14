@@ -4,10 +4,11 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   plugins: [react()],
   test: {
+    environment: "node",
     coverage: {
       provider: "v8",
       include: ["src/**/*.ts"],
-      exclude: ["src/api/schema.d.ts"],
+      exclude: ["src/**/*.test.ts", "src/api/schema.d.ts"],
       thresholds: { lines: 80, branches: 80, functions: 80, statements: 80 },
     },
   },

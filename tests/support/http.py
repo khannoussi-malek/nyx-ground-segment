@@ -16,6 +16,9 @@ FC1_PW, FC2_PW = "fc1-test-password", "fc2-test-password"
 
 def api_settings(users_file: Path, **over: str) -> Settings:
     env = dotenv()
+    ui_dist = users_file.parent / "ui"  # stands in for the built UI
+    ui_dist.mkdir(exist_ok=True)
+    (ui_dist / "index.html").write_text("<!doctype html><title>Nyx</title>")
     return Settings(
         redis_url=over.get(
             "redis_url",
@@ -26,6 +29,7 @@ def api_settings(users_file: Path, **over: str) -> Settings:
         users_file=users_file,
         mission_db=REPO / "mission",
         vehicles=("NYX-TA1",),
+        ui_dist=ui_dist,
     )
 
 

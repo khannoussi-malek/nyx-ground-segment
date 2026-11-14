@@ -82,6 +82,7 @@ def test_served_openapi_is_the_built_document(tmp_path: Path) -> None:
             users_file=tmp_path / "u.yaml",
             mission_db=tmp_path,
             vehicles=(),
+            ui_dist=tmp_path,
         )
     )
     assert app.openapi() == build_openapi(ROUTER.routes)

@@ -7,3 +7,5 @@ graphify-out
 .env
 users.yaml
 redis
+ui/dist
+ui/coverage

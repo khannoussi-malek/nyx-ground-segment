@@ -12,6 +12,7 @@ import redis.asyncio
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from psycopg_pool import AsyncConnectionPool
 from pydantic import BaseModel, ConfigDict
 from redis.asyncio.retry import Retry
@@ -175,6 +176,8 @@ def create_app(settings: Settings) -> FastAPI:
         max_age=SESSION_TTL_S,
     )
     app.include_router(ROUTER)
+    # last: a "/" mount would shadow routes registered after it
+    app.mount("/", StaticFiles(directory=settings.ui_dist, html=True), name="ui")
     app.openapi = _openapi(app)  # type: ignore[method-assign]
 
     @app.middleware("http")

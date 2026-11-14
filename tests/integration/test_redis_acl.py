@@ -2,9 +2,9 @@ import subprocess
 from typing import Any
 
 import pytest
+import redis
 import redis.exceptions
 
-import redis
 from tests.support.env import dotenv, vid
 from tests.support.redisx import client, run_check_acl_log
 

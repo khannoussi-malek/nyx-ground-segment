@@ -9,12 +9,12 @@ import time
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+import redis
 import redis.asyncio
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 from redis.retry import Retry as SyncRetry
 
-import redis
 from gs.simulator.frames import make_frame
 from gs.simulator.main import SimSettings, run
 from tests.support.env import REPO, dotenv, vid

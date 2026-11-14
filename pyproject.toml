@@ -32,6 +32,10 @@ extend-exclude = ["docs", "graphify-out", ".superpowers"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B"]
 
+[tool.ruff.lint.isort]
+# the git-ignored redis/ dir (generated users.acl) made ruff call redis first-party locally only
+known-third-party = ["redis"]
+
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]

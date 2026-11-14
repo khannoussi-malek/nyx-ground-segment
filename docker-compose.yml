@@ -62,4 +62,16 @@ services:
     environment: {DATABASE_URL: "postgresql://gs_owner:${GS_OWNER_PASSWORD}@db:5432/gs", MISSION_DB: /mission}
     volumes: ["./mission:/mission:ro"]
     depends_on: {db: {condition: service_healthy}}
+  simulator:
+    <<: *app
+    command: ["gs-sim"]
+    environment: {REDIS_URL: "redis://sim:${REDIS_SIM_PW}@redis:6379/0", SIM_VEHICLES: "NYX-TA1,NYX-TA2",
+                  SIM_SEED: "1", BIND_HOST: "0.0.0.0", HEALTH_PORT: "8081"}
+    ports: ["127.0.0.1:${SIM_HOST_PORT:-8081}:8081"]
+    depends_on: {redis: {condition: service_healthy}}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8081/healthz')"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
 volumes: {pgdata: {}, redisdata: {}, miniodata: {}}

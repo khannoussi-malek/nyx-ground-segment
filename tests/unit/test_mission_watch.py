@@ -50,7 +50,7 @@ def test_hazardous_downgrade_allowed_at_start(tmp_path: Path) -> None:
     m = mission_copy(tmp_path)
     edit(m / "commands.yaml", "hazardous: true", "hazardous: false")
     mdb = validate_set(_raw(m), load_dir(m).param_names, None)
-    assert not all(c.hazardous for c in mdb.commands.values())
+    assert mdb.commands["vent_cabin"].hazardous is False
 
 
 def test_unmigrated_param_rejected(tmp_path: Path) -> None:

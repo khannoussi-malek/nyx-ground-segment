@@ -171,6 +171,8 @@ class MissionWatcher:
             self._current.parameters_sha256,
         )
         self._poll, ready = observe(self._poll, hashes, active)
+        if hashes == active:  # files reverted to the active set: forget the rejection
+            self._rejected = None
         rej = self._rejected
         if rej is not None and rej[0] == hashes:
             if time.monotonic() - rej[1] < REVALIDATE_S:

@@ -1,6 +1,5 @@
 """Postgres helpers: DSNs for the compose db, initdb-style migration apply, throwaway databases."""
 
-import os
 import secrets
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
@@ -11,13 +10,11 @@ from psycopg import sql
 
 from tests.support.env import REPO, dotenv
 
-# NYX_DB_PORT lets a dev machine whose 5432 is taken run the compose db on another host port.
 HOST = "127.0.0.1"
-PORT = os.environ.get("NYX_DB_PORT", "5432")
 
 
 def _dsn(user: str, password: str, db: str) -> str:
-    return f"postgresql://{user}:{password}@{HOST}:{PORT}/{db}"
+    return f"postgresql://{user}:{password}@{HOST}:{dotenv()['DB_HOST_PORT']}/{db}"
 
 
 def admin_dsn(db: str) -> str:

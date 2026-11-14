@@ -3,8 +3,8 @@ from pathlib import Path
 import psycopg
 import pytest
 
-from tests.support.db import admin_dsn, app_dsn, apply_migrations, throwaway_db
 from tests.support.env import REPO, sh
+from tests.support.pg import admin_dsn, app_dsn, apply_migrations, owner_dsn, throwaway_db
 
 EXPECTED = {
     "telemetry", "seq_state", "limits_versions", "engine_state", "events", "test_session",
@@ -51,6 +51,19 @@ def test_full_schema_on_empty_db() -> None:  # D-ENG-12, EX-08
             assert {"check_set", "set_sha256"} <= columns(c, t)
         assert priv(c, "audit_log", "INSERT") and not priv(c, "audit_log", "UPDATE")
         assert priv(c, "telemetry", "DELETE") and not priv(c, "events", "UPDATE")
+
+
+def test_audit_log_is_append_only_even_for_owner() -> None:  # trigger, not just the grant
+    with throwaway_db() as db, psycopg.connect(owner_dsn(db), autocommit=True) as c:
+        c.execute("insert into audit_log (actor, action) values ('t', 'X')")
+        for stmt in (
+            "update audit_log set actor='y'",
+            "delete from audit_log",
+            "truncate audit_log",
+        ):
+            with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
+                c.execute(stmt)  # type: ignore[arg-type]
+        assert c.execute("select count(*) from audit_log").fetchone() == (1,)
 
 
 def test_out_of_order_schema_fails() -> (

@@ -22,8 +22,11 @@ def test_creates_env_with_example_keys(root: Path) -> None:
     run_init_env(root)
     env = parse_env(root / ".env")
     assert list(env) == list(parse_env(root / ".env.example"))
-    assert all(re.fullmatch(r"[0-9a-f]{48}", v) for v in env.values())
-    assert len(set(env.values())) == len(env)
+    example = parse_env(root / ".env.example")
+    secret = {k: v for k, v in env.items() if example[k] == ""}
+    assert all(re.fullmatch(r"[0-9a-f]{48}", v) for v in secret.values())
+    assert len(set(secret.values())) == len(secret)
+    assert env["DB_HOST_PORT"] == "5432"  # non-secret defaults are copied verbatim
 
 
 def test_prints_demo_passwords_once(root: Path) -> None:

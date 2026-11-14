@@ -17,9 +17,9 @@ user admin on #{admin} ~* &* +@all
 """  # noqa: E501
 
 
-def _example_keys(path: Path) -> list[str]:
+def _example_pairs(path: Path) -> list[tuple[str, str]]:
     lines = (ln for ln in path.read_text().splitlines() if ln.strip() and ln[0] != "#")
-    return [ln.split("=", 1)[0] for ln in lines]
+    return [tuple(ln.split("=", 1)) for ln in lines]  # type: ignore[misc]
 
 
 def _read_env(path: Path) -> dict[str, str]:
@@ -49,8 +49,8 @@ def main(argv: list[str] | None = None) -> int:
 
     env_path = root / ".env"
     if not env_path.exists():
-        keys = _example_keys(root / ".env.example")
-        env_path.write_text("".join(f"{k}={secrets.token_hex(24)}\n" for k in keys))
+        pairs = _example_pairs(root / ".env.example")  # empty value = secret, else a default
+        env_path.write_text("".join(f"{k}={v or secrets.token_hex(24)}\n" for k, v in pairs))
         env = _read_env(env_path)
         shown = " ".join(f"{name}={env[key]}" for name, key in DEMO_KEYS.items())
         print(f"demo users (shown once): {shown}")

@@ -62,7 +62,7 @@ def test_audit_log_is_append_only_even_for_owner() -> None:  # trigger, not just
             "truncate audit_log",
         ):
             with pytest.raises(psycopg.errors.RaiseException, match="append-only"):
-                c.execute(stmt)  # type: ignore[arg-type]
+                c.execute(stmt)
         assert c.execute("select count(*) from audit_log").fetchone() == (1,)
 
 

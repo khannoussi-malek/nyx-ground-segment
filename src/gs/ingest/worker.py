@@ -15,6 +15,7 @@ import psycopg
 import redis.asyncio
 import redis.exceptions
 
+from gs.common.hooks import Hooks
 from gs.common.interfaces import DlqRecord, FrameHeader, Tm
 from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
 from gs.ingest.events import GroundEvent, poison_key, reset_key
@@ -71,6 +72,7 @@ class Ctx:
     reconnected_at: list[float | None] = field(default_factory=lambda: [None])  # monotonic
     used_memory: list[int | None] = field(default_factory=lambda: [None])  # Redis INFO
     suspects: dict[str, int] = field(default_factory=dict)  # vehicle -> holder pid over idle
+    hooks: Hooks = Hooks()  # D-ENG-16 test hooks; all off by default
 
 
 def to_tm(frame: FrameHeader, params: Sequence[str]) -> Tm:
@@ -146,6 +148,7 @@ async def _process(
         if isinstance(r, DlqRecord):
             dlq.append(r)
         else:
+            ctx.hooks.frame(vehicle, r.seq)  # every delivery, before the transaction
             ctx.stats.observe(r, ctx.params)
             items.append((eid, fields, n, r))
     try:
@@ -156,6 +159,7 @@ async def _process(
         log.warning("data error in a batch of %s (%s); isolating frames", stream, _why(e))
         nvs, dup, inserted, bad = await _isolate(ctx, conn, stream, items, vs, events, now)
         dlq += bad
+    ctx.hooks.fire("after_commit_before_publish")
     if inserted:  # publish only what this commit stored; a redelivery publishes nothing
         pub = ctx.redis.pipeline(transaction=False)
         for f in inserted:
@@ -166,11 +170,13 @@ async def _process(
                 approximate=True,
             )
         await pub.execute()
+    ctx.hooks.fire("after_publish_before_ack")
     ack = ctx.redis.pipeline(transaction=True)  # one MULTI: DLQ records + XACK
     for rec in dlq:
         ack.xadd(DLQ, {"data": rec.model_dump_json()})
     ack.xack(stream, GROUP, *(eid for eid, _ in entries))
     await ack.execute()
+    ctx.hooks.fire("after_xack")
     ctx.dup_or_late[vehicle] += dup
     return nvs, len(inserted)
 
@@ -189,6 +195,7 @@ async def _commit(
     async with conn.transaction():  # COMMIT
         inserted = await insert_frames(conn, frames, ctx.params)
         await write_outcome(conn, vehicle, nvs, out)
+        ctx.hooks.fire("before_commit")
     return nvs, out.dup_or_late, inserted
 
 
@@ -332,6 +339,7 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
     last_new = next_handback = time.monotonic()
     next_reclaim = last_new + ctx.timing.reclaim_s
     while not stop.is_set():
+        await ctx.hooks.hang("in_loop")
         now = ctx.loop_seen[vehicle] = time.monotonic()
         if claim_idle is None and now >= next_reclaim:
             claim_idle, cursor, next_reclaim = (
@@ -343,8 +351,9 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
             if not ready:
                 await _ensure_group(ctx.redis, stream)
                 ready = True
-            await fence(conn)
             await ctx.redis.set(f"hb:veh:{vehicle}", 1, ex=ctx.timing.hb_ttl_s)  # D-ING-25
+            await fence(conn)
+            ctx.hooks.fire("after_fence_before_read")  # R14 E-5's window
             if claim_idle is not None:
                 res: Any = await ctx.redis.xautoclaim(
                     stream, GROUP, ctx.consumer, claim_idle, cursor, 1

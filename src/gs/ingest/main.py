@@ -17,6 +17,7 @@ from redis.backoff import NoBackoff
 
 from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import serve_health
+from gs.common.hooks import Hooks
 from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
 from gs.ingest.errors import OperationalDbError
@@ -81,6 +82,7 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
         vehicles=s.vehicles,
         steal_idle_ms=s.steal_idle_ms,
         reclaim_idle_ms=s.reclaim_idle_ms,
+        hooks=Hooks.from_env(),
     )
     await refresh_memory(ctx)  # health knows Redis from the first request
     server = await serve_health(

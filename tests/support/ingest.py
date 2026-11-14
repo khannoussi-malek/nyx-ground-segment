@@ -1,6 +1,7 @@
 """In-process ingest harness: run_vehicle tasks / single batches against the compose redis + db."""
 
 import asyncio
+import dataclasses
 import os
 import socket
 import subprocess
@@ -16,6 +17,7 @@ import psycopg
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
+from gs.common.hooks import Hooks
 from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
 from gs.ingest.events import insert_set
@@ -31,6 +33,9 @@ from tests.support.pg import admin_dsn, app_dsn
 from tests.support.redisx import GROUP, aclient, client, drained
 
 DEFAULT_TIMING = Timing()
+NO_HOOKS = Hooks()
+# what the fast_ingest fixture runs both compose workers with (CI thresholds, hooks on)
+FAST_ENV = {"GS_TEST_HOOKS": "1", "STEAL_IDLE_MS": "3000", "RECLAIM_IDLE_MS": "3000"}
 
 
 async def ensure_set(dsn: str | None = None) -> None:
@@ -83,6 +88,7 @@ async def worker(
     dsn: str | None = None,
     steal_idle_ms: int = 30_000,
     reclaim_idle_ms: int = 30_000,
+    hooks: Hooks = NO_HOOKS,
 ) -> AsyncIterator[Running]:
     """run_vehicle tasks; `homes=None` makes every vehicle home (no start delay, no hand-back).
     A custom `dsn` must already hold the start set (see ensure_set)."""
@@ -90,6 +96,7 @@ async def worker(
         await ensure_set()
     homes = {v: consumer for v in vehicles} if homes is None else homes
     ctx = make_ctx(consumer, homes, timing, tuple(vehicles), steal_idle_ms, reclaim_idle_ms)
+    ctx = dataclasses.replace(ctx, hooks=hooks)
     stop, db = asyncio.Event(), dsn or app_dsn("gs")
     tasks = [asyncio.create_task(run_vehicle(ctx, v, db, stop)) for v in vehicles]
     tasks.append(asyncio.create_task(run_ticks(ctx, db, stop, watchdog=False)))
@@ -218,3 +225,12 @@ def start_ingest(
     }
     code = "from gs.ingest.main import main; main()"
     return subprocess.Popen([sys.executable, "-c", code], cwd=REPO, env=proc_env), port
+
+
+def latest_seq(vehicle: str) -> int:
+    with psycopg.connect(app_dsn("gs")) as c:
+        row = c.execute(
+            "select seq from telemetry where vehicle=%s order by t_onboard desc limit 1", (vehicle,)
+        ).fetchone()
+    assert row is not None, f"no telemetry for {vehicle}"
+    return int(row[0])

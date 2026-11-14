@@ -47,7 +47,7 @@ def redeliver_last(v: str, n: int) -> None:
 
 async def test_gap_event_once_across_redelivery() -> None:  # ING-04 + R5 T4
     v, base = vid(), now() - timedelta(minutes=1)
-    # explicit vehicle time: produce() stamps the wall clock per XADD, which skews the period
+    # explicit vehicle time: the 10 s hole needs a base the test controls (produce() has no holes)
     put(v, range(50), base)
     put(v, range(150, 200), base)  # t_onboard keeps running: 10 s of silence
     async with worker([v]):

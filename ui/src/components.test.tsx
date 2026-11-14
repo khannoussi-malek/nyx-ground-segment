@@ -119,7 +119,7 @@ test("LiveTable from a real store + mission db: labels and gauges, no state mark
   const store = createStore(() => 0);
   store.applyTm({
     kind: "tm", vehicle: "NYX-TA1", seq: 3, t_onboard: T, mode: "TEST",
-    last_cmd_id: null, values: { cabin_pressure_kpa: 101.3, unknown_p: 1 }, age_ms: 40,
+    last_cmd_id: null, values: { cabin_pressure_kpa: 101.3, unknown_p: 1 }, age_ms: 40, frozen: false,
   });
   const mission = {
     parameters: { cabin_pressure_kpa: { unit: "kPa", type: "float", description: "Cabin total pressure" } },

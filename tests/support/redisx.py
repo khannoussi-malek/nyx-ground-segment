@@ -184,3 +184,23 @@ def redis_time_offset(r: redis.Redis) -> float:
     sec, usec = r.time()
     t1 = time.time()
     return sec + usec / 1e6 - (t0 + t1) / 2
+
+
+def stream_entries(stream: str) -> list[tuple[str, dict[str, str]]]:
+    """Every entry of `stream`, read back through admin."""
+    entries: Any = client("admin").xrange(stream)
+    return list(entries)
+
+
+def load_schema(name: str) -> dict[str, Any]:
+    """interfaces/schemas/<name>.schema.json, e.g. load_schema("ui-event")."""
+    path = REPO / "interfaces" / "schemas" / f"{name}.schema.json"
+    schema: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return schema
+
+
+def validate_ui_event(raw: str) -> None:
+    """Raise if a ui:events `data` payload does not match the committed ui-event schema."""
+    from jsonschema import Draft202012Validator
+
+    Draft202012Validator(load_schema("ui-event")).validate(json.loads(raw))

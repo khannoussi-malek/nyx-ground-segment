@@ -25,6 +25,8 @@ EventKind = Literal[
     "LIMITS_APPLIED",
     "LIMITS_REJECTED",
     "ENGINE_STATE_RESET",
+    "LATE_VERIFICATION",
+    "INTERFACE_MISMATCH",
 ]
 
 
@@ -65,6 +67,14 @@ def rejected_key(set_sha256: str) -> str:
 
 def reset_key(vehicle: str, epoch: datetime, last_seq: int) -> str:
     return f"ENGINE_STATE_RESET/{vehicle}/{iso_z(epoch)}/{last_seq}"
+
+
+def late_key(cmd_id: uuid.UUID) -> str:
+    return f"LATE_VERIFICATION/{cmd_id}"
+
+
+def mismatch_key(stream_kind: Literal["tc", "tcack", "ui-event"], sha12: str) -> str:
+    return f"INTERFACE_MISMATCH/{stream_kind}/{sha12}"
 
 
 def transition_key(vehicle: str, param: str, epoch: datetime, trigger_seq: int, kind: str) -> str:

@@ -127,12 +127,86 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AckRequestView */
+        AckRequestView: {
+            /** By User */
+            by_user: string;
+            /**
+             * Request Id
+             * Format: uuid
+             */
+            request_id: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "applied" | "superseded" | "rejected";
+            /** Status Reason */
+            status_reason: string | null;
+        };
+        /** Alarm */
+        Alarm: {
+            alarm: components["schemas"]["AlarmView"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "alarm";
+        };
+        /** AlarmView */
+        AlarmView: {
+            ack_request: components["schemas"]["AckRequestView"] | null;
+            /**
+             * Alarm Id
+             * Format: uuid
+             */
+            alarm_id: string;
+            /** Closed At */
+            closed_at: string | null;
+            last: components["schemas"]["TransitionView"];
+            /** Level */
+            level: string;
+            /** Limits Sha256 */
+            limits_sha256: string;
+            /**
+             * Opened At
+             * Format: date-time
+             */
+            opened_at: string;
+            /** Param */
+            param: string;
+            /** Set Sha256 */
+            set_sha256: string;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "YELLOW" | "RED";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "UNACK" | "ACKED" | "RTN_UNACK" | "CLEARED";
+            /** Trigger Check */
+            trigger_check: string;
+            /** Vehicle */
+            vehicle: string;
+        };
         /** CheckConfig */
         CheckConfig: {
             /** Persistence */
             persistence?: number | null;
             /** Type */
             type: string;
+        };
+        /** Cmd */
+        Cmd: {
+            command: components["schemas"]["CommandView"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "cmd";
         };
         /** Command */
         Command: {
@@ -153,6 +227,56 @@ export interface components {
             receive_timeout_s?: number | null;
             /** Verify Timeout S */
             verify_timeout_s?: number | null;
+        };
+        /** CommandView */
+        CommandView: {
+            /** Args */
+            args: {
+                [key: string]: string | number;
+            };
+            /**
+             * Cmd Id
+             * Format: uuid
+             */
+            cmd_id: string;
+            /** Failed At */
+            failed_at: string | null;
+            /** Failure Reason */
+            failure_reason: ("SEND_ERROR" | "REJECTED" | "NOT_RECEIVED" | "NOT_VERIFIED" | "ACK_INVALID") | null;
+            /** Hazardous */
+            hazardous: boolean;
+            /** Issued By */
+            issued_by: string;
+            /** Late Ack Accepted */
+            late_ack_accepted: boolean | null;
+            /** Late Ack At */
+            late_ack_at: string | null;
+            /** Late Verified At */
+            late_verified_at: string | null;
+            /** Name */
+            name: string;
+            /** Outcome */
+            outcome: ("NOT_SENT" | "NOT_EXECUTED" | "UNKNOWN" | "RECEIVED_LATE" | "EXECUTED_LATE") | null;
+            /**
+             * Queued At
+             * Format: date-time
+             */
+            queued_at: string;
+            /** Reason */
+            reason: string | null;
+            /** Received At */
+            received_at: string | null;
+            /** Sent At */
+            sent_at: string | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "QUEUED" | "SENT" | "RECEIVED" | "VERIFIED" | "FAILED";
+            /** Vehicle */
+            vehicle: string;
+            /** Verified At */
+            verified_at: string | null;
         };
         /** DlqRecord */
         DlqRecord: {
@@ -204,6 +328,21 @@ export interface components {
             /** Message */
             message: string;
         };
+        /** EventView */
+        EventView: {
+            /** Details */
+            details: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Key */
+            key: string;
+            /** Kind */
+            kind: string;
+            /** T Onboard */
+            t_onboard: string | null;
+            /** Vehicle */
+            vehicle: string | null;
+        };
         /** FrameHeader */
         FrameHeader: {
             /** Last Cmd Id */
@@ -225,6 +364,20 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        /** Ground */
+        Ground: {
+            /**
+             * Broker
+             * @enum {string}
+             */
+            broker: "down" | "up";
+            /**
+             * Kind
+             * @default ground
+             * @constant
+             */
+            kind: "ground";
+        };
         /** Hb */
         Hb: {
             /**
@@ -233,6 +386,10 @@ export interface components {
              * @constant
              */
             kind: "hb";
+            /** Processing */
+            processing?: {
+                [key: string]: boolean;
+            };
             /** Server Ms */
             server_ms: number;
         };
@@ -259,6 +416,7 @@ export interface components {
             /** Server Ms */
             server_ms: number;
         };
+        JsonValue: unknown;
         /** LimitCheck */
         LimitCheck: {
             /** Hysteresis Abs */
@@ -285,6 +443,15 @@ export interface components {
         LimitView: {
             /** Checks */
             checks: (components["schemas"]["LimitCheck"] | components["schemas"]["RocCheck"])[];
+        };
+        /** Link */
+        Link: {
+            event: components["schemas"]["EventView"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "link";
         };
         /** LoginRequest */
         LoginRequest: {
@@ -358,6 +525,16 @@ export interface components {
             /** Unit */
             unit: string;
         };
+        /** Resync */
+        Resync: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "resync";
+            /** Vehicle */
+            vehicle: string;
+        };
         /** RocCheck */
         RocCheck: {
             /**
@@ -386,6 +563,21 @@ export interface components {
         /** Snapshot */
         Snapshot: {
             /**
+             * Alarms
+             * @default []
+             */
+            alarms: components["schemas"]["AlarmView"][];
+            /**
+             * Commands
+             * @default []
+             */
+            commands: components["schemas"]["CommandView"][];
+            /**
+             * Events
+             * @default []
+             */
+            events: components["schemas"]["EventView"][];
+            /**
              * Kind
              * @default snapshot
              * @constant
@@ -396,6 +588,48 @@ export interface components {
                 [key: string]: components["schemas"]["Tm"];
             };
         };
+        /** Tc */
+        Tc: {
+            /** Args */
+            args: {
+                [key: string]: string | number;
+            };
+            /**
+             * Cmd Id
+             * Format: uuid
+             */
+            cmd_id: string;
+            /**
+             * Issued At
+             * Format: date-time
+             */
+            issued_at: string;
+            /** Issued By */
+            issued_by: string;
+            /** Name */
+            name: string;
+            /** Reason */
+            reason: string | null;
+        };
+        /** TcAck */
+        TcAck: {
+            /** Accepted */
+            accepted: boolean;
+            /**
+             * Cmd Id
+             * Format: uuid
+             */
+            cmd_id: string;
+            /** Code */
+            code: string;
+            /** Reason */
+            reason: string | null;
+            /**
+             * T Onboard
+             * Format: date-time
+             */
+            t_onboard: string;
+        };
         /** Tm */
         Tm: {
             /**
@@ -404,9 +638,13 @@ export interface components {
              */
             age_ms: number | null;
             /**
-             * Kind
-             * @default tm
-             * @constant
+             * Frozen
+             * @default false
+             */
+            frozen: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
              */
             kind: "tm";
             /** Last Cmd Id */
@@ -430,6 +668,35 @@ export interface components {
             /** Vehicle */
             vehicle: string;
         };
+        /** TransitionView */
+        TransitionView: {
+            /** Alert */
+            alert: boolean;
+            /** By User */
+            by_user: string;
+            /** Check Kind */
+            check_kind: string | null;
+            /** Key */
+            key: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "RAISE" | "ESCALATE" | "DEESCALATE" | "RTN" | "ACK" | "CLEAR";
+            /** Level */
+            level: string | null;
+            /** Note */
+            note: string | null;
+            /**
+             * T
+             * Format: date-time
+             */
+            t: string;
+            /** Value */
+            value: number | null;
+        };
+        /** UiEvent */
+        UiEvent: components["schemas"]["Tm"] | components["schemas"]["Alarm"] | components["schemas"]["Cmd"] | components["schemas"]["Link"] | components["schemas"]["Resync"];
         /** Vehicles */
         Vehicles: {
             /** Parameters */

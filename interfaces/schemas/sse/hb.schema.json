@@ -9,6 +9,13 @@
       "title": "Kind",
       "type": "string"
     },
+    "processing": {
+      "additionalProperties": {
+        "type": "boolean"
+      },
+      "title": "Processing",
+      "type": "object"
+    },
     "server_ms": {
       "title": "Server Ms",
       "type": "integer"

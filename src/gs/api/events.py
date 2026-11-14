@@ -22,10 +22,10 @@ from pydantic import ValidationError
 from gs.api.auth import current_user
 from gs.common.interfaces import Hb, Hello, Snapshot, Tm
 from gs.common.interfaces.base import StrictModel
+from gs.common.uievents import UI_EVENTS
 
 SSE_RETRY_MS = 1000
 HB_S = 1.0
-UI_EVENTS = "ui:events"
 log = logging.getLogger(__name__)
 
 

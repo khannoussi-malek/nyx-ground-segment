@@ -21,6 +21,7 @@ from gs.alarms.state import load, rebuild
 from gs.common.hooks import Hooks
 from gs.common.interfaces import DlqRecord, FrameHeader, Tm, build_frame_model
 from gs.common.missiondb import MissionDb, MissionDbError
+from gs.common.uievents import publish_ui
 from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
 from gs.ingest.events import GroundEvent, poison_key, reset_key
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
@@ -41,8 +42,6 @@ log = logging.getLogger(__name__)
 GROUP = "ingest"
 COUNT = 100
 BLOCK_MS = 1000
-UI_EVENTS = "ui:events"
-UI_MAXLEN = 3000
 DLQ = "tm:dlq"
 BACKOFF_START_S = 0.5
 BACKOFF_MAX_S = 5.0
@@ -206,15 +205,7 @@ async def _process(
         dlq += bad
     ctx.hooks.fire("after_commit_before_publish")
     if inserted:  # publish only what this commit stored; a redelivery publishes nothing
-        pub = ctx.redis.pipeline(transaction=False)
-        for f in inserted:
-            pub.xadd(
-                UI_EVENTS,
-                {"data": to_tm(f, params).model_dump_json()},
-                maxlen=UI_MAXLEN,
-                approximate=True,
-            )
-        await pub.execute()
+        await publish_ui(ctx.redis, [to_tm(f, params) for f in inserted])
     ctx.hooks.fire("after_publish_before_ack")
     ack = ctx.redis.pipeline(transaction=True)  # one MULTI: DLQ records + XACK
     for rec in dlq:

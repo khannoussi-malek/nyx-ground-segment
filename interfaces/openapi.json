@@ -1,6 +1,168 @@
 {
   "components": {
     "schemas": {
+      "AckRequestView": {
+        "additionalProperties": false,
+        "properties": {
+          "by_user": {
+            "title": "By User",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "applied",
+              "superseded",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "status_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Reason"
+          }
+        },
+        "required": [
+          "request_id",
+          "by_user",
+          "status",
+          "status_reason"
+        ],
+        "title": "AckRequestView",
+        "type": "object"
+      },
+      "Alarm": {
+        "additionalProperties": false,
+        "properties": {
+          "alarm": {
+            "$ref": "#/components/schemas/AlarmView"
+          },
+          "kind": {
+            "const": "alarm",
+            "default": "alarm",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alarm"
+        ],
+        "title": "Alarm",
+        "type": "object"
+      },
+      "AlarmView": {
+        "additionalProperties": false,
+        "properties": {
+          "ack_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AckRequestView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "alarm_id": {
+            "format": "uuid",
+            "title": "Alarm Id",
+            "type": "string"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "last": {
+            "$ref": "#/components/schemas/TransitionView"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "limits_sha256": {
+            "title": "Limits Sha256",
+            "type": "string"
+          },
+          "opened_at": {
+            "format": "date-time",
+            "title": "Opened At",
+            "type": "string"
+          },
+          "param": {
+            "title": "Param",
+            "type": "string"
+          },
+          "set_sha256": {
+            "title": "Set Sha256",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "YELLOW",
+              "RED"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "UNACK",
+              "ACKED",
+              "RTN_UNACK",
+              "CLEARED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "trigger_check": {
+            "title": "Trigger Check",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alarm_id",
+          "vehicle",
+          "param",
+          "state",
+          "severity",
+          "level",
+          "trigger_check",
+          "limits_sha256",
+          "set_sha256",
+          "opened_at",
+          "closed_at",
+          "last",
+          "ack_request"
+        ],
+        "title": "AlarmView",
+        "type": "object"
+      },
       "CheckConfig": {
         "additionalProperties": false,
         "properties": {
@@ -25,6 +187,25 @@
           "type"
         ],
         "title": "CheckConfig",
+        "type": "object"
+      },
+      "Cmd": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "$ref": "#/components/schemas/CommandView"
+          },
+          "kind": {
+            "const": "cmd",
+            "default": "cmd",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "title": "Cmd",
         "type": "object"
       },
       "Command": {
@@ -104,6 +285,218 @@
           "hazardous"
         ],
         "title": "Command",
+        "type": "object"
+      },
+      "CommandView": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "title": "Args",
+            "type": "object"
+          },
+          "cmd_id": {
+            "format": "uuid",
+            "title": "Cmd Id",
+            "type": "string"
+          },
+          "failed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed At"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "SEND_ERROR",
+                  "REJECTED",
+                  "NOT_RECEIVED",
+                  "NOT_VERIFIED",
+                  "ACK_INVALID"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "hazardous": {
+            "title": "Hazardous",
+            "type": "boolean"
+          },
+          "issued_by": {
+            "title": "Issued By",
+            "type": "string"
+          },
+          "late_ack_accepted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Late Ack Accepted"
+          },
+          "late_ack_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Late Ack At"
+          },
+          "late_verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Late Verified At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "NOT_SENT",
+                  "NOT_EXECUTED",
+                  "UNKNOWN",
+                  "RECEIVED_LATE",
+                  "EXECUTED_LATE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "queued_at": {
+            "format": "date-time",
+            "title": "Queued At",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "received_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received At"
+          },
+          "sent_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sent At"
+          },
+          "state": {
+            "enum": [
+              "QUEUED",
+              "SENT",
+              "RECEIVED",
+              "VERIFIED",
+              "FAILED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
+          }
+        },
+        "required": [
+          "cmd_id",
+          "vehicle",
+          "name",
+          "args",
+          "hazardous",
+          "reason",
+          "issued_by",
+          "state",
+          "failure_reason",
+          "queued_at",
+          "sent_at",
+          "received_at",
+          "verified_at",
+          "failed_at",
+          "late_verified_at",
+          "late_ack_at",
+          "late_ack_accepted",
+          "outcome"
+        ],
+        "title": "CommandView",
         "type": "object"
       },
       "DlqRecord": {
@@ -213,6 +606,59 @@
         "title": "ErrorBody",
         "type": "object"
       },
+      "EventView": {
+        "additionalProperties": false,
+        "properties": {
+          "details": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Details",
+            "type": "object"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "t_onboard": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T Onboard"
+          },
+          "vehicle": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Z0-9-]{1,32}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vehicle"
+          }
+        },
+        "required": [
+          "key",
+          "vehicle",
+          "kind",
+          "t_onboard",
+          "details"
+        ],
+        "title": "EventView",
+        "type": "object"
+      },
       "FrameHeader": {
         "additionalProperties": true,
         "properties": {
@@ -265,6 +711,30 @@
         "title": "FrameHeader",
         "type": "object"
       },
+      "Ground": {
+        "additionalProperties": false,
+        "properties": {
+          "broker": {
+            "enum": [
+              "down",
+              "up"
+            ],
+            "title": "Broker",
+            "type": "string"
+          },
+          "kind": {
+            "const": "ground",
+            "default": "ground",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "broker"
+        ],
+        "title": "Ground",
+        "type": "object"
+      },
       "Hb": {
         "additionalProperties": false,
         "properties": {
@@ -273,6 +743,13 @@
             "default": "hb",
             "title": "Kind",
             "type": "string"
+          },
+          "processing": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Processing",
+            "type": "object"
           },
           "server_ms": {
             "title": "Server Ms",
@@ -331,6 +808,7 @@
         "title": "Hello",
         "type": "object"
       },
+      "JsonValue": {},
       "LimitCheck": {
         "additionalProperties": false,
         "properties": {
@@ -455,6 +933,25 @@
           "checks"
         ],
         "title": "LimitView",
+        "type": "object"
+      },
+      "Link": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/EventView"
+          },
+          "kind": {
+            "const": "link",
+            "default": "link",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event"
+        ],
+        "title": "Link",
         "type": "object"
       },
       "LoginRequest": {
@@ -606,6 +1103,27 @@
         "title": "ParameterEntry",
         "type": "object"
       },
+      "Resync": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "resync",
+            "default": "resync",
+            "title": "Kind",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle"
+        ],
+        "title": "Resync",
+        "type": "object"
+      },
       "RocCheck": {
         "additionalProperties": false,
         "properties": {
@@ -667,6 +1185,30 @@
       "Snapshot": {
         "additionalProperties": false,
         "properties": {
+          "alarms": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AlarmView"
+            },
+            "title": "Alarms",
+            "type": "array"
+          },
+          "commands": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CommandView"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "events": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventView"
+            },
+            "title": "Events",
+            "type": "array"
+          },
           "kind": {
             "const": "snapshot",
             "default": "snapshot",
@@ -687,6 +1229,113 @@
         "title": "Snapshot",
         "type": "object"
       },
+      "Tc": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "title": "Args",
+            "type": "object"
+          },
+          "cmd_id": {
+            "format": "uuid",
+            "title": "Cmd Id",
+            "type": "string"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "issued_by": {
+            "minLength": 1,
+            "title": "Issued By",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,62}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "cmd_id",
+          "name",
+          "args",
+          "issued_by",
+          "issued_at",
+          "reason"
+        ],
+        "title": "Tc",
+        "type": "object"
+      },
+      "TcAck": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "cmd_id": {
+            "format": "uuid",
+            "title": "Cmd Id",
+            "type": "string"
+          },
+          "code": {
+            "pattern": "^[A-Z][A-Z0-9_]{0,31}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "t_onboard": {
+            "format": "date-time",
+            "title": "T Onboard",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cmd_id",
+          "accepted",
+          "code",
+          "reason",
+          "t_onboard"
+        ],
+        "title": "TcAck",
+        "type": "object"
+      },
       "Tm": {
         "additionalProperties": false,
         "properties": {
@@ -701,6 +1350,11 @@
             ],
             "default": null,
             "title": "Age Ms"
+          },
+          "frozen": {
+            "default": false,
+            "title": "Frozen",
+            "type": "boolean"
           },
           "kind": {
             "const": "tm",
@@ -771,6 +1425,127 @@
         ],
         "title": "Tm",
         "type": "object"
+      },
+      "TransitionView": {
+        "additionalProperties": false,
+        "properties": {
+          "alert": {
+            "title": "Alert",
+            "type": "boolean"
+          },
+          "by_user": {
+            "title": "By User",
+            "type": "string"
+          },
+          "check_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Kind"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "RAISE",
+              "ESCALATE",
+              "DEESCALATE",
+              "RTN",
+              "ACK",
+              "CLEAR"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "t",
+          "alert",
+          "by_user",
+          "note",
+          "check_kind",
+          "level",
+          "value"
+        ],
+        "title": "TransitionView",
+        "type": "object"
+      },
+      "UiEvent": {
+        "discriminator": {
+          "mapping": {
+            "alarm": "#/components/schemas/Alarm",
+            "cmd": "#/components/schemas/Cmd",
+            "link": "#/components/schemas/Link",
+            "resync": "#/components/schemas/Resync",
+            "tm": "#/components/schemas/Tm"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Tm"
+          },
+          {
+            "$ref": "#/components/schemas/Alarm"
+          },
+          {
+            "$ref": "#/components/schemas/Cmd"
+          },
+          {
+            "$ref": "#/components/schemas/Link"
+          },
+          {
+            "$ref": "#/components/schemas/Resync"
+          }
+        ],
+        "title": "UiEvent"
       },
       "Vehicles": {
         "additionalProperties": false,

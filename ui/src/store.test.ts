@@ -3,10 +3,11 @@ import { createStore, ingest, type Snapshot, type Tm } from "./store";
 
 const tm = (seq: number, t: string, vehicle = "NYX-TA1", p = 101.3): Tm => ({
   kind: "tm", vehicle, seq, t_onboard: t, mode: "TEST",
-  last_cmd_id: null, values: { cabin_pressure_kpa: p }, age_ms: 5,
+  last_cmd_id: null, values: { cabin_pressure_kpa: p }, age_ms: 5, frozen: false,
 });
 const snap = (...rows: Tm[]): Snapshot => ({
   kind: "snapshot", vehicles: Object.fromEntries(rows.map((r) => [r.vehicle, r])),
+  alarms: [], commands: [], events: [],
 });
 
 test("applyTm drops a tm not newer than the shown one", () => {

@@ -18,6 +18,7 @@ import redis.exceptions
 
 from gs.alarms.engine import CompiledSet, compile_set
 from gs.alarms.state import load, rebuild
+from gs.commanding.tracker import track_pass
 from gs.common.hooks import Hooks
 from gs.common.interfaces import DlqRecord, FrameHeader, Tm, build_frame_model
 from gs.common.missiondb import MissionDb, MissionDbError
@@ -83,6 +84,8 @@ class Ctx:
     hooks: Hooks = Hooks()  # D-ENG-16 test hooks; all off by default
     # ponytail: never evicted; one entry per set this worker ever saw (a handful per run)
     csets: dict[str, CompiledSet] = field(default_factory=dict)  # set_sha256 -> compiled
+    # cmd_tracker_errors, interface_mismatch (D-CMD-05, D-ING-27; /healthz reports both)
+    counters: Counter[str] = field(default_factory=Counter)
 
 
 # ponytail: one model per parameter list ever seen, never evicted (same handful)
@@ -402,6 +405,7 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
     while not stop.is_set():
         await ctx.hooks.hang("in_loop")
         now = ctx.loop_seen[vehicle] = time.monotonic()
+        caught_up = False  # P-pf2: only a `>` read that returned fewer than COUNT entries
         if claim_idle is None and now >= next_reclaim:
             claim_idle, cursor, next_reclaim = (
                 ctx.reclaim_idle_ms,
@@ -427,6 +431,7 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
                     GROUP, ctx.consumer, {stream: ">"}, count=COUNT, block=BLOCK_MS
                 )
                 claimed = res[0][1] if res else []
+                caught_up = len(claimed) < COUNT
             entries: list[Entry] = [(eid.decode(), f or {}) for eid, f in claimed]
             nvs, _ = await process_batch(ctx, conn, stream, entries, vs)
             if nvs.seq != vs.seq:  # a new frame advanced the tracker
@@ -440,11 +445,13 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
         except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
             log.warning("redis unavailable for %s (%s); retry in %.1fs", stream, e, backoff)
             # D-ING-08: re-read every pending entry after reconnect
-            claim_idle, ready, cursor, was_down = 0, False, "0-0", True
+            claim_idle, ready, cursor, was_down, caught_up = 0, False, "0-0", True, False
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), backoff)
             backoff = min(backoff * 2, BACKOFF_MAX_S)
             last_new = time.monotonic()  # a broker outage is not loss of signal (D-UI-04/15)
+        # after the frame COMMIT and _silence, outside the Redis except: never raises
+        await track_pass(ctx, conn, vehicle, caught_up)
         if home not in (None, ctx.consumer) and time.monotonic() >= next_handback:
             next_handback = time.monotonic() + ctx.timing.handback_s
             if await waiting(conn, vehicle, home):  # between batches: the last one is acked

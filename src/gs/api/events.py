@@ -10,16 +10,17 @@ import math
 import time
 from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
-from typing import Annotated, Any
+from typing import Any
 
 import psycopg
-from fastapi import Depends, Request
+from fastapi import Request
 from fastapi.responses import StreamingResponse
 from psycopg import sql
 from psycopg.rows import dict_row
 from pydantic import ValidationError
 
-from gs.api.auth import current_user
+from gs.api import deps
+from gs.api.deps import User
 from gs.common.interfaces import Hb, Hello, Snapshot, Tm
 from gs.common.interfaces.base import StrictModel
 from gs.common.uievents import UI_EVENTS
@@ -84,7 +85,7 @@ async def _stream(request: Request) -> AsyncIterator[bytes]:
         last_id = tail[0][0] if tail else "0-0"
         async with st.pool.connection() as conn:
             snap = await build_snapshot(
-                conn, st.vehicles, st.mission.param_names, datetime.now(UTC)
+                conn, deps.vehicles(request), deps.mission(request).param_names, datetime.now(UTC)
             )
         yield format_sse("snapshot", snap)
         last_hb = time.monotonic()
@@ -109,9 +110,7 @@ async def _stream(request: Request) -> AsyncIterator[bytes]:
         st.sse_open -= 1
 
 
-async def events(
-    request: Request, _user: Annotated[str, Depends(current_user)]
-) -> StreamingResponse:
+async def events(request: Request, _user: User) -> StreamingResponse:
     return StreamingResponse(
         _stream(request),
         media_type="text/event-stream",

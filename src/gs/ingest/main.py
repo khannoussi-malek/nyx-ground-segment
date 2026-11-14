@@ -88,7 +88,7 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
     server = await serve_health(
         s.bind_host,
         s.health_port,
-        lambda: ingest_status(seen, ctx.owned, time.monotonic(), ctx.used_memory[0]),
+        lambda: ingest_status(seen, ctx.owned, time.monotonic(), ctx.used_memory[0], ctx.counters),
     )
     try:
         async with asyncio.TaskGroup() as tg:  # any task error cancels the rest and exits 1

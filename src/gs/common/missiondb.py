@@ -147,13 +147,21 @@ class CommandDefaults(_M):
     verify_timeout_s: float = Field(VERIFY_TIMEOUT_MAX_S, gt=0, le=VERIFY_TIMEOUT_MAX_S)
 
 
+_UNSET = "unset: the file's `defaults` value"
+
+
 class Command(_M):
     description: str
     hazardous: bool
     hazard: str | None = None
     args: dict[str, Arg] = {}
-    receive_timeout_s: float | None = Field(None, gt=0, le=RECEIVE_TIMEOUT_MAX_S)
-    verify_timeout_s: float | None = Field(None, gt=0, le=VERIFY_TIMEOUT_MAX_S)
+    # unset → the file's `defaults` at load (_resolve_commands), so consumers read only these
+    receive_timeout_s: float = Field(
+        RECEIVE_TIMEOUT_MAX_S, gt=0, le=RECEIVE_TIMEOUT_MAX_S, description=_UNSET
+    )
+    verify_timeout_s: float = Field(
+        VERIFY_TIMEOUT_MAX_S, gt=0, le=VERIFY_TIMEOUT_MAX_S, description=_UNSET
+    )
 
     @model_validator(mode="after")
     def _hazard(self) -> Command:
@@ -247,6 +255,21 @@ def _resolve(limits: LimitsFile) -> dict[str, LimitEntry]:
     return out
 
 
+def _resolve_commands(cmd: CommandsFile) -> dict[str, Command]:
+    """P-pf3: a timeout a command does not set comes from the file's `defaults`."""
+    d = cmd.defaults
+    return {
+        name: c.model_copy(
+            update={
+                f: getattr(d, f)
+                for f in ("receive_timeout_s", "verify_timeout_s")
+                if f not in c.model_fields_set
+            }
+        )
+        for name, c in cmd.commands.items()
+    }
+
+
 def _check_floor(limits: dict[str, LimitEntry]) -> None:
     """Deadband floor (D-ALM-02), on every limit check of every parameter."""
     for name, entry in limits.items():
@@ -276,7 +299,7 @@ def load(limits: bytes, commands: bytes, parameters: bytes) -> MissionDb:
     return MissionDb(
         parameters=dict(p.parameters),
         limits=resolved,
-        commands=dict(cmd.commands),
+        commands=_resolve_commands(cmd),
         param_names=tuple(p.parameters),
         limits_sha256=hashes[0],
         commands_sha256=hashes[1],

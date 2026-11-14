@@ -158,3 +158,16 @@ async def test_ui_served_without_session(api_client: httpx.AsyncClient) -> None:
 async def test_ui_mount_does_not_shadow_api(api_client: httpx.AsyncClient) -> None:
     assert (await api_client.get("/api/me")).status_code == 401  # the router, not index.html
     assert (await api_client.get("/healthz")).headers["content-type"] == "application/json"
+
+
+async def test_405_keeps_the_allow_header(api_client: httpx.AsyncClient) -> None:  # RFC 9110
+    r = await api_client.delete("/api/me", headers=H)
+    assert r.status_code == 405 and r.json()["error"] == "METHOD_NOT_ALLOWED"
+    assert "GET" in r.headers["allow"]
+
+
+async def test_body_not_utf8_is_400(api_client: httpx.AsyncClient) -> None:  # R19
+    r = await api_client.post(
+        "/api/login", content=b"\xff\xfe{", headers={"content-type": "application/json", **H}
+    )
+    assert r.status_code == 400 and r.json()["error"] == "BAD_REQUEST"

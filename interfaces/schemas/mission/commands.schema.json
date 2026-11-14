@@ -48,32 +48,20 @@
           "type": "boolean"
         },
         "receive_timeout_s": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "maximum": 5.0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Receive Timeout S"
+          "default": 5.0,
+          "description": "unset: the file's `defaults` value",
+          "exclusiveMinimum": 0,
+          "maximum": 5.0,
+          "title": "Receive Timeout S",
+          "type": "number"
         },
         "verify_timeout_s": {
-          "anyOf": [
-            {
-              "exclusiveMinimum": 0,
-              "maximum": 15.0,
-              "type": "number"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "default": null,
-          "title": "Verify Timeout S"
+          "default": 15.0,
+          "description": "unset: the file's `defaults` value",
+          "exclusiveMinimum": 0,
+          "maximum": 15.0,
+          "title": "Verify Timeout S",
+          "type": "number"
         }
       },
       "required": [

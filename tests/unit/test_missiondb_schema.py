@@ -222,6 +222,20 @@ def test_shorter_timeout_override_accepted() -> None:
     assert ld(files(commands=ok)).commands["isolate_valve"].receive_timeout_s == 2
 
 
+def test_file_defaults_resolved_into_each_command() -> None:  # P-pf3
+    shorter = SHIPPED_C.replace(
+        b"defaults: {receive_timeout_s: 5, verify_timeout_s: 15}",
+        b"defaults: {receive_timeout_s: 3, verify_timeout_s: 9}",
+    ).replace(b"    hazardous: false\n", b"    hazardous: false\n    receive_timeout_s: 2\n")
+    cmds = ld(files(commands=shorter)).commands
+    assert (cmds["isolate_valve"].receive_timeout_s, cmds["isolate_valve"].verify_timeout_s) == (
+        2, 9,
+    )  # fmt: skip
+    assert (cmds["vent_cabin"].receive_timeout_s, cmds["vent_cabin"].verify_timeout_s) == (3, 9)
+    shipped = load_dir(MISSION_DIR).commands["vent_cabin"]
+    assert (shipped.receive_timeout_s, shipped.verify_timeout_s) == (5, 15)
+
+
 def test_unhashable_mapping_key_rejected() -> None:
     err = rejected("limits.yaml", limits=b"version: 1\n? [a]\n: 1\nlimits: {}\n")
     assert "unhashable" in err.message

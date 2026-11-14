@@ -139,6 +139,17 @@
           "title": "Trigger Check",
           "type": "string"
         },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "title": "Value"
+        },
         "vehicle": {
           "pattern": "^[A-Z0-9-]{1,32}$",
           "title": "Vehicle",
@@ -152,6 +163,7 @@
         "state",
         "severity",
         "level",
+        "value",
         "trigger_check",
         "limits_sha256",
         "set_sha256",

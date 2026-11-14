@@ -159,7 +159,7 @@ def _alarm_view() -> AlarmView:
     )  # fmt: skip
     return AlarmView(
         alarm_id=uuid4(), vehicle="NYX-TA1", param="p", state="UNACK", severity="RED",
-        level="RED_HIGH", trigger_check="limit", limits_sha256="a", set_sha256="b",
+        level="RED_HIGH", value=1.5, trigger_check="limit", limits_sha256="a", set_sha256="b",
         opened_at=T0, closed_at=None, last=last,
         ack_request=AckRequestView(
             request_id=uuid4(), by_user="fc1", status="pending", status_reason=None

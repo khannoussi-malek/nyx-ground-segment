@@ -10,6 +10,7 @@ import redis.exceptions
 from psycopg.rows import dict_row
 
 from gs.ingest import store
+from gs.ingest import worker as worker_mod
 from gs.ingest.events import reset_key
 from gs.ingest.fold import state_version
 from gs.simulator.frames import make_frame
@@ -217,3 +218,21 @@ async def test_reset_event_written_while_silent() -> None:  # extra rides with t
     assert len(events_for(v, "ENGINE_STATE_RESET")) == 1
     e = row("engine_state", v)
     assert e is not None and e["schema_version"] == state_version()
+
+
+async def test_tracker_runs_every_pass_caught_up_after_a_short_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # contract table + P-pf2: caught_up only after a `>` read below COUNT
+    calls: list[tuple[str, bool, int]] = []
+
+    async def track(ctx: Any, conn: Any, vehicle: str, caught_up: bool) -> None:
+        calls.append((vehicle, caught_up, stored(vehicle)))
+
+    monkeypatch.setattr(worker_mod, "track_pass", track)
+    v = vid()
+    produce(v, worker_mod.COUNT + 50)  # before the worker: the first `>` read is a full one
+    async with worker([v]):
+        await until(lambda: len(calls) >= 4, 10)
+    # drain pass (XAUTOCLAIM, no `>` read), full read, short read, then idle reads
+    assert [c[:2] for c in calls[:4]] == [(v, False), (v, False), (v, True), (v, True)]
+    assert [c[2] for c in calls[:3]] == [0, worker_mod.COUNT, worker_mod.COUNT + 50]  # after COMMIT

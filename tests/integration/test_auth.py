@@ -1,15 +1,22 @@
+import asyncio
 import json
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 from fastapi.routing import APIRoute
 from itsdangerous import TimestampSigner
 
+from gs.api import auth
 from gs.api.app import ROUTER, create_app
+from gs.api.auth import hash_password
+from tests.support.env import vid
 from tests.support.http import CLIENT_HEADERS as H
 from tests.support.http import FC1_PW, FC2_PW, api_settings, login, session_sid
+from tests.support.pg import audit_rows
 from tests.support.redisx import client as redis_client
 
 
@@ -171,3 +178,83 @@ async def test_body_not_utf8_is_400(api_client: httpx.AsyncClient) -> None:  # R
         "/api/login", content=b"\xff\xfe{", headers={"content-type": "application/json", **H}
     )
     assert r.status_code == 400 and r.json()["error"] == "BAD_REQUEST"
+
+
+# Task 20: rate limit + audit. P-pf8: per-test users t-<vid> in a test-local users file.
+PW = "t-secret"
+
+
+@pytest.fixture
+async def lone(tmp_path: Path) -> AsyncIterator[tuple[httpx.AsyncClient, str, str]]:
+    """(client, user a, user b) with two fresh users that no other test shares."""
+    a, b = f"t-{vid()}", f"t-{vid()}"
+    path = tmp_path / "users.yaml"
+    path.write_text(yaml.safe_dump({"users": {a: hash_password(PW), b: hash_password(PW)}}))
+    app = create_app(api_settings(path))
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://api") as c:
+            yield c, a, b
+
+
+async def test_login_rate_limited_after_5_failures(
+    lone: tuple[httpx.AsyncClient, str, str],
+) -> None:
+    c, a, b = lone
+    for _ in range(5):
+        assert (await login(c, a, "wrong")).status_code == 401
+    r = await login(c, a, PW)  # the right password is refused too
+    assert (r.status_code, r.json()["error"]) == (429, "LOGIN_RATE_LIMITED")
+    assert (await login(c, b, PW)).status_code == 204  # per user
+
+
+async def test_window_passes(
+    lone: tuple[httpx.AsyncClient, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, a, _ = lone
+    monkeypatch.setattr(auth, "LOGIN_WINDOW_S", 1)
+    for _ in range(5):
+        await login(c, a, "wrong")
+    assert (await login(c, a, PW)).status_code == 429
+    await asyncio.sleep(1.1)
+    assert (await login(c, a, PW)).status_code == 204
+
+
+async def test_login_logout_audited(lone: tuple[httpx.AsyncClient, str, str]) -> None:
+    c, a, _ = lone
+    await login(c, a, "wrong")
+    await login(c, a, PW)
+    await c.post("/api/logout", headers=H)
+    rows = audit_rows(actor=a)
+    assert [r["action"] for r in rows] == ["LOGIN_FAILED", "LOGIN", "LOGOUT"]
+    assert all(r["at"] is not None for r in rows)
+
+
+async def test_rate_limited_attempts_audited_not_counted(
+    lone: tuple[httpx.AsyncClient, str, str],
+) -> None:
+    c, a, _ = lone
+    for _ in range(10):
+        await login(c, a, "wrong")
+    rows = audit_rows(action="LOGIN_FAILED", actor=a)
+    assert len(rows) == 10
+    assert sum(r["details"].get("rate_limited") is True for r in rows) == 5
+
+
+async def test_unknown_user_failure_audited_truncated(
+    lone: tuple[httpx.AsyncClient, str, str],
+) -> None:
+    c, _, _ = lone
+    name = vid() + "x" * 100
+    assert (await login(c, name, "x")).status_code == 401
+    assert len(audit_rows(action="LOGIN_FAILED", actor=name[:64])) == 1
+
+
+async def test_login_503_when_db_unreachable(users_file: Path) -> None:
+    app = create_app(api_settings(users_file, database_url="postgresql://x@127.0.0.1:1/x"))
+    async with app.router.lifespan_context(app):
+        transport = httpx.ASGITransport(app=app)
+        async with httpx.AsyncClient(transport=transport, base_url="http://a") as c:
+            r = await login(c, "fc1", FC1_PW)
+    assert r.status_code == 503 and r.json()["error"] == "UNAVAILABLE"
+    assert "database" in r.json()["message"]

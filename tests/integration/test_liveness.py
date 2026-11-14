@@ -252,3 +252,32 @@ async def test_no_steal_when_the_holder_changed_between_ticks() -> None:  # G24
                 assert await liveness.steal_tick(ctx, c) == [v]  # now twice in a row
     finally:
         await ctx.redis.aclose()
+
+
+async def test_steal_never_terminates_a_session_that_does_not_hold_the_lock(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # check and terminate are one statement: a stale pid is never killed
+    v = vid()
+    ctx = make_ctx("w1", {}, FAST, (v,), steal_idle_ms=1000)
+    try:
+        async with (
+            ghost_owner(v, "ghost-owner") as ghost,
+            await psycopg.AsyncConnection.connect(
+                app_dsn("gs"), autocommit=True, application_name="bystander"
+            ) as bystander,
+            await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as c,
+        ):
+            row = await (await bystander.execute("select pg_backend_pid()")).fetchone()
+            assert row is not None
+
+            async def stale_holder(*_: Any) -> tuple[int, str]:
+                return (int(row[0]), "ghost-owner")  # the lock moved: this pid lost it
+
+            monkeypatch.setattr(liveness, "holder", stale_holder)
+            await asyncio.sleep(1.2)
+            assert await liveness.steal_tick(ctx, c) == []
+            assert await liveness.steal_tick(ctx, c) == []  # same pid twice, but not the holder
+            await bystander.execute("SELECT 1")  # still alive
+            await ghost.execute("SELECT 1")
+    finally:
+        await ctx.redis.aclose()

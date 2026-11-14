@@ -15,7 +15,7 @@ import redis.exceptions
 
 from gs.common.health import State
 from gs.ingest.errors import OperationalDbError
-from gs.ingest.owner import holder
+from gs.ingest.owner import MATCH, holder
 from gs.ingest.worker import BACKOFF_MAX_S, BLOCK_MS, GROUP, SOCKET_TIMEOUT_S, Ctx
 
 log = logging.getLogger(__name__)
@@ -70,7 +70,7 @@ async def _consumer_idle(ctx: Ctx, vehicle: str, consumer: str) -> int | None:
 async def steal_tick(ctx: Ctx, conn: psycopg.AsyncConnection) -> list[str]:
     """For each vehicle we don't own: terminate the holder's lock session when its consumer has
     not attempted a read for STEAL_IDLE_MS on two consecutive ticks with the same holder pid
-    (G24), re-checked right before the terminate; our waiting task then takes over (D-ING-12)."""
+    (G24), and only while that pid still holds the lock; our waiting task then takes over."""
     t = ctx.reconnected_at[0]
     since = None if t is None else int((time.monotonic() - t) * 1000)
     stolen: list[str] = []
@@ -84,11 +84,15 @@ async def steal_tick(ctx: Ctx, conn: psycopg.AsyncConnection) -> list[str]:
             ctx.suspects[v] = h[0]  # first sighting: steal on the next tick if still so
             continue
         ctx.suspects.pop(v)
-        if await holder(conn, v) != h:  # the lock moved since the lookup
-            continue
-        log.warning("stealing %s from %s (consumer idle %d ms)", v, h[1], idle)
-        await conn.execute("SELECT pg_terminate_backend(%s)", (h[0],))
-        stolen.append(v)
+        # check and act in one statement: terminate only if that pid still holds the lock
+        cur = await conn.execute(
+            "SELECT pg_terminate_backend(l.pid) FROM pg_locks l"
+            f" WHERE {MATCH} AND l.granted AND l.pid = %s",
+            ("tm:" + v, h[0]),
+        )
+        if await cur.fetchone() is not None:
+            log.warning("stole %s from %s (consumer idle %d ms)", v, h[1], idle)
+            stolen.append(v)
     return stolen
 
 

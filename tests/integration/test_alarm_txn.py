@@ -232,8 +232,11 @@ async def test_unloadable_snapshot_never_crash_loops(corrupt: str) -> None:  # G
         await until(lambda: drained(v), 5)
         assert not w.done()
     assert stored(v) == 15 and kinds(v) == ["RAISE"]  # the open alarm carries on, no re-alert
-    resets = events_for(v, "ENGINE_STATE_RESET")
-    assert len(resets) == (corrupt != "set")
+    (reset,) = events_for(v, "ENGINE_STATE_RESET")  # the replay timeline marks every case
+    if corrupt == "set":  # the state itself loaded with the current set; only the set moved
+        assert (
+            BOGUS in reset["details"]["reason"] and MISSION.set_sha256 in reset["details"]["reason"]
+        )
     with psycopg.connect(app_dsn("gs")) as c:
         row = c.execute("select set_sha256 from engine_state where vehicle=%s", (v,)).fetchone()
     assert row == (MISSION.set_sha256,)

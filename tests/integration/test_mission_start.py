@@ -173,16 +173,18 @@ async def test_tick_needs_two_equal_polls(tmp_path: Path) -> None:
         assert "persistence: 5" in w.current.limits_yaml
 
 
-async def test_tick_rejects_hazardous_downgrade(tmp_path: Path) -> None:
+async def test_hazardous_downgrade_same_set_on_reload_and_start(tmp_path: Path) -> None:  # G31
     m = mission_copy(tmp_path)
     with throwaway_db() as db:
         await store_shipped_set(db)
-        w = MissionWatcher(m, app_dsn(db), "t", SHIPPED)
+        w1, w2 = (MissionWatcher(m, app_dsn(db), n, SHIPPED) for n in ("w1", "w2"))
         edit(m / "commands.yaml", "hazardous: true", "hazardous: false")
-        await _ticks(w, db, 2)
-        assert w.current is SHIPPED
-        err = rows(db, "select details->>'error' from events where kind='LIMITS_REJECTED'")
-        assert len(err) == 1 and "hazardous true→false needs a restart" in str(err[0][0])
+        await _ticks(w1, db, 2)
+        await _ticks(w2, db, 2)
+        started, ev = await start_set_on(db, m)  # a worker restarted now
+        assert w1.current.set_sha256 == w2.current.set_sha256 == started.set_sha256
+        assert started.set_sha256 != SHIPPED.set_sha256
+        assert ev == () and rows(db, REJ) == []
 
 
 async def test_tick_skips_unreadable_file_and_forgets_rejection_on_revert(tmp_path: Path) -> None:

@@ -100,7 +100,8 @@ async def worker(
         async with await psycopg.AsyncConnection.connect(db, autocommit=True) as c:
             mdb, rejected = await start_set(c, mission_dir)
             await insert_events(c, rejected)
-    except psycopg.Error:  # read-only / missing db: the workers' own error is under test
+    # read-only / missing db: the workers' own error is under test
+    except psycopg.errors.ReadOnlySqlTransaction, psycopg.OperationalError:
         mdb = load_dir(mission_dir)
     watcher = MissionWatcher(mission_dir, db, consumer, mdb)
     homes = {v: consumer for v in vehicles} if homes is None else homes

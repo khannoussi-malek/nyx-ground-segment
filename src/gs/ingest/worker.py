@@ -317,7 +317,8 @@ async def load_state(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str) -> V
     with (G18); the first new frame then applies the current set (fold). Another state
     version, or a snapshot that no longer loads, is rebuilt from the open `alarms` rows +
     ENGINE_STATE_RESET (A-E1-5), never a crash loop; the reset commits at once with the
-    rebuilt snapshot. A stored set that no longer validates is replaced by the current one."""
+    rebuilt snapshot. A stored set that no longer validates is replaced by the current one,
+    marked by the same ENGINE_STATE_RESET (the replay timeline sees the move)."""
     _, cset = _current(ctx)
     s = await load_seq_state(conn, vehicle)
     row = await load_engine_row(conn, vehicle)
@@ -325,29 +326,29 @@ async def load_state(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str) -> V
         # = initial() without open rows; a stray open alarm is kept, not raised twice
         return load_vehicle(s, None, "", rebuild(await load_open_alarms(conn, vehicle), cset))
     version, set_sha, obj = row
-    old = cset
+    old, reasons = cset, list[str]()
     if set_sha != cset.set_sha256:
         try:
             old = await _stored(ctx, conn, set_sha)
-        except MissionDbError as e:  # the snapshot can't load with cset: rebuilt below
-            log.warning("stored set %s of %s no longer loads (%s)", set_sha, vehicle, e)
-    events: tuple[GroundEvent, ...] = ()
+        except MissionDbError as e:  # the snapshot is tried with cset (rebuilt if it can't)
+            reasons.append(f"stored set {set_sha} no longer loads ({e}); now {cset.set_sha256}")
     try:
         if version != state_version():
             raise ValueError(f"state version {version} != {state_version()}")
         vs = load_vehicle(s, obj, old.set_sha256, load(obj["engine"], old))
     except (ValueError, KeyError, TypeError) as e:
-        log.warning("engine state of %s rebuilt from open alarms (%r)", vehicle, e)
+        reasons.append(f"rebuilt from open alarms: {e!r}")
         vs = load_vehicle(
             s, None, old.set_sha256, rebuild(await load_open_alarms(conn, vehicle), old)
         )
+    if reasons:
+        log.warning("engine state of %s: %s", vehicle, "; ".join(reasons))
         details = {"found_version": version, "version": state_version(), "epoch": s.epoch,
-                   "reason": str(e)}  # fmt: skip
+                   "reason": "; ".join(reasons)}  # fmt: skip
         key = reset_key(vehicle, s.epoch, s.last_seq)
-        events = (GroundEvent(key, vehicle, "ENGINE_STATE_RESET", s.last_t, details),)
-    if events:
+        ev = GroundEvent(key, vehicle, "ENGINE_STATE_RESET", s.last_t, details)
         async with conn.transaction():
-            await write_outcome(conn, vehicle, vs, Outcome((), events, 0))
+            await write_outcome(conn, vehicle, vs, Outcome((), (ev,), 0))
     return vs
 
 

@@ -261,3 +261,19 @@ def test_reboot_frame_keyed_in_new_epoch() -> None:  # N = 1: the revealing fram
     (t,) = out.transitions
     epoch = T0 + timedelta(seconds=0.7)
     assert t.key == transition_key(V, "cabin_temp_c", epoch, 0, "RAISE")
+
+
+def test_set_applied_at_the_first_new_frame_of_a_batch() -> None:  # not at a duplicate
+    vs, _ = fold(empty_state(CSET), V, [nf(i, i / 10) for i in range(3)], MDB, CSET)
+    mdb = unchecked_temp()
+    _, out = fold(vs, V, [nf(2, 0.2), nf(3, 0.3)], mdb, compile_set(mdb), CSET)
+    (ev,) = out.events
+    assert ev.details["first_seq"] == 3 and ev.key.endswith("/3")
+
+
+def test_set_that_adds_a_check_classifies_the_switch_frame() -> None:  # switch, then step
+    mdb = unchecked_temp()
+    old = compile_set(mdb)
+    vs, _ = fold(empty_state(old), V, [nf(i, i / 10) for i in range(3)], mdb, old)
+    _, out = fold(vs, V, [nf(i, i / 10, 31.0) for i in range(3, 6)], MDB, CSET, old)
+    assert [(t.kind, t.trigger_seq) for t in out.transitions] == [("RAISE", 5)]

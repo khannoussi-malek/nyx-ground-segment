@@ -11,6 +11,8 @@ export function connectEvents(
     clearTimeout: globalThis.clearTimeout,
   },
 ): () => void {
+  // bare calls: a browser's setTimeout throws "Illegal invocation" when called as deps.setTimeout(...)
+  const { setTimeout, clearTimeout } = deps;
   let es: EventSource | undefined;
   let timer: ReturnType<typeof setTimeout> | undefined;
   let stopped = false;
@@ -33,7 +35,7 @@ export function connectEvents(
     }
     src.addEventListener("error", () => {
       src.close();
-      timer ??= deps.setTimeout(open, REOPEN_MS);
+      timer ??= setTimeout(open, REOPEN_MS);
       onError();
     });
   };
@@ -41,6 +43,6 @@ export function connectEvents(
   return () => {
     stopped = true;
     es?.close();
-    if (timer !== undefined) deps.clearTimeout(timer);
+    if (timer !== undefined) clearTimeout(timer);
   };
 }

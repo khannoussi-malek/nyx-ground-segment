@@ -23,11 +23,16 @@ let timers: { fn: () => void; ms: number; id: number }[] = [];
 const cleared: number[] = [];
 const deps = {
   EventSource: FakeEventSource as unknown as typeof EventSource,
-  setTimeout: ((fn: () => void, ms: number) => {
+  // like the browser's: throws "Illegal invocation" when called as a method of another object
+  setTimeout: (function (this: unknown, fn: () => void, ms: number) {
+    if (this !== undefined) throw new TypeError("Illegal invocation");
     timers.push({ fn, ms, id: timers.length + 1 });
     return timers.length;
   }) as unknown as typeof setTimeout,
-  clearTimeout: ((id: number) => cleared.push(id)) as unknown as typeof clearTimeout,
+  clearTimeout: (function (this: unknown, id: number) {
+    if (this !== undefined) throw new TypeError("Illegal invocation");
+    cleared.push(id);
+  }) as unknown as typeof clearTimeout,
 };
 
 beforeEach(() => {

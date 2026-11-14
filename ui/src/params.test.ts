@@ -45,3 +45,15 @@ test("values the mission db does not know are still shown, after the known ones;
   expect(v.map((p) => p.id)).toEqual(["cabin_pressure_kpa", "aa_new", "zz_new"]);
   expect(v[1]).toEqual({ id: "aa_new", value: 2 });
 });
+
+test("ids that are Object.prototype names are looked up as own keys only", () => {
+  const m = {
+    parameters: { constructor: { unit: "V", type: "float", description: "Odd but legal name" } },
+    limits: {},
+  } as unknown as MissionDb;
+  const v = paramViews({ constructor: 1.5, toString: 2 }, m); // "constructor" has no limits entry
+  expect(v.map((p) => p.id)).toEqual(["constructor", "toString"]);
+  expect(v[0]).toMatchObject({ label: "Odd but legal name", unit: "V" });
+  expect(v[0].limits).toBeUndefined();
+  expect(v[1]).toEqual({ id: "toString", value: 2 }); // unknown to the set, not mistaken for known
+});

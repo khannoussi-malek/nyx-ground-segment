@@ -1,9 +1,12 @@
 """In-process ingest harness: run_vehicle tasks / single batches against the compose redis + db."""
 
 import asyncio
+import os
+import socket
 import subprocess
+import sys
 from collections import Counter
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -17,13 +20,16 @@ from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
 from gs.ingest.events import insert_set
 from gs.ingest.fold import empty_state
+from gs.ingest.owner import MATCH
 from gs.ingest.validate import FieldStats
-from gs.ingest.worker import Ctx, process_batch, run_vehicle
+from gs.ingest.worker import Ctx, Timing, process_batch, run_vehicle
 from tests.support.compose import compose, compose_ps, restart_count
-from tests.support.env import wait_until
+from tests.support.env import REPO, dotenv, vid, wait_until
 from tests.support.mission import MISSION_DIR
 from tests.support.pg import admin_dsn, app_dsn
 from tests.support.redisx import GROUP, aclient, client, drained
+
+DEFAULT_TIMING = Timing()
 
 
 async def ensure_set(dsn: str | None = None) -> None:
@@ -32,7 +38,9 @@ async def ensure_set(dsn: str | None = None) -> None:
         await insert_set(c, load_dir(MISSION_DIR))
 
 
-def make_ctx(consumer: str) -> Ctx:
+def make_ctx(
+    consumer: str, homes: Mapping[str, str] | None = None, timing: Timing = DEFAULT_TIMING
+) -> Ctx:
     mdb = load_dir(MISSION_DIR)
     return Ctx(
         consumer,
@@ -43,6 +51,8 @@ def make_ctx(consumer: str) -> Ctx:
         {},
         mdb.set_sha256,
         Counter(),
+        homes or {},
+        timing,
     )
 
 
@@ -57,12 +67,18 @@ class Running:
 
 @asynccontextmanager
 async def worker(
-    vehicles: list[str], consumer: str = "ingest-test", dsn: str | None = None
+    vehicles: list[str],
+    consumer: str = "ingest-test",
+    homes: Mapping[str, str] | None = None,
+    timing: Timing = DEFAULT_TIMING,
+    dsn: str | None = None,
 ) -> AsyncIterator[Running]:
-    """run_vehicle tasks; a custom `dsn` must already hold the start set (see ensure_set)."""
+    """run_vehicle tasks; `homes=None` makes every vehicle home (no start delay, no hand-back).
+    A custom `dsn` must already hold the start set (see ensure_set)."""
     if dsn is None:
         await ensure_set()
-    ctx, stop = make_ctx(consumer), asyncio.Event()
+    homes = {v: consumer for v in vehicles} if homes is None else homes
+    ctx, stop = make_ctx(consumer, homes, timing), asyncio.Event()
     tasks = [asyncio.create_task(run_vehicle(ctx, v, dsn or app_dsn("gs"), stop)) for v in vehicles]
     try:
         yield Running(ctx, tasks)
@@ -103,7 +119,7 @@ LIVE = ("NYX-TA1", "NYX-TA2")
 
 
 def running_ingest() -> list[str]:
-    """Ingest services that run (ingest-2 is opt-in until the ownership lock, G1)."""
+    """Ingest services that run (both, since the ownership lock; G1/G5)."""
     ps = compose_ps()
     return [s for s in INGEST if ps.get(s, {}).get("State") in ("running", "restarting")]
 
@@ -112,13 +128,15 @@ def restarts() -> dict[str, int]:
     return {s: restart_count(s) for s in running_ingest()}
 
 
-def ingest_backends(service: str) -> list[int]:
-    """pids of the service's Postgres sessions (application_name = consumer name)."""
+def lock_holder_pid(vehicle: str) -> tuple[int, str] | None:
+    """(pid, application_name) of the session holding the vehicle's advisory lock."""
     with psycopg.connect(admin_dsn("gs")) as c:
-        rows = c.execute(
-            "select pid from pg_stat_activity where application_name = %s", (service,)
-        ).fetchall()
-    return [r[0] for r in rows]
+        row = c.execute(
+            "select l.pid, a.application_name from pg_locks l join pg_stat_activity a using (pid)"
+            f" where {MATCH} and l.granted",
+            ("tm:" + vehicle,),
+        ).fetchone()
+    return None if row is None else (int(row[0]), str(row[1]))
 
 
 def terminate_backends(pids: list[int]) -> None:
@@ -156,3 +174,32 @@ def wait_backoff_reset(services: list[str]) -> None:
     """Docker resets its restart delay (100 ms, doubling) after 10 s of uptime; restart counts
     in a fixed window only mean something from the 100 ms start."""
     wait_until(lambda: all(uptime_s(s) > 11 for s in services), 30)
+
+
+def _free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port: int = s.getsockname()[1]
+        return port
+
+
+def start_ingest(
+    db_password: str | None = None, **over: str
+) -> tuple[subprocess.Popen[bytes], int]:
+    """gs-ingest main() in a subprocess against the compose redis + db; `over` overrides env."""
+    env, port, v = dotenv(), _free_port(), vid()
+    proc_env = {
+        **os.environ,
+        "REDIS_URL": f"redis://ingest:{env['REDIS_INGEST_PW']}@127.0.0.1:{env['REDIS_HOST_PORT']}/0",
+        "DATABASE_URL": f"postgresql://gs_app:{db_password or env['GS_APP_PASSWORD']}"
+        f"@127.0.0.1:{env['DB_HOST_PORT']}/gs",
+        "CONSUMER_NAME": "ingest-main-test",
+        "VEHICLES": v,
+        "INGEST_HOMES": f"ingest-main-test={v}",
+        "MISSION_DB": str(REPO / "mission"),
+        "BIND_HOST": "127.0.0.1",
+        "HEALTH_PORT": str(port),
+        **over,
+    }
+    code = "from gs.ingest.main import main; main()"
+    return subprocess.Popen([sys.executable, "-c", code], cwd=REPO, env=proc_env), port

@@ -1,13 +1,13 @@
-"""Ingest loop: read tm:<vehicle>, classify, COMMIT, publish to ui:events, then XACK
-(D-ING-01/02/03/22). Own pending entries are read first so a restart loses nothing."""
+"""Ingest loop per vehicle: own it (advisory lock), drain pending entries, then read new ones;
+classify, COMMIT, publish to ui:events, then XACK (D-ING-01/02/03/10/11/12/22)."""
 
 import asyncio
 import contextlib
 import logging
 import time
 from collections import Counter
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
@@ -20,6 +20,7 @@ from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_
 from gs.ingest.events import GroundEvent, poison_key, reset_key
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
 from gs.ingest.link import STALE_S, on_silence
+from gs.ingest.owner import acquire, fence, release, waiting
 from gs.ingest.store import insert_frames, load_engine_row, load_seq_state, write_outcome
 from gs.ingest.validate import FieldStats, classify, poison
 
@@ -38,6 +39,19 @@ Item = tuple[str, dict[bytes, bytes], int, FrameHeader]  # entry id, fields, del
 
 
 @dataclass(frozen=True)
+class Timing:
+    """Loop periods in seconds (design values; tests pass shorter ones)."""
+
+    start_delay_s: float = 2.0  # non-home vehicles, once at startup (D-ING-10)
+    handback_s: float = 5.0
+    reclaim_s: float = 5.0
+    tick_s: float = 5.0
+    los_s: float = STALE_S
+    hb_ttl_s: int = 3
+    watchdog_s: float = 30.0
+
+
+@dataclass(frozen=True)
 class Ctx:
     consumer: str
     model: type[FrameHeader]
@@ -47,6 +61,9 @@ class Ctx:
     loop_seen: dict[str, float]  # vehicle -> time.monotonic() of the last loop pass
     set_sha256: str  # mission-db set the vehicle state is built with
     dup_or_late: Counter[str]  # vehicle -> frames the tracker saw as duplicate or late
+    homes: Mapping[str, str]  # vehicle -> home consumer (INGEST_HOMES)
+    timing: Timing = Timing()
+    owned: set[str] = field(default_factory=set)  # mutated only by each vehicle's own task
 
 
 def to_tm(frame: FrameHeader, params: Sequence[str]) -> Tm:
@@ -279,47 +296,66 @@ async def run_vehicle(ctx: Ctx, vehicle: str, dsn: str, stop: asyncio.Event) -> 
 
 
 async def _run_vehicle(ctx: Ctx, vehicle: str, dsn: str, stop: asyncio.Event) -> None:
-    stream = f"tm:{vehicle}"
-    backlog, ready, backoff = True, False, BACKOFF_START_S
     async with await psycopg.AsyncConnection.connect(
         dsn, autocommit=True, application_name=ctx.consumer
     ) as conn:
-        vs, extra = await load_state(ctx, conn, vehicle)
-        last_new = time.monotonic()
-        while not stop.is_set():
-            ctx.loop_seen[vehicle] = time.monotonic()
+        if ctx.homes.get(vehicle) != ctx.consumer:  # the home worker wins at startup (D-ING-10)
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), ctx.timing.start_delay_s)
+        while not stop.is_set() and await acquire(conn, vehicle, stop):
+            ctx.owned.add(vehicle)
             try:
-                if not ready:
-                    await _ensure_group(ctx.redis, stream)
-                    ready = True
-                # id 0 = our own pending entries (never blocks); > = new entries
-                res: Any = await ctx.redis.xreadgroup(
-                    GROUP,
-                    ctx.consumer,
-                    {stream: "0" if backlog else ">"},
-                    count=1 if backlog else COUNT,  # redelivery one at a time (Review Focus 2)
-                    block=None if backlog else BLOCK_MS,
+                await _own(ctx, conn, vehicle, stop)  # returns on stop or after a hand-back
+            finally:
+                ctx.owned.discard(vehicle)
+
+
+async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyncio.Event) -> None:
+    """Takeover protocol (D-ING-11): load state, drain every pending entry of the group one at a
+    time (XAUTOCLAIM … 0, Review Focus 2), then read new entries behind the pre-read fence."""
+    stream = f"tm:{vehicle}"
+    home = ctx.homes.get(vehicle)
+    vs, extra = await load_state(ctx, conn, vehicle)
+    drain, ready, backoff, cursor = True, False, BACKOFF_START_S, "0-0"
+    last_new = next_handback = time.monotonic()
+    while not stop.is_set():
+        ctx.loop_seen[vehicle] = time.monotonic()
+        try:
+            if not ready:
+                await _ensure_group(ctx.redis, stream)
+                ready = True
+            await fence(conn)
+            if drain:
+                res: Any = await ctx.redis.xautoclaim(stream, GROUP, ctx.consumer, 0, cursor, 1)
+                cursor, claimed = res[0].decode(), res[1]
+                drain = cursor != "0-0"
+            else:
+                res = await ctx.redis.xreadgroup(
+                    GROUP, ctx.consumer, {stream: ">"}, count=COUNT, block=BLOCK_MS
                 )
-                entries: list[Entry] = [
-                    (eid.decode(), fields or {}) for eid, fields in (res[0][1] if res else [])
-                ]
-                if backlog and not entries:
-                    backlog = False
-                nvs, _ = await process_batch(ctx, conn, stream, entries, vs, extra)
-                if entries:
-                    extra = ()
-                if nvs.seq != vs.seq:  # a new frame advanced the tracker
-                    last_new = time.monotonic()
-                vs = nvs
-                if time.monotonic() - last_new > STALE_S:
-                    nvs = await _silence(conn, vehicle, vs, extra)
-                    if nvs is not vs:
-                        vs, extra = nvs, ()
-                backoff = BACKOFF_START_S
-            except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
-                log.warning("redis unavailable for %s (%s); retry in %.1fs", stream, e, backoff)
-                backlog, ready = True, False  # D-ING-08: re-read our PEL after reconnect
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(stop.wait(), backoff)
-                backoff = min(backoff * 2, BACKOFF_MAX_S)
-                last_new = time.monotonic()  # a broker outage is not loss of signal (D-UI-04/15)
+                claimed = res[0][1] if res else []
+            entries: list[Entry] = [(eid.decode(), f or {}) for eid, f in claimed]
+            nvs, _ = await process_batch(ctx, conn, stream, entries, vs, extra)
+            if entries:
+                extra = ()
+            if nvs.seq != vs.seq:  # a new frame advanced the tracker
+                last_new = time.monotonic()
+            vs = nvs
+            if time.monotonic() - last_new > ctx.timing.los_s:
+                nvs = await _silence(conn, vehicle, vs, extra)
+                if nvs is not vs:
+                    vs, extra = nvs, ()
+            backoff = BACKOFF_START_S
+        except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
+            log.warning("redis unavailable for %s (%s); retry in %.1fs", stream, e, backoff)
+            drain, ready, cursor = True, False, "0-0"  # D-ING-08: re-read pending after reconnect
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(stop.wait(), backoff)
+            backoff = min(backoff * 2, BACKOFF_MAX_S)
+            last_new = time.monotonic()  # a broker outage is not loss of signal (D-UI-04/15)
+        if home not in (None, ctx.consumer) and time.monotonic() >= next_handback:
+            next_handback = time.monotonic() + ctx.timing.handback_s
+            if await waiting(conn, vehicle, home):  # between batches: the last one is acked
+                log.info("handing %s back to %s", vehicle, home)
+                await release(conn, vehicle)
+                return

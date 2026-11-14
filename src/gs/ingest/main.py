@@ -6,7 +6,8 @@ import signal
 import sys
 import time
 from collections import Counter
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import psycopg
@@ -20,6 +21,7 @@ from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
 from gs.ingest.errors import OperationalDbError
 from gs.ingest.events import insert_set
+from gs.ingest.owner import parse_homes
 from gs.ingest.validate import FieldStats
 from gs.ingest.worker import Ctx, run_vehicle
 
@@ -36,17 +38,20 @@ class IngestSettings:
     mission_db: str
     bind_host: str
     health_port: int
+    homes: Mapping[str, str] = field(default_factory=dict)  # vehicle -> home consumer
 
     @classmethod
     def from_env(cls) -> IngestSettings:
+        vehicles = vehicle_list(require("VEHICLES"))
         return cls(
             redis_url=require("REDIS_URL"),
             database_url=require("DATABASE_URL"),
             consumer_name=require("CONSUMER_NAME"),
-            vehicles=vehicle_list(require("VEHICLES")),
+            vehicles=vehicles,
             mission_db=require("MISSION_DB"),
             bind_host=require("BIND_HOST"),
             health_port=require_int("HEALTH_PORT"),
+            homes=parse_homes(require("INGEST_HOMES"), vehicles),
         )
 
 
@@ -68,7 +73,7 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
     r = redis.asyncio.Redis.from_url(
         s.redis_url, socket_timeout=SOCKET_TIMEOUT_S, retry=Retry(NoBackoff(), 0)
     )
-    seen = {v: time.monotonic() for v in s.vehicles}  # startup grace
+    seen: dict[str, float] = {}  # a standby task (lock not granted) is not a stale loop
     ctx = Ctx(
         s.consumer_name,
         build_frame_model(mdb.param_names),
@@ -78,9 +83,12 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
         seen,
         mdb.set_sha256,
         Counter(),
+        s.homes,
     )
     server = await serve_health(
-        s.bind_host, s.health_port, lambda: ingest_status(seen, s.vehicles, time.monotonic())
+        s.bind_host,
+        s.health_port,
+        lambda: ingest_status(seen, tuple(sorted(ctx.owned)), time.monotonic()),
     )
     try:
         async with asyncio.TaskGroup() as tg:  # any task error cancels the rest and exits 1

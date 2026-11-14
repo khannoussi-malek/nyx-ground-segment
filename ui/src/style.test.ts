@@ -43,8 +43,14 @@ const PAIRS: [string, string, number][] = [
   ["on-bar-muted", "bar", 4.5],
   ["on-action", "action-hover", 4.5],
   ["action", "bar", 3],
-  ["gauge-marker", "gauge-track", 3],
-  ["gauge-marker", "gauge-normal", 3],
+  // limit gauge (G20: grey only): neighbouring zones and the pointer on every zone (WCAG 1.4.11)
+  ["zone-yellow", "zone-normal", 3],
+  ["zone-red", "zone-yellow", 3],
+  ["gauge-pointer", "surface", 3],
+  ["gauge-pointer", "zone-normal", 3],
+  ["gauge-pointer", "zone-yellow", 3],
+  ["gauge-halo", "zone-red", 3], // the needle's light outline carries it over the darkest zone
+  ["ink", "surface", 4.5], // printed limits
   ["ink", "yellow", 4.5],
   ["ink", "red-tint", 4.5],
   ["ink-muted", "red-tint", 4.5],

@@ -6,19 +6,21 @@ export type Limits = {
   yellow_high?: number | null;
   red_high?: number | null;
 };
-export type Tick = { at: number; level: "YELLOW" | "RED" };
+export type Zone = { from: number; to: number; kind: "normal" | "yellow" | "red" };
+export type Mark = { at: number; value: number }; // a limit printed under the track
 export type Gauge = {
-  pos: number | null; // null: no value, no marker
+  pos: number | null; // null: no value, no pointer
   clamped: -1 | 0 | 1; // value beyond the track, pinned to that edge
-  normal: readonly [number, number];
-  ticks: readonly Tick[];
+  zones: readonly Zone[]; // left to right, covering 0..1
+  marks: readonly Mark[];
 };
 
 const PAD = 0.1; // of the limit span, so a value just past red still shows inside the track
 
 export function gaugeOf(l: Limits, value: number | null): Gauge | null {
-  const lo0 = l.red_low ?? l.yellow_low;
-  const hi0 = l.red_high ?? l.yellow_high;
+  const { red_low: rl, yellow_low: yl, yellow_high: yh, red_high: rh } = l;
+  const lo0 = rl ?? yl;
+  const hi0 = rh ?? yh;
   if (lo0 == null && hi0 == null) return null;
   // a one-sided parameter runs from zero (current, pressure); never from the value: the track must not move
   const lo = lo0 ?? Math.min(0, hi0!);
@@ -26,24 +28,25 @@ export function gaugeOf(l: Limits, value: number | null): Gauge | null {
   const span = hi - lo;
   if (!(span > 0)) return null;
   const min = lo - PAD * span;
-  const frac = (x: number) => (x - min) / (span * (1 + 2 * PAD));
+  const f = (x: number) => (x - min) / (span * (1 + 2 * PAD));
 
-  const ticks: Tick[] = [];
-  for (const [v, level] of [
-    [l.red_low, "RED"],
-    [l.yellow_low, "YELLOW"],
-    [l.yellow_high, "YELLOW"],
-    [l.red_high, "RED"],
-  ] as const) {
-    if (v != null) ticks.push({ at: frac(v), level });
-  }
-  const nLo = l.yellow_low ?? l.red_low;
-  const nHi = l.yellow_high ?? l.red_high;
-  const normal = [nLo == null ? 0 : frac(nLo), nHi == null ? 1 : frac(nHi)] as const;
+  const zones: Zone[] = [];
+  let x = 0;
+  const upTo = (to: number, kind: Zone["kind"]) => {
+    if (to > x) zones.push({ from: x, to, kind });
+    x = Math.max(x, to);
+  };
+  if (rl != null) upTo(f(rl), "red");
+  if (yl != null) upTo(f(yl), "yellow");
+  upTo((yh ?? rh) == null ? 1 : f((yh ?? rh)!), "normal");
+  if (yh != null) upTo(rh == null ? 1 : f(rh), "yellow");
+  upTo(1, "red"); // no-op when the high side has no red
 
-  if (value == null) return { pos: null, clamped: 0, normal, ticks };
-  const raw = frac(value);
-  if (raw < 0) return { pos: 0, clamped: -1, normal, ticks };
-  if (raw > 1) return { pos: 1, clamped: 1, normal, ticks };
-  return { pos: raw, clamped: 0, normal, ticks };
+  const marks = [lo0, hi0].filter((v): v is number => v != null).map((v) => ({ at: f(v), value: v }));
+
+  if (value == null) return { pos: null, clamped: 0, zones, marks };
+  const raw = f(value);
+  if (raw < 0) return { pos: 0, clamped: -1, zones, marks };
+  if (raw > 1) return { pos: 1, clamped: 1, zones, marks };
+  return { pos: raw, clamped: 0, zones, marks };
 }

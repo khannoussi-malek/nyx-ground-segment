@@ -1,6 +1,5 @@
-import type { CSSProperties } from "react";
 import { formatValue } from "./format";
-import { gaugeOf, type Limits } from "./gauge";
+import { gaugeOf, type Gauge, type Limits } from "./gauge";
 import { Glyph } from "./Glyph";
 import { acqMark, limitBadge, NOMINAL_OK, type ParamState } from "./status";
 
@@ -14,21 +13,27 @@ export type ParamView = {
 };
 
 const pct = (f: number) => `${(f * 100).toFixed(2)}%`;
+const limitText = (v: number) => String(v).replace("-", "\u2212");
 
-function GaugeBar({ limits, value }: { limits: Limits; value: number | null }) {
-  const g = gaugeOf(limits, value);
-  if (!g) return null;
-  const normal: CSSProperties = { left: pct(g.normal[0]), width: pct(g.normal[1] - g.normal[0]) };
+/** Grey zones (normal, yellow range, red range), a pointer at the value and the outer limits
+ *  printed under the track. Decorative for screen readers: the value cell carries the number. */
+function GaugeBar({ g }: { g: Gauge }) {
   return (
-    <span className="gauge" aria-hidden="true">
-      <span className="gauge-normal" style={normal} />
-      {g.ticks.map((t) => (
-        <span key={`${t.level}${t.at}`} className={`gauge-tick ${t.level.toLowerCase()}`} style={{ left: pct(t.at) }} />
-      ))}
+    <div className="gauge" aria-hidden="true">
+      <div className="gauge-track">
+        {g.zones.map((z) => (
+          <span key={z.from} className="zone" data-kind={z.kind} style={{ left: pct(z.from), width: pct(z.to - z.from) }} />
+        ))}
+      </div>
       {g.pos !== null && (
-        <span className="gauge-marker" data-clamped={g.clamped || undefined} style={{ left: pct(g.pos) }} />
+        <span className="gauge-pointer" data-clamped={g.clamped || undefined} style={{ left: pct(g.pos) }} />
       )}
-    </span>
+      {g.marks.map((m) => (
+        <span key={m.at} className="gauge-mark" style={{ left: pct(m.at) }}>
+          {limitText(m.value)}
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -36,33 +41,43 @@ export function ParamRow({ vehicle, seq, tOnboard, p }: { vehicle: string; seq: 
   const state = p.state ?? NOMINAL_OK;
   const acq = acqMark(state.acq);
   const badge = limitBadge(state);
+  const g = p.limits ? gaugeOf(p.limits, p.value) : null;
+  // one tbody per parameter: name + value, then the full-width gauge; the state tints both rows
   return (
-    <tr data-level={p.state?.level} data-acq={p.state?.acq}>
-      <th scope="row">
-        <span className="label">{p.label || p.id}</span>
-        {p.label && <span className="pid">{p.id}</span>}
-        {(badge || acq) && (
-          <span className="marks">
-            {badge && (
-              <span className="badge" data-tone={badge.tone}>
-                <Glyph kind={state.level === "RED" ? "red" : "yellow"} />
-                {badge.text}
-              </span>
-            )}
-            {acq && (
-              <span className="acq">
-                <Glyph kind={acq.glyph} />
-                {acq.text}
-              </span>
-            )}
-          </span>
-        )}
-      </th>
-      <td className="gauge-cell">{p.limits && <GaugeBar limits={p.limits} value={p.value} />}</td>
-      <td className="value" data-vehicle={vehicle} data-param={p.id} data-seq={seq} data-t-onboard={tOnboard}>
-        <span className="num">{formatValue(p.value)}</span>
-        {p.unit && <span className="unit">{p.unit}</span>}
-      </td>
-    </tr>
+    <tbody data-level={p.state?.level} data-acq={p.state?.acq}>
+      <tr>
+        <th scope="row">
+          <span className="label">{p.label || p.id}</span>
+          {p.label && <span className="pid">{p.id}</span>}
+          {(badge || acq) && (
+            <span className="marks">
+              {badge && (
+                <span className="badge" data-tone={badge.tone}>
+                  <Glyph kind={state.level === "RED" ? "red" : "yellow"} />
+                  {badge.text}
+                </span>
+              )}
+              {acq && (
+                <span className="acq">
+                  <Glyph kind={acq.glyph} />
+                  {acq.text}
+                </span>
+              )}
+            </span>
+          )}
+        </th>
+        <td className="value" data-vehicle={vehicle} data-param={p.id} data-seq={seq} data-t-onboard={tOnboard}>
+          <span className="num">{formatValue(p.value)}</span>
+          {p.unit && <span className="unit">{p.unit}</span>}
+        </td>
+      </tr>
+      {g && (
+        <tr className="gauge-row">
+          <td colSpan={2}>
+            <GaugeBar g={g} />
+          </td>
+        </tr>
+      )}
+    </tbody>
   );
 }

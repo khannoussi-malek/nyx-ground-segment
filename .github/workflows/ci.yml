@@ -30,5 +30,6 @@ jobs:
           enable-cache: true
       - run: uv sync --frozen
       - run: make env
-      - run: docker compose up -d --wait redis db
+      - run: docker compose up -d --wait redis db minio
+      - run: docker compose run --rm minio-init
       - run: uv run pytest --cov=gs --cov-fail-under=80

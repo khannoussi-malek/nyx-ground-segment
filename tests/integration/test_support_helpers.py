@@ -101,3 +101,9 @@ async def test_authed_client_is_logged_in_and_get_json_reads_it(users_file: Path
         assert isinstance(client, httpx.AsyncClient)
         body = await get_json(client, "/api/vehicles")
     assert body
+
+
+@pytest.mark.parametrize("values", [{}, {"a": [], "b": []}, {"a": [1.0], "b": [1.0, 2.0]}])
+def test_produce_values_rejects_empty_or_unequal_series(values: dict[str, list[float]]) -> None:
+    with pytest.raises(AssertionError, match="equal length"):
+        produce_values(vid(), values)

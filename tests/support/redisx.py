@@ -122,7 +122,11 @@ def produce_values(
 ) -> None:
     """XADD one frame per index of the `values` series (equal lengths): every other parameter
     at its nominal, 100 ms apart from `base` (default a minute ago), `last_cmd_id` on each."""
-    (n,) = {len(x) for x in values.values()}
+    lengths = {len(x) for x in values.values()}
+    assert len(lengths) == 1 and 0 not in lengths, (
+        f"series must be non-empty and equal length: {lengths}"
+    )
+    (n,) = lengths
     base = base or time_base()
     for i in range(n):
         seq = start_seq + i

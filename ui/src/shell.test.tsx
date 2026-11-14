@@ -130,9 +130,10 @@ class FakeAudio {
     FakeAudio.states.push(this);
   }
   resume() {
-    this.state = "running";
-    this.listeners.forEach((f) => f());
-    return Promise.resolve();
+    return Promise.resolve().then(() => {
+      this.state = "running";
+      this.listeners.forEach((f) => f());
+    });
   }
   addEventListener(_: string, f: () => void) {
     this.listeners.push(f);
@@ -221,6 +222,7 @@ test("App: 3 s of silence sounds NO LIVE CONNECTION once (fake timers)", async (
   vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
   try {
     const es = await liveConsole();
+  await act(async () => button("SOUND OFF – click to enable")!.click());
     es.emit("snapshot", snapshot());
     act(() => void vi.advanceTimersByTime(2999));
     expect(attr("data-last-tone")).toBe("");
@@ -237,6 +239,7 @@ test("App: a throttled background tab still sounds NO LIVE CONNECTION when it is
   const spy = vi.spyOn(performance, "now").mockImplementation(() => now);
   try {
     const es = await liveConsole();
+  await act(async () => button("SOUND OFF – click to enable")!.click());
     es.emit("snapshot", snapshot());
     now = 9000;
     act(() => void document.dispatchEvent(new Event("visibilitychange")));
@@ -247,20 +250,82 @@ test("App: a throttled background tab still sounds NO LIVE CONNECTION when it is
   }
 });
 
-test("arming the audio (P-pf23): an unacknowledged RED and an active LOS sound at once, though first seen while it was off", async () => {
+const arm = () => act(async () => button("SOUND OFF – click to enable")!.click());
+const LOS = eventView("LOS/NYX-TA1/1/7", { kind: "LOS", vehicle: "NYX-TA1" });
+
+test("a RED onset while the audio is off is not lost: arming sounds exactly one beep (P-pf23)", async () => {
   const es = await liveConsole();
-  es.emit("snapshot", snapshot([alarmView()], [eventView("LOS/NYX-TA1/1/7", { kind: "LOS", vehicle: "NYX-TA1" })]));
-  expect(attr("data-beeps")).toBe("1"); // the key was consumed while nothing could sound
-  expect(played).toEqual([]);
-  FakeAudio.startState = "suspended"; // the click's context is created suspended, then resumed
-  await act(async () => button("SOUND OFF – click to enable")!.click());
+  es.emit("snapshot", snapshot([alarmView()]));
+  expect([attr("data-beeps"), played]).toEqual(["0", []]); // pending, not marked
+  await arm();
+  expect([attr("data-beeps"), played]).toEqual(["1", [880]]);
+  es.emit("snapshot", snapshot([alarmView()])); // resync: no second sound
+  expect(played).toEqual([880]);
+});
+
+test("a LOS onset while the audio is off sounds one tone on arming; a suspended context counts as off", async () => {
+  FakeAudio.startState = "suspended";
+  const es = await liveConsole();
+  es.emit("snapshot", snapshot([], [LOS]));
+  expect([attr("data-last-tone"), played]).toEqual(["", []]);
+  FakeAudio.startState = "suspended"; // armAudio's context starts suspended and resumes asynchronously
+  await arm();
+  expect([attr("data-last-tone"), played]).toEqual(["LOS:LOS/NYX-TA1/1/7", [440]]);
+});
+
+test("arming with both open sounds one beep and one tone, never twice", async () => {
+  const es = await liveConsole();
+  es.emit("snapshot", snapshot([alarmView()], [LOS]));
+  await arm();
   expect(played).toEqual([880, 440]);
-  expect(button("SOUND OFF – click to enable")).toBeUndefined();
+});
+
+test("an RED already beeped before a reload still beeps once when the reloaded console is armed", async () => {
+  const es = await liveConsole();
+  await arm();
+  es.emit("snapshot", snapshot([alarmView()]));
+  expect(played).toEqual([880]);
+  act(() => root.unmount());
+  root = createRoot(host);
+  played.length = 0;
+  await act(async () => root.render(<App />));
+  LiveES.all.at(-1)!.emit("snapshot", snapshot([alarmView()]));
+  expect([attr("data-beeps"), played]).toEqual(["0", []]);
+  await arm();
+  expect(played).toEqual([880]); // the open unacknowledged RED, once
 });
 
 test("arming with nothing active is silent; an ACKED RED does not beep", async () => {
   const es = await liveConsole();
-  es.emit("snapshot", snapshot([alarmView({ state: "ACKED" })]));
-  await act(async () => button("SOUND OFF – click to enable")!.click());
+  es.emit("snapshot", snapshot([alarmView({ state: "ACKED", last: { ...alarmView().last, kind: "ACK", alert: false } })]));
+  await arm();
   expect(played).toEqual([]);
+});
+
+test("a state key from before a reload cannot silence the next onset", async () => {
+  const es = await liveConsole();
+  await arm();
+  es.emit("snapshot", snapshot());
+  es.emit("ground", { kind: "ground", broker: "down" });
+  expect(played).toEqual([440]);
+  act(() => root.unmount());
+  root = createRoot(host);
+  played.length = 0;
+  await act(async () => root.render(<App />));
+  await arm();
+  const es2 = LiveES.all.at(-1)!;
+  es2.emit("snapshot", snapshot());
+  es2.emit("ground", { kind: "ground", broker: "up" });
+  es2.emit("ground", { kind: "ground", broker: "down" });
+  expect(played).toEqual([440]);
+  expect(attr("data-last-tone")).toBe("BROKER:*|BROKER");
+});
+
+test("a failed login closes the audio context it armed", async () => {
+  const close = vi.fn(() => Promise.resolve());
+  vi.stubGlobal("AudioContext", class { resume = () => Promise.resolve(); close = close; });
+  stubApi({ "/api/login": { status: 401, body: { error: "LOGIN_FAILED", message: "x" } } });
+  act(() => root.render(<Login onLogin={vi.fn()} />));
+  await submitLogin("fc1", "bad");
+  expect(close).toHaveBeenCalledOnce();
 });

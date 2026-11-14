@@ -37,12 +37,21 @@ export function createKeySet(name: string, storage: Pick<Storage, "getItem" | "s
 }
 
 /** sessionStorage can throw on access itself (blocked site data), so the lookup is guarded too. */
-export function sessionKeySet(name: string): KeySet {
+export function sessionKeySet(name: string, tones = false): KeySet {
   let s: Storage | null = null;
   try {
     s = globalThis.sessionStorage ?? null;
   } catch {
     s = null;
   }
-  return createKeySet(name, s);
+  return tones ? createToneKeySet(s) : createKeySet(name, s);
+}
+
+/** Tone keys: event keys (LOS, FROZEN) are unique per onset and persist; state keys (`*|NLC`, `v|GPD`) are memory only,
+ *  so one left over from before a reload can never silence the next onset. An ongoing state sounds on arming anyway. */
+export function createToneKeySet(storage: Pick<Storage, "getItem" | "setItem"> | null): KeySet {
+  const persistent = createKeySet("tones", storage);
+  const memory = createKeySet("tones-state", null);
+  const pick = (k: string) => (k.includes("|") ? memory : persistent);
+  return { has: (k) => pick(k).has(k), add: (k) => pick(k).add(k), delete: (k) => pick(k).delete(k) };
 }

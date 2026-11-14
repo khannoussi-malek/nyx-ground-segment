@@ -12,7 +12,10 @@ export function Login({ onLogin }: { onLogin: (user: string, audio: AudioContext
     const user = String(f.get("user"));
     const failure = await attemptLogin(login, user, String(f.get("password")));
     if (failure === null) onLogin(user, audio);
-    else setError(failure);
+    else {
+      void audio?.close().catch(() => {}); // browsers cap live contexts; a failed login must not leak one
+      setError(failure);
+    }
   }
   return (
     <main className="login">

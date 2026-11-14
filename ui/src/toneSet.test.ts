@@ -1,6 +1,6 @@
 import { expect, test } from "vitest";
 import { toneActive, toneKeys, type ToneState } from "./audio";
-import { createKeySet } from "./keySet";
+import { createKeySet, createToneKeySet } from "./keySet";
 import { createStore, ingest } from "./store";
 
 const memoryStorage = () => {
@@ -82,4 +82,17 @@ test("processing down, broker down and lost link, with the banner's precedence",
 
 test("no NLC tone before the first snapshot", () => {
   expect(toneActive(createStore())).toEqual({});
+});
+
+test("state keys are memory only: nothing of them reaches the storage, a reload starts clean", () => {
+  const storage = memoryStorage();
+  const seen = createToneKeySet(storage);
+  const nlc = st({ "*|NLC": "NLC" });
+  const los = st({ "LOS/V/1/7": "LOS" });
+  expect(toneKeys(none, nlc, 0, seen).play).toBe(true);
+  expect(toneKeys(none, los, 5000, seen).play).toBe(true);
+  expect(storage.getItem("nyx.tones")).toBe('["LOS/V/1/7"]');
+  const reloaded = createToneKeySet(storage); // reload: NLC key gone, LOS key remembered
+  expect(toneKeys(none, nlc, 9000, reloaded).play).toBe(true);
+  expect(toneKeys(none, los, 12000, reloaded).play).toBe(false);
 });

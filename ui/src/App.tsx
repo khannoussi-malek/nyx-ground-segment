@@ -13,34 +13,32 @@ import { createStore, ingest, type Store } from "./store";
 function useAudio(store: Store, ctx: AudioContext | null, running: boolean) {
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
-  // Arming (P-pf23): keys first seen while the audio was off are not lost. When it starts running, an unacknowledged
-  // RED beeps once and an active loss-of-monitoring state sounds its tone, whatever the key sets already hold.
-  useEffect(() => {
-    const c = ctxRef.current;
-    if (!running || !c) return;
-    if (store.alarms().some((x) => x.severity === "RED" && x.state === "UNACK")) beep(c);
-    if (Object.keys(toneActive(store)).length > 0) tone(c);
-  }, [running, store]);
   const [stat, setStat] = useState({ beeps: 0, lastTone: "" });
+  // Keys are marked only while the audio is running, so an onset while it is off stays pending (P-pf23). When it
+  // starts running, ONE check sounds what is pending plus any open unacknowledged RED and active monitoring state.
   useEffect(() => {
     const beeped = sessionKeySet("beeps");
-    const toned = sessionKeySet("tones");
+    const toned = sessionKeySet("tones", true);
     let prev: ToneState = { active: {}, lastPlayAt: null };
-    const check = () => {
+    const check = (arming = false) => {
+      const c = ctxRef.current;
+      if (!running || !c) return;
       const now = performance.now();
       const fresh = beepsFor(store.alarms(), beeped);
       const next: ToneState = { active: toneActive(store), lastPlayAt: prev.lastPlayAt };
       const { play, keys } = toneKeys(prev, next, now, toned);
-      prev = { active: next.active, lastPlayAt: play ? now : prev.lastPlayAt };
-      const c = ctxRef.current;
-      if (c && fresh.length > 0) beep(c); // one beep per batch: three REDs in one snapshot are one sound
-      if (c && play) tone(c);
+      const redOpen = arming && store.alarms().some((x) => x.severity === "RED" && x.state === "UNACK");
+      const toneOpen = arming && Object.keys(next.active).length > 0;
+      const sound = play || toneOpen;
+      prev = { active: next.active, lastPlayAt: sound ? now : prev.lastPlayAt };
+      if (fresh.length > 0 || redOpen) beep(c); // one beep per batch: three REDs in one snapshot are one sound
+      if (sound) tone(c);
       const last = keys.at(-1);
       if (fresh.length > 0 || last !== undefined)
         setStat((s) => ({ beeps: s.beeps + fresh.length, lastTone: last === undefined ? s.lastTone : `${next.active[last]}:${last}` }));
     };
-    check();
-    const off = store.subscribe(check);
+    check(true);
+    const off = store.subscribe(() => check());
     const onVisible = () => {
       if (document.visibilityState === "visible") {
         store.recheck();
@@ -52,7 +50,7 @@ function useAudio(store: Store, ctx: AudioContext | null, running: boolean) {
       off();
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [store]);
+  }, [store, running]);
   return stat;
 }
 

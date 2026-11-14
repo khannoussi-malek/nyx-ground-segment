@@ -19,7 +19,6 @@ from tests.support.redisx import (
     pending,
     pending_of,
     produce,
-    read_without_ack,
     ui_tm_count,
 )
 
@@ -115,11 +114,11 @@ async def test_hang_in_loop_stops_the_loop() -> None:
 
 
 async def test_after_fence_hook_sits_between_fence_and_read(tmp_path: Path) -> None:
-    """The hook loses the lock right after the fence passed: the worker still reads once (the
-    R14 E-5 residual window), so the entries land in its PEL before the commit fails."""
+    """R14 E-5's window is the `>` read: the hook loses the lock right after the fence passed and
+    the worker still reads new entries into its PEL once, before its commit fails. The takeover
+    drain pass (nothing pending here) must not consume the once-per-container hook."""
     v = vid()
     produce(v, N)
-    read_without_ack(v, "ghost")  # pending: the first pass (takeover drain) has entries to read
 
     def lose_lock(_: int, __: int) -> None:
         owner = lock_holder_pid(v)
@@ -130,6 +129,6 @@ async def test_after_fence_hook_sits_between_fence_and_read(tmp_path: Path) -> N
     with pytest.raises(OperationalDbError):
         async with worker([v], "w1", hooks=hooks) as w:
             await asyncio.wait_for(w.tasks[0], 5)
-    # read after the fence: one stale read (the drain claims one entry at a time) took an entry
-    # into w1's PEL; with the hook above the fence, the fence fails first and nothing moves
-    assert (pending_of(v, "w1"), pending_of(v, "ghost"), stored(v)) == (1, N - 1, 0)
+    # a stale `>` read took all N new entries into w1's PEL; with the hook above the fence, the
+    # fence fails first and nothing is read
+    assert (pending_of(v, "w1"), stored(v)) == (N, 0)

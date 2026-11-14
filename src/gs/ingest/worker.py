@@ -353,7 +353,6 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
                 ready = True
             await ctx.redis.set(f"hb:veh:{vehicle}", 1, ex=ctx.timing.hb_ttl_s)  # D-ING-25
             await fence(conn)
-            ctx.hooks.fire("after_fence_before_read")  # R14 E-5's window
             if claim_idle is not None:
                 res: Any = await ctx.redis.xautoclaim(
                     stream, GROUP, ctx.consumer, claim_idle, cursor, 1
@@ -362,6 +361,7 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
                 if cursor == "0-0":
                     claim_idle = None
             else:
+                ctx.hooks.fire("after_fence_before_read")  # R14 E-5's window: before the `>` read
                 res = await ctx.redis.xreadgroup(
                     GROUP, ctx.consumer, {stream: ">"}, count=COUNT, block=BLOCK_MS
                 )

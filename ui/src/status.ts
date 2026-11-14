@@ -2,7 +2,7 @@
  *  Day 3 feeds the states from SSE; nothing here derives a state from limits. */
 export type Acq = "OK" | "STALE" | "FROZEN" | "NO_DATA";
 export type Level = "NOMINAL" | "YELLOW" | "RED";
-export type Side = "LOW" | "HIGH";
+export type Side = "LOW" | "HIGH" | "RISING" | "FALLING";
 export type ParamState = {
   acq: Acq;
   level: Level;

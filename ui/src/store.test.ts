@@ -1,5 +1,5 @@
-import { expect, test, vi } from "vitest";
-import { createStore, ingest, type Snapshot, type Tm } from "./store";
+import { afterEach, expect, test, vi } from "vitest";
+import { createStore, ingest, type AlarmView, type CommandView, type EventView, type Snapshot, type Tm } from "./store";
 
 const tm = (seq: number, t: string, vehicle = "NYX-TA1", p = 101.3): Tm => ({
   kind: "tm", vehicle, seq, t_onboard: t, mode: "TEST",
@@ -111,4 +111,121 @@ test("the store stamps when each vehicle's latest tm arrived", () => {
   expect(s.receivedAt("NYX-TA1")).toBe(100);
   s.applySnapshot(snap(tm(2, "2026-11-14T10:00:02.000000Z"), tm(2, "2026-11-14T10:00:02.000000Z", "NYX-TA2")));
   expect([s.receivedAt("NYX-TA1"), s.receivedAt("NYX-TA2")]).toEqual([250, 250]);
+});
+
+afterEach(() => vi.useRealTimers());
+
+const alarm = (id: string, state: string, param = "p", vehicle = "NYX-TA1") =>
+  ({ alarm_id: id, state, param, vehicle, level: "RED_HIGH" }) as unknown as AlarmView;
+const cmd = (id: string, state = "QUEUED") => ({ cmd_id: id, state }) as unknown as CommandView;
+const ev = (key: string) => ({ key, kind: "k", vehicle: null, t_onboard: null, details: {} }) as EventView;
+
+test("alarm upsert by id, CLEARED removed, openAlarm finds by vehicle and param", () => {
+  const s = createStore();
+  s.applyAlarm(alarm("a1", "UNACK"));
+  s.applyAlarm(alarm("a1", "ACKED"));
+  expect(s.alarms()).toHaveLength(1);
+  expect(s.openAlarm("NYX-TA1", "p")?.state).toBe("ACKED");
+  expect(s.openAlarm("NYX-TA2", "p")).toBeUndefined();
+  s.applyAlarm(alarm("a1", "CLEARED"));
+  expect(s.alarms()).toEqual([]);
+  expect(s.openAlarm("NYX-TA1", "p")).toBeUndefined();
+});
+
+test("snapshot replaces alarms, commands and events and sets hasSnapshot", () => {
+  const s = createStore();
+  expect(s.hasSnapshot()).toBe(false);
+  s.applyAlarm(alarm("old", "UNACK"));
+  s.applyCmd(cmd("old"));
+  s.applyLink(ev("old"));
+  s.applySnapshot({ ...snap(), alarms: [alarm("n", "UNACK")], commands: [cmd("n")], events: [ev("n")] });
+  expect(s.hasSnapshot()).toBe(true);
+  expect([s.alarms()[0]?.alarm_id, s.commands()[0]?.cmd_id, s.events()[0]?.key]).toEqual(["n", "n", "n"]);
+  expect([s.alarms().length, s.commands().length, s.events().length]).toEqual([1, 1, 1]);
+});
+
+test("command upsert by id", () => {
+  const s = createStore();
+  s.applyCmd(cmd("c1"));
+  s.applyCmd(cmd("c1", "SENT"));
+  expect(s.commands()).toHaveLength(1);
+  expect(s.commands()[0]?.state).toBe("SENT");
+});
+
+test("link events dedupe by key, newest first, keep 200", () => {
+  const s = createStore();
+  s.applyLink(ev("a"));
+  s.applyLink(ev("a"));
+  s.applyLink(ev("b"));
+  expect(s.events().map((e) => e.key)).toEqual(["b", "a"]);
+  for (let i = 0; i < 250; i++) s.applyLink(ev(`k${i}`));
+  expect(s.events()).toHaveLength(200);
+  expect(s.events()[0]?.key).toBe("k249");
+});
+
+test("link state: broker, processing, selectors stable between changes", () => {
+  const s = createStore();
+  const l = s.link();
+  expect(s.link()).toBe(l);
+  expect(l).toEqual({ connected: false, broker: "up", processing: {} });
+  s.setGround("down");
+  s.setProcessing({ "NYX-TA1": false });
+  expect(s.link()).toMatchObject({ broker: "down", processing: { "NYX-TA1": false } });
+  expect(s.alarms()).toBe(s.alarms());
+});
+
+test("connected: a message sets it, an error clears it until the next message", () => {
+  const s = createStore();
+  s.noteMessage();
+  expect(s.link().connected).toBe(true);
+  s.noteError();
+  expect(s.link().connected).toBe(false);
+  s.noteMessage();
+  expect(s.link().connected).toBe(true);
+});
+
+test("3 s without a message → connected false by a one-shot timer, re-armed by each message", () => {
+  vi.useFakeTimers();
+  const s = createStore();
+  const fn = vi.fn();
+  s.subscribe(fn);
+  s.noteMessage();
+  vi.advanceTimersByTime(2999);
+  s.noteMessage(); // re-arm
+  vi.advanceTimersByTime(2999);
+  expect(s.link().connected).toBe(true);
+  vi.advanceTimersByTime(1);
+  expect(s.link().connected).toBe(false);
+  expect(vi.getTimerCount()).toBe(0); // one-shot, nothing polling
+  s.noteMessage();
+  s.stop();
+  expect(vi.getTimerCount()).toBe(0);
+});
+
+test("ingest routes every kind and counts each as a message", () => {
+  const s = createStore();
+  ingest(s, "hello", { kind: "hello", server_ms: 1 });
+  expect(s.link().connected).toBe(true);
+  ingest(s, "alarm", { kind: "alarm", alarm: alarm("a", "UNACK") });
+  ingest(s, "cmd", { kind: "cmd", command: cmd("c") });
+  ingest(s, "link", { kind: "link", event: ev("e") });
+  ingest(s, "ground", { kind: "ground", broker: "down" });
+  ingest(s, "hb", { kind: "hb", server_ms: 1, processing: { "NYX-TA1": true } });
+  expect([s.alarms().length, s.commands().length, s.events().length]).toEqual([1, 1, 1]);
+  expect(s.link()).toMatchObject({ broker: "down", processing: { "NYX-TA1": true } });
+  ingest(s, "hb", { kind: "hb", server_ms: 2 }); // no processing map: keep the last
+  expect(s.link().processing).toEqual({ "NYX-TA1": true });
+});
+
+test("ingest drops wrong-shape alarm, cmd, link, ground, hb events", () => {
+  const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+  const s = createStore();
+  ingest(s, "alarm", { alarm: {} });
+  ingest(s, "cmd", { command: null });
+  ingest(s, "link", {});
+  ingest(s, "ground", { broker: "sideways" });
+  ingest(s, "hb", { processing: 3 });
+  expect([s.alarms().length, s.commands().length, s.events().length, s.link().broker]).toEqual([0, 0, 0, "up"]);
+  expect(warn).toHaveBeenCalledTimes(5);
+  warn.mockRestore();
 });

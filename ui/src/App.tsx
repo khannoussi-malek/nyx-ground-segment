@@ -16,15 +16,20 @@ function Console({ user, onLogout }: { user: string; onLogout: () => void }) {
       mounted = false;
     };
   }, [onLogout]);
-  useEffect(
-    () =>
-      connectEvents(
-        "/api/events",
-        (kind, data) => ingest(store, kind, data),
-        () => void checkSession(me, onLogout), // unmounting stops the reconnect loop
-      ),
-    [store, onLogout],
-  );
+  useEffect(() => {
+    const stop = connectEvents(
+      "/api/events",
+      (kind, data) => ingest(store, kind, data),
+      () => {
+        store.noteError();
+        void checkSession(me, onLogout);
+      },
+    ); // unmounting stops the reconnect loop and the silence timer
+    return () => {
+      stop();
+      store.stop();
+    };
+  }, [store, onLogout]);
   return (
     <>
       <header>

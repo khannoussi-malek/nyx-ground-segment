@@ -41,15 +41,18 @@ beforeEach(() => {
   cleared.length = 0;
 });
 
-test("dispatches snapshot and tm as parsed JSON, ignores hello and hb", () => {
+test("dispatches every kind as parsed JSON", () => {
   const got: [string, unknown][] = [];
   connectEvents("/api/events", (k, d) => got.push([k, d]), () => {}, deps);
   const es = FakeEventSource.all[0]!;
   expect(es.url).toBe("/api/events");
   es.emit("snapshot", '{"kind":"snapshot","vehicles":{}}');
   es.emit("tm", '{"kind":"tm","seq":1}');
-  expect([...es.listeners.keys()].sort()).toEqual(["error", "snapshot", "tm"]);
-  expect(got).toEqual([["snapshot", { kind: "snapshot", vehicles: {} }], ["tm", { kind: "tm", seq: 1 }]]);
+  expect([...es.listeners.keys()].sort()).toEqual(
+    ["alarm", "cmd", "error", "ground", "hb", "hello", "link", "snapshot", "tm"],
+  );
+  es.emit("hb", '{"kind":"hb"}');
+  expect(got).toEqual([["snapshot", { kind: "snapshot", vehicles: {} }], ["tm", { kind: "tm", seq: 1 }], ["hb", { kind: "hb" }]]);
 });
 
 test("malformed JSON is logged and skipped, not thrown", () => {

@@ -1,7 +1,9 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { MissionDb } from "./api";
+import { conditionFor } from "./banners";
 import { ageAt } from "./format";
 import { paramViews } from "./params";
+import { paramState } from "./states";
 import type { Store } from "./store";
 import { VehicleCard } from "./VehicleCard";
 
@@ -18,18 +20,29 @@ function useTick(ms: number): void {
 
 function Vehicle({ store, v, mission }: { store: Store; v: string; mission: MissionDb | null }) {
   const tm = useSyncExternalStore(store.subscribe, () => store.vehicle(v), () => store.vehicle(v));
+  const link = useSyncExternalStore(store.subscribe, store.link, store.link);
+  useSyncExternalStore(store.subscribe, store.alarms, store.alarms); // re-render on alarm changes
+  const wired = useSyncExternalStore(store.subscribe, store.hasSnapshot, store.hasSnapshot);
   useTick(AGE_TICK_MS);
   if (!tm) return null;
-  // states (ParamView.state, statesWired) are wired on day 3 from SSE (G20)
-  const params = paramViews(tm.values, mission);
+  const ageMs = ageAt(tm.age_ms, store.receivedAt(v), performance.now());
+  const condition = conditionFor({ ...link, processing: link.processing[v], ageMs, frozen: tm.frozen });
+  // FROZEN is counted from the rows; only the vehicle-level conditions replace the summary
+  const banner = condition === "FROZEN" || condition === "STALE" ? undefined : (condition ?? undefined);
+  // no row state before the first snapshot: the gauge fill and the summary wait for the engine (G26)
+  const params = paramViews(tm.values, mission).map((p) =>
+    wired ? { ...p, state: paramState(p.value, ageMs, tm.frozen, store.openAlarm(v, p.id)) } : p,
+  );
   return (
     <VehicleCard
       vehicle={v}
       mode={tm.mode}
       seq={tm.seq}
       tOnboard={tm.t_onboard}
-      ageMs={ageAt(tm.age_ms, store.receivedAt(v), performance.now())}
+      ageMs={ageMs}
       params={params}
+      banner={banner}
+      statesWired={wired}
     />
   );
 }

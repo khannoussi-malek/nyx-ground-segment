@@ -1,11 +1,14 @@
 import json
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
+import pytest
+
+from gs.alarms import state
 from gs.alarms.engine import compile_set, initial_state
-from gs.alarms.state import load
 from gs.common.interfaces import FrameHeader, build_frame_model
-from gs.common.missiondb import load_dir
-from gs.ingest.events import details_json
+from gs.common.missiondb import MissionDb, load, load_dir
+from gs.ingest.events import applied_key, details_json
 from gs.ingest.fold import (
     VehicleState,
     dump_vehicle,
@@ -21,10 +24,11 @@ from tests.support.mission import MISSION_DIR
 
 V = "NYX-TA1"
 T0 = datetime(2026, 11, 14, 10, tzinfo=UTC)
-CSET = compile_set(load_dir(MISSION_DIR))
+MDB = load_dir(MISSION_DIR)
+CSET = compile_set(MDB)
 SHA = CSET.set_sha256
 ES = initial_state(CSET)
-PARAMS = load_dir(MISSION_DIR).param_names
+PARAMS = MDB.param_names
 MODEL = build_frame_model(PARAMS)
 
 
@@ -39,20 +43,20 @@ def fr(seq: int, t: float, base: float = 1.0, vary: bool = True) -> FrameHeader:
 def run(
     frames: list[FrameHeader], vs: VehicleState | None = None
 ) -> tuple[VehicleState, list[str]]:
-    vs, out = fold(vs or empty_state(CSET), V, frames, PARAMS, CSET)
+    vs, out = fold(vs or empty_state(CSET), V, frames, MDB, CSET)
     return vs, [e.kind for e in out.events]
 
 
 def test_dup_frames_not_new() -> None:
     frames = [fr(0, 0.0), fr(1, 0.1), fr(1, 0.1), fr(2, 0.2)]
-    _, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
+    _, out = fold(empty_state(CSET), V, frames, MDB, CSET)
     assert [f.seq for f in out.new_frames] == [0, 1, 2] and out.dup_or_late == 1
     assert out.events == ()
 
 
 def test_gap_reveals_los_aos_with_lost() -> None:
     frames = [fr(i, i / 10) for i in range(10)] + [fr(i, i / 10) for i in range(110, 120)]
-    vs, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
+    vs, out = fold(empty_state(CSET), V, frames, MDB, CSET)
     assert [e.kind for e in out.events] == ["GAP", "LOS", "AOS"]
     gap, _, aos = out.events
     assert gap.details["lost"] == 100 and aos.details["lost_frames"] == 100
@@ -61,7 +65,7 @@ def test_gap_reveals_los_aos_with_lost() -> None:
 
 def test_reset_aos_lost_unknown() -> None:
     frames = [fr(i, i / 10) for i in range(100)] + [fr(0, 15.0)]
-    _, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
+    _, out = fold(empty_state(CSET), V, frames, MDB, CSET)
     assert [e.kind for e in out.events] == ["SEQ_RESET", "LOS", "AOS"]
     assert out.events[2].details["lost_frames"] is None
 
@@ -113,7 +117,7 @@ def test_frozen_run_survives_reload() -> None:
     frames = [fr(i, i / 10, vary=False) for i in range(25)]
     vs, _ = run(frames[:15])
     vs = load_vehicle(vs.seq, json.loads(json.dumps(dump_vehicle(vs))), SHA, vs.engine)
-    _, out = fold(vs, V, frames[15:], PARAMS, CSET)
+    _, out = fold(vs, V, frames[15:], MDB, CSET)
     ((f,),) = [out.events]
     assert (
         f.kind == "FROZEN"
@@ -128,14 +132,14 @@ def test_state_version_stable_positive() -> None:
 
 def test_seq_jump_aos_lost_unknown() -> None:  # G13, D-ING-16: counter jump ≠ lost frames
     frames = [fr(i, i / 10) for i in range(10)] + [fr(1010, 0.9 + 10.0)]
-    _, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
+    _, out = fold(empty_state(CSET), V, frames, MDB, CSET)
     assert [e.kind for e in out.events] == ["SEQ_JUMP", "LOS", "AOS"]
     assert out.events[0].details["lost"] == 1000 and out.events[2].details["lost_frames"] is None
 
 
 def test_in_order_aos_lost_zero() -> None:  # stale but in order: nothing lost
     frames = [fr(0, 0.0), fr(1, 5.0)]
-    _, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
+    _, out = fold(empty_state(CSET), V, frames, MDB, CSET)
     assert [e.kind for e in out.events] == ["LOS", "AOS"] and out.events[1].details[
         "lost_frames"
     ] == 0
@@ -149,7 +153,7 @@ def nf(seq: int, t: float, temp: float = 22.0) -> FrameHeader:
 
 
 def raises(frames: list[FrameHeader]) -> list[tuple[str, int | None]]:
-    _, out = fold(empty_state(CSET), V, frames, PARAMS, CSET)
+    _, out = fold(empty_state(CSET), V, frames, MDB, CSET)
     return [(t.kind, t.trigger_seq) for t in out.transitions]
 
 
@@ -174,9 +178,48 @@ def test_stale_restarts_persistence() -> None:  # in order, but > 2 s of vehicle
 
 def test_engine_snapshot_continues_exactly() -> None:  # D-ALM-10 at the fold level
     frames = [nf(i, i / 10, 22.0 + i * 0.1) for i in range(120)]  # ramp through yellow, red
-    whole = fold(empty_state(CSET), V, frames, PARAMS, CSET)[1].transitions
-    vs, a = fold(empty_state(CSET), V, frames[:58], PARAMS, CSET)
+    whole = fold(empty_state(CSET), V, frames, MDB, CSET)[1].transitions
+    vs, a = fold(empty_state(CSET), V, frames[:58], MDB, CSET)
     obj = json.loads(json.dumps(dump_vehicle(vs)))
-    vs = load_vehicle(vs.seq, obj, SHA, load(obj["engine"], CSET))
-    _, b = fold(vs, V, frames[58:], PARAMS, CSET)
+    vs = load_vehicle(vs.seq, obj, SHA, state.load(obj["engine"], CSET))
+    _, b = fold(vs, V, frames[58:], MDB, CSET)
     assert len(whole) >= 2 and a.transitions + b.transitions == whole
+
+
+def unchecked_temp() -> MissionDb:
+    """The shipped set with cabin_temp_c's limit check removed."""
+    names = ("limits.yaml", "commands.yaml", "parameters.yaml")
+    raw = [(MISSION_DIR / n).read_bytes() for n in names]
+    line = next(ln for ln in raw[0].decode().splitlines() if "cabin_temp_c" in ln)
+    raw[0] = raw[0].replace(line.encode(), b"  cabin_temp_c: {checks: []}")
+    return load(*raw)
+
+
+def test_first_frame_applies_the_set() -> None:  # no engine_state row yet: LIMITS_APPLIED
+    fresh = replace(empty_state(CSET), set_sha256="")
+    vs, out = fold(fresh, V, [nf(5, 0.5), nf(6, 0.6)], MDB, CSET)
+    (ev,) = out.events
+    t5 = T0 + timedelta(seconds=0.5)
+    assert (ev.kind, ev.key, ev.t_onboard) == ("LIMITS_APPLIED", applied_key(V, t5, 5), t5)
+    assert ev.details == {
+        "first_seq": 5, "set_sha256": MDB.set_sha256, "limits_sha256": MDB.limits_sha256,
+        "commands_sha256": MDB.commands_sha256, "parameters_sha256": MDB.parameters_sha256,
+    }  # fmt: skip
+    assert vs.set_sha256 == SHA
+    _, out = fold(vs, V, [nf(7, 0.7)], MDB, CSET)
+    assert out.events == ()  # applied once
+
+
+def test_new_set_switches_before_the_frame_is_classified() -> None:  # D-ALM-12, R8 7-8
+    vs, out = fold(empty_state(CSET), V, [nf(i, i / 10, 31.0) for i in range(3)], MDB, CSET)
+    assert [t.kind for t in out.transitions] == ["RAISE"]
+    mdb = unchecked_temp()
+    new = compile_set(mdb)
+    with pytest.raises(ValueError, match="built with"):
+        fold(vs, V, [nf(3, 0.3, 31.0)], mdb, new)
+    dup, out = fold(vs, V, [nf(2, 0.2, 31.0)], mdb, new, CSET)  # no new frame: not applied yet
+    assert out.events == () and dup.set_sha256 == SHA
+    vs, out = fold(vs, V, [nf(3, 0.3, 31.0)], mdb, new, CSET)
+    assert [e.kind for e in out.events] == ["LIMITS_APPLIED"]
+    ((kind, seq, note),) = [(t.kind, t.trigger_seq, t.note) for t in out.transitions]
+    assert (kind, seq, note) == ("RTN", 3, "LIMITS_CHANGED") and vs.set_sha256 == new.set_sha256

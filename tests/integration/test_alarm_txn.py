@@ -193,10 +193,13 @@ async def test_snapshot_of_older_set_switches_to_current(tmp_path: Path) -> None
     shipped = next(ln for ln in (m / "limits.yaml").read_text().splitlines() if TEMP in ln)
     edit(m / "limits.yaml", shipped, f"  {TEMP}: {{checks: []}}")  # the alarm's param unchecked
     new = load_dir(m)
-    async with worker([v], mission_dir=m):  # loaded with the old set, switched at load
-        await until(lambda: len(alarm_events_for(v)) == 2, 5)  # no new frame needed
+    produce_values(v, base, [31.0], start_seq=10)
+    async with worker([v], mission_dir=m):  # loaded with the old set, switched at frame 10
+        await until(lambda: len(alarm_events_for(v)) == 2, 5)
     raise_, rtn = alarm_events_for(v)
-    assert (rtn["kind"], rtn["note"], rtn["trigger_seq"]) == ("RTN", "LIMITS_CHANGED", 9)
+    assert (rtn["kind"], rtn["note"], rtn["trigger_seq"]) == ("RTN", "LIMITS_CHANGED", 10)
+    (ev,) = [e for e in events_for(v, "LIMITS_APPLIED") if e["details"]["first_seq"] == 10]
+    assert ev["details"]["set_sha256"] == new.set_sha256
     assert (rtn["set_sha256"], rtn["limits_sha256"]) == (new.set_sha256, new.limits_sha256)
     assert raise_["set_sha256"] == MISSION.set_sha256 and events_for(v, "ENGINE_STATE_RESET") == []
     with psycopg.connect(app_dsn("gs")) as c:

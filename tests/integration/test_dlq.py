@@ -13,7 +13,7 @@ from psycopg import sql
 from gs.alarms.engine import CompiledSet
 from gs.common.interfaces import DlqRecord, FrameHeader
 from gs.common.migrate import add_columns
-from gs.common.missiondb import load_dir
+from gs.common.missiondb import MissionDb, load_dir
 from gs.ingest import worker as worker_mod
 from gs.ingest.errors import OperationalDbError
 from gs.ingest.events import poison_key
@@ -100,12 +100,13 @@ async def test_poison_neighbours_not_dlqd(monkeypatch: pytest.MonkeyPatch) -> No
         vs: VehicleState,
         vehicle: str,
         frames: Sequence[FrameHeader],
-        params: Sequence[str],
+        mdb: MissionDb,
         cset: CompiledSet,
+        old: CompiledSet | None = None,
     ) -> object:
         if any(f.seq == 7 for f in frames):
             raise Crash
-        return fold(vs, vehicle, frames, params, cset)
+        return fold(vs, vehicle, frames, mdb, cset, old)
 
     monkeypatch.setattr(worker_mod, "fold", crashing_fold)
     for _ in range(3):  # crash every time the bad frame is read: deliveries 1, 2, 3

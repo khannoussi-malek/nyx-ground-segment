@@ -10,9 +10,10 @@ from gs.alarms.contract import Transition
 from gs.alarms.engine import CompiledSet, EngineState
 from gs.alarms.state import dump, shape_version
 from gs.common.interfaces import FrameHeader
+from gs.common.missiondb import MissionDb
 from gs.common.time import iso_z
 from gs.ingest import link, seq
-from gs.ingest.events import GroundEvent
+from gs.ingest.events import GroundEvent, applied_key
 from gs.ingest.link import FrozenState, LinkState
 from gs.ingest.seq import SeqState
 
@@ -22,7 +23,7 @@ class VehicleState:
     seq: SeqState | None
     link: LinkState
     frozen: FrozenState
-    set_sha256: str  # the mission-db set `engine` was built with
+    set_sha256: str  # the mission-db set `engine` was built with; "" before the first frame
     engine: EngineState
 
 
@@ -45,15 +46,33 @@ def empty_state(cset: CompiledSet) -> VehicleState:
     )
 
 
+def _applied(vehicle: str, mdb: MissionDb, epoch: datetime, f: FrameHeader) -> GroundEvent:
+    details = {
+        "first_seq": f.seq,
+        "set_sha256": mdb.set_sha256,
+        "limits_sha256": mdb.limits_sha256,
+        "commands_sha256": mdb.commands_sha256,
+        "parameters_sha256": mdb.parameters_sha256,
+    }
+    key = applied_key(vehicle, epoch, f.seq)
+    return GroundEvent(key, vehicle, "LIMITS_APPLIED", f.t_onboard, details)
+
+
 def fold(
     vs: VehicleState,
     vehicle: str,
     frames: Sequence[FrameHeader],
-    params: Sequence[str],
+    mdb: MissionDb,
     cset: CompiledSet,
+    old: CompiledSet | None = None,
 ) -> tuple[VehicleState, Outcome]:
-    """`cset` must be the set `vs.engine` was built with (vs.set_sha256)."""
-    s, ls, fs, es = vs.seq, vs.link, vs.frozen, vs.engine
+    """Fold the batch with the current set `mdb` (compiled: `cset`). If `vs` was built with
+    another set (`old`, or none yet: ""), the first new frame applies `mdb` before it is
+    classified: switch_set (LIMITS_CHANGED transitions) + LIMITS_APPLIED (D-ALM-12)."""
+    if vs.set_sha256 not in ("", cset.set_sha256) and old is None:
+        raise ValueError(f"fold needs the set {vs.set_sha256} the engine was built with")
+    params = mdb.param_names
+    s, ls, fs, es, applied = vs.seq, vs.link, vs.frozen, vs.engine, vs.set_sha256
     new: list[FrameHeader] = []
     events: list[GroundEvent] = []
     transitions: list[Transition] = []
@@ -75,6 +94,14 @@ def fold(
         fs, fev = link.frozen_step(fs, vehicle, s.epoch, f.seq, f.t_onboard, tuple(values.values()))
         if fev is not None:
             events.append(fev)
+        if applied != cset.set_sha256:  # first new frame of a set: apply it, then classify
+            if old is None:
+                es = engine.initial_state(cset)
+            else:
+                es, trs = engine.switch_set(es, old, cset, vehicle, s.epoch, f.seq, f.t_onboard)
+                transitions += trs
+            events.append(_applied(vehicle, mdb, s.epoch, f))
+            applied = cset.set_sha256
         # D-ALM-04: GAP, SEQ_RESET and data-STALE restart rings and ROC windows
         reset = stale or any(e.kind in ("GAP", "SEQ_RESET") for e in ev)
         es, trs = engine.step(
@@ -83,7 +110,7 @@ def fold(
         transitions += trs
         new.append(f)
     out = Outcome(tuple(new), tuple(events), dup, tuple(transitions))
-    return replace(vs, seq=s, link=ls, frozen=fs, engine=es), out
+    return replace(vs, seq=s, link=ls, frozen=fs, set_sha256=applied, engine=es), out
 
 
 def _t(d: datetime | None) -> str | None:

@@ -20,11 +20,11 @@ from redis.backoff import NoBackoff
 
 from gs.alarms.engine import compile_set
 from gs.common.hooks import Hooks
-from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
-from gs.ingest.events import insert_set
+from gs.ingest.events import insert_events, insert_set
 from gs.ingest.fold import empty_state
 from gs.ingest.liveness import run_ticks
+from gs.ingest.mission import MissionWatcher, start_set
 from gs.ingest.owner import MATCH
 from gs.ingest.validate import FieldStats
 from gs.ingest.worker import Ctx, Timing, process_batch, run_vehicle
@@ -58,12 +58,10 @@ def make_ctx(
     mdb = load_dir(mission_dir)
     return Ctx(
         consumer,
-        build_frame_model(mdb.param_names),
-        mdb.param_names,
+        lambda: mdb,
         aclient("ingest", decode=False, retry=Retry(NoBackoff(), 0)),
         FieldStats(),
         {},
-        compile_set(mdb),
         Counter(),
         homes or {},
         timing,
@@ -94,18 +92,23 @@ async def worker(
     hooks: Hooks = NO_HOOKS,
     mission_dir: Path = MISSION_DIR,
 ) -> AsyncIterator[Running]:
-    """run_vehicle tasks; `homes=None` makes every vehicle home (no start delay, no hand-back).
-    A custom `dsn` must already hold the start set (see ensure_set)."""
-    if dsn is None:
-        await ensure_set(mission_dir=mission_dir)
-    homes = {v: consumer for v in vehicles} if homes is None else homes
-    ctx = make_ctx(
-        consumer, homes, timing, tuple(vehicles), steal_idle_ms, reclaim_idle_ms, mission_dir
-    )
-    ctx = dataclasses.replace(ctx, hooks=hooks)
+    """run_vehicle tasks + run_ticks + a MissionWatcher on `mission_dir`, started like main.run
+    (start_set, its LIMITS_REJECTED events); `homes=None` makes every vehicle home (no start
+    delay, no hand-back)."""
     stop, db = asyncio.Event(), dsn or app_dsn("gs")
+    try:
+        async with await psycopg.AsyncConnection.connect(db, autocommit=True) as c:
+            mdb, rejected = await start_set(c, mission_dir)
+            await insert_events(c, rejected)
+    except psycopg.Error:  # read-only / missing db: the workers' own error is under test
+        mdb = load_dir(mission_dir)
+    watcher = MissionWatcher(mission_dir, db, consumer, mdb)
+    homes = {v: consumer for v in vehicles} if homes is None else homes
+    ctx = make_ctx(consumer, homes, timing, tuple(vehicles), steal_idle_ms, reclaim_idle_ms)
+    ctx = dataclasses.replace(ctx, mission=lambda: watcher.current, hooks=hooks)
     tasks = [asyncio.create_task(run_vehicle(ctx, v, db, stop)) for v in vehicles]
     tasks.append(asyncio.create_task(run_ticks(ctx, db, stop, watchdog=False)))
+    tasks.append(asyncio.create_task(watcher.run(stop)))
     try:
         yield Running(ctx, tasks)
     finally:
@@ -123,7 +126,9 @@ async def process_batch_once(
     try:
         async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as conn:
             await ensure_set()
-            _, n = await process_batch(ctx, conn, f"tm:{v}", entries, empty_state(ctx.cset))
+            _, n = await process_batch(
+                ctx, conn, f"tm:{v}", entries, empty_state(compile_set(ctx.mission()))
+            )
             return n
     finally:
         await ctx.redis.aclose()

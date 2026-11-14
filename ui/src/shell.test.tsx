@@ -121,22 +121,31 @@ class LiveES {
 const played: number[] = [];
 class FakeAudio {
   static states: FakeAudio[] = [];
-  state = "running";
+  static startState = "running";
+  state = FakeAudio.startState;
+  listeners: (() => void)[] = [];
   currentTime = 0;
   destination = {};
   constructor() {
     FakeAudio.states.push(this);
   }
   resume() {
+    this.state = "running";
+    this.listeners.forEach((f) => f());
     return Promise.resolve();
   }
-  addEventListener() {}
-  removeEventListener() {}
+  addEventListener(_: string, f: () => void) {
+    this.listeners.push(f);
+  }
+  removeEventListener(_: string, f: () => void) {
+    this.listeners = this.listeners.filter((x) => x !== f);
+  }
   createGain() {
     return { gain: { setValueAtTime() {}, linearRampToValueAtTime() {} }, connect: (n: unknown) => n };
   }
   createOscillator() {
-    const o = { frequency: { set value(v: number) { played.push(v); } }, connect: (n: unknown) => n, start() {}, stop() {} };
+    const audible = this.state === "running"; // a suspended context makes no sound
+    const o = { frequency: { set value(v: number) { if (audible) played.push(v); } }, connect: (n: unknown) => n, start() {}, stop() {} };
     return o;
   }
 }
@@ -148,6 +157,7 @@ async function liveConsole() {
   vi.stubGlobal("AudioContext", FakeAudio);
   LiveES.all = [];
   played.length = 0;
+  FakeAudio.startState = "running";
   sessionStorage.clear();
   stubApi({
     "/api/me": { status: 200, body: { user: "fc1" } },
@@ -235,4 +245,22 @@ test("App: a throttled background tab still sounds NO LIVE CONNECTION when it is
     spy.mockRestore();
     vi.useRealTimers();
   }
+});
+
+test("arming the audio (P-pf23): an unacknowledged RED and an active LOS sound at once, though first seen while it was off", async () => {
+  const es = await liveConsole();
+  es.emit("snapshot", snapshot([alarmView()], [eventView("LOS/NYX-TA1/1/7", { kind: "LOS", vehicle: "NYX-TA1" })]));
+  expect(attr("data-beeps")).toBe("1"); // the key was consumed while nothing could sound
+  expect(played).toEqual([]);
+  FakeAudio.startState = "suspended"; // the click's context is created suspended, then resumed
+  await act(async () => button("SOUND OFF – click to enable")!.click());
+  expect(played).toEqual([880, 440]);
+  expect(button("SOUND OFF – click to enable")).toBeUndefined();
+});
+
+test("arming with nothing active is silent; an ACKED RED does not beep", async () => {
+  const es = await liveConsole();
+  es.emit("snapshot", snapshot([alarmView({ state: "ACKED" })]));
+  await act(async () => button("SOUND OFF – click to enable")!.click());
+  expect(played).toEqual([]);
 });

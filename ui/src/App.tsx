@@ -10,9 +10,17 @@ import { createStore, ingest, type Store } from "./store";
 
 /** Beeps once per new RED alert key and sounds one tone at each loss-of-monitoring onset (D-UI-08, D-UI-21).
  *  Runs on every store update, never on the 100 ms tick, and once more when a hidden tab is shown (P-pf18). */
-function useAudio(store: Store, ctx: AudioContext | null) {
+function useAudio(store: Store, ctx: AudioContext | null, running: boolean) {
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
+  // Arming (P-pf23): keys first seen while the audio was off are not lost. When it starts running, an unacknowledged
+  // RED beeps once and an active loss-of-monitoring state sounds its tone, whatever the key sets already hold.
+  useEffect(() => {
+    const c = ctxRef.current;
+    if (!running || !c) return;
+    if (store.alarms().some((x) => x.severity === "RED" && x.state === "UNACK")) beep(c);
+    if (Object.keys(toneActive(store)).length > 0) tone(c);
+  }, [running, store]);
   const [stat, setStat] = useState({ beeps: 0, lastTone: "" });
   useEffect(() => {
     const beeped = sessionKeySet("beeps");
@@ -48,14 +56,20 @@ function useAudio(store: Store, ctx: AudioContext | null) {
   return stat;
 }
 
-function SoundBadge({ ctx, onArm }: { ctx: AudioContext | null; onArm: (c: AudioContext | null) => void }) {
-  const [, redraw] = useState(0);
+/** Whether the context is running, followed through its statechange events. */
+function useRunning(ctx: AudioContext | null): boolean {
+  const [running, setRunning] = useState(ctx?.state === "running");
   useEffect(() => {
-    const f = () => redraw((n) => n + 1);
+    const f = () => setRunning(ctx?.state === "running");
+    f();
     ctx?.addEventListener("statechange", f);
     return () => ctx?.removeEventListener("statechange", f);
   }, [ctx]);
-  if (ctx?.state === "running") return null;
+  return running;
+}
+
+function SoundBadge({ ctx, running, onArm }: { ctx: AudioContext | null; running: boolean; onArm: (c: AudioContext | null) => void }) {
+  if (running) return null;
   const enable = () => (ctx ? void ctx.resume().catch(() => {}) : onArm(armAudio()));
   return (
     <button className="sound-off" onClick={enable}>
@@ -89,12 +103,13 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
       store.stop();
     };
   }, [store, onLogout]);
-  const { beeps, lastTone } = useAudio(store, ctx);
+  const running = useRunning(ctx);
+  const { beeps, lastTone } = useAudio(store, ctx, running);
   return (
     <div data-beeps={beeps} data-last-tone={lastTone}>
       <header>
         <h1>Nyx</h1>
-        <SoundBadge ctx={ctx} onArm={setCtx} />
+        <SoundBadge ctx={ctx} running={running} onArm={setCtx} />
         <span>{user}</span>
         <button onClick={() => void safeLogout(logout).then(onLogout)}>Log out</button>
       </header>

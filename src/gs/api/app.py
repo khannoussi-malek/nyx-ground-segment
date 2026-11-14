@@ -118,7 +118,7 @@ async def healthz(request: Request) -> Response:
         try:
             await asyncio.wait_for(check(request), CHECK_TIMEOUT_S + 1)
             checks[name] = "ok"
-        except Exception as e:  # any failure means that dependency is down
+        except Exception as e:  # noqa: BLE001  any failure means that dependency is down
             log.warning("healthz %s check failed: %s: %s", name, type(e).__name__, e)
             checks[name] = "down"
     up = all(v == "ok" for v in checks.values())

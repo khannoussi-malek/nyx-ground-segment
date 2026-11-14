@@ -1,7 +1,9 @@
 import os
 import re
 
-VEHICLE_ID = re.compile(r"[A-Z0-9-]{1,32}")  # same pattern as interfaces.base.VehicleId
+from gs.common.interfaces.base import VEHICLE_ID_PATTERN
+
+VEHICLE_ID = re.compile(VEHICLE_ID_PATTERN)
 
 
 class ConfigError(Exception):

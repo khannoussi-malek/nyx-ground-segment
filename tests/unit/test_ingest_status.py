@@ -1,18 +1,25 @@
-from gs.ingest.main import STALE_S, ingest_status
-
-V = ("NYX-A", "NYX-B")
+from gs.ingest.liveness import STALE_S, ingest_status
 
 
-def test_ok_when_every_loop_is_fresh() -> None:
-    state, checks = ingest_status({"NYX-A": 99.0, "NYX-B": 95.0}, V, 100.0)
-    assert state == "ok" and checks == {"loop_age_s": {"NYX-A": 1.0, "NYX-B": 5.0}}
+def test_standby_task_is_not_down() -> None:
+    assert ingest_status({}, [], 100.0, 1) == (
+        "ok",
+        {"owned": [], "loop_age_s": {}, "redis_used_memory": 1},
+    )
 
 
-def test_down_when_one_loop_is_stale() -> None:
-    state, _ = ingest_status({"NYX-A": 99.0, "NYX-B": 100.0 - STALE_S - 1}, V, 100.0)
-    assert state == "down"
+def test_ok_when_every_owned_loop_is_fresh() -> None:
+    state, checks = ingest_status({"NYX-A": 99.0, "NYX-B": 10.0}, ["NYX-A"], 100.0, 5)
+    assert state == "ok" and checks["loop_age_s"] == {"NYX-A": 1.0}  # B is not owned
+    assert checks["owned"] == ["NYX-A"]
 
 
-def test_down_when_a_vehicle_never_ran() -> None:
-    state, checks = ingest_status({"NYX-A": 99.0}, V, 100.0)
-    assert state == "down" and checks["loop_age_s"]["NYX-B"] is None  # type: ignore[index]
+def test_owned_stale_loop_down() -> None:
+    seen = {"NYX-A": 99.0, "NYX-B": 100.0 - STALE_S}
+    assert ingest_status(seen, ["NYX-B", "NYX-A"], 100.0, 5)[0] == "down"
+    assert ingest_status({}, ["NYX-A"], 100.0, 5)[0] == "down"  # owned, never passed
+
+
+def test_redis_unknown_degraded() -> None:
+    assert ingest_status({"NYX-A": 99.0}, ["NYX-A"], 100.0, None)[0] == "degraded"
+    assert ingest_status({}, ["NYX-A"], 100.0, None)[0] == "down"  # down wins

@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { login, logout, me } from "./api";
+import { login, logout, me, missionDb } from "./api";
 
 const stub = (status: number, body?: unknown) => {
   const f = vi.fn(async () => new Response(body === undefined ? null : JSON.stringify(body), { status }));
@@ -48,4 +48,15 @@ test("logout posts with the client header and tolerates an already-dead session"
   await expect(logout()).resolves.toBeUndefined();
   stub(500);
   await expect(logout()).rejects.toThrow("500");
+});
+
+test("missionDb is a plain same-origin GET: the body, null on 401, throws otherwise", async () => {
+  const body = { set_sha256: "ab", parameters: {}, limits: {}, commands: {} };
+  const f = stub(200, body);
+  expect(await missionDb()).toEqual(body);
+  expect(f).toHaveBeenCalledWith("/api/mission-db", { credentials: "same-origin" });
+  stub(401, { error: "UNAUTHENTICATED", message: "x" });
+  expect(await missionDb()).toBeNull();
+  stub(503);
+  await expect(missionDb()).rejects.toThrow("503");
 });

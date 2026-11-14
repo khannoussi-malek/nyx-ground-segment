@@ -26,6 +26,51 @@ def _reason(errors: list[Any]) -> DlqReason:
     return next((r for r in _PRECEDENCE if r in types), "schema")
 
 
+def _record(
+    reason: DlqReason,
+    detail: str,
+    raw: str,
+    stream: str,
+    entry_id: str,
+    deliveries: int,
+    now: datetime,
+) -> DlqRecord:
+    return DlqRecord(
+        reason=reason,
+        detail=detail[:DETAIL_MAX],
+        raw=raw,
+        stream=stream,
+        entry_id=entry_id,
+        deliveries=deliveries,
+        first_seen=entry_time(entry_id),
+        dlq_at=now,
+    )
+
+
+def _raw(fields: Mapping[bytes, bytes]) -> str:
+    data = fields.get(b"data")
+    if data is not None:
+        return data.decode(errors="backslashreplace")
+    return json.dumps(
+        {
+            k.decode(errors="backslashreplace"): v.decode(errors="backslashreplace")
+            for k, v in fields.items()
+        }
+    )
+
+
+def poison(
+    fields: Mapping[bytes, bytes],
+    stream: str,
+    entry_id: str,
+    deliveries: int,
+    detail: str,
+    now: datetime,
+) -> DlqRecord:
+    """DLQ record `reason=poison` (D-ING-04): too many deliveries, or 3 in-process failures."""
+    return _record("poison", detail, _raw(fields), stream, entry_id, deliveries, now)
+
+
 def classify(
     fields: Mapping[bytes, bytes],
     stream: str,
@@ -35,24 +80,11 @@ def classify(
     now: datetime,
 ) -> FrameHeader | DlqRecord:
     def dlq(reason: DlqReason, detail: str, raw: str) -> DlqRecord:
-        return DlqRecord(
-            reason=reason,
-            detail=detail[:DETAIL_MAX],
-            raw=raw,
-            stream=stream,
-            entry_id=entry_id,
-            deliveries=deliveries,
-            first_seen=entry_time(entry_id),
-            dlq_at=now,
-        )
+        return _record(reason, detail, raw, stream, entry_id, deliveries, now)
 
     data = fields.get(b"data")
     if data is None:
-        decoded = {
-            k.decode(errors="backslashreplace"): v.decode(errors="backslashreplace")
-            for k, v in fields.items()
-        }
-        return dlq("json_invalid", "missing field 'data'", json.dumps(decoded))
+        return dlq("json_invalid", "missing field 'data'", _raw(fields))
     try:
         return model.model_validate_json(
             data, context={"stream_vehicle": stream.removeprefix("tm:"), "now": now}

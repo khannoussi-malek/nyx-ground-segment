@@ -23,4 +23,5 @@ UtcTime = Annotated[
     PlainSerializer(iso_z, return_type=str, when_used="json"),
 ]
 Mode = Literal["SAFE", "STANDBY", "TEST", "FAULT"]
-VehicleId = Annotated[str, Field(pattern=r"^[A-Z0-9-]{1,32}$")]
+VEHICLE_ID_PATTERN = r"^[A-Z0-9-]{1,32}$"
+VehicleId = Annotated[str, Field(pattern=VEHICLE_ID_PATTERN)]

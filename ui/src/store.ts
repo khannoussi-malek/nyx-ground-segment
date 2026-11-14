@@ -3,8 +3,9 @@ import type { components } from "./api/schema";
 export type Tm = components["schemas"]["Tm"];
 export type Snapshot = components["schemas"]["Snapshot"];
 
-export function createStore() {
+export function createStore(clock: () => number = () => performance.now()) {
   let rows: Readonly<Record<string, Tm>> = {};
+  let stamps: Readonly<Record<string, number>> = {}; // receipt time per vehicle, for the age clock (D-UI-05)
   let names: string[] = []; // cached so useSyncExternalStore sees a stable reference
   const subs = new Set<() => void>();
   const set = (next: Readonly<Record<string, Tm>>) => {
@@ -13,15 +14,21 @@ export function createStore() {
     subs.forEach((fn) => fn());
   };
   return {
-    applySnapshot: (s: Snapshot): void => set({ ...s.vehicles }),
+    applySnapshot(s: Snapshot): void {
+      const now = clock();
+      stamps = Object.fromEntries(Object.keys(s.vehicles).map((v) => [v, now]));
+      set({ ...s.vehicles });
+    },
     applyTm(tm: Tm): boolean {
       const shown = rows[tm.vehicle];
       // string compare is valid: the server always sends fixed-width YYYY-MM-DDTHH:MM:SS.ffffffZ
       if (shown && tm.t_onboard <= shown.t_onboard) return false;
+      stamps = { ...stamps, [tm.vehicle]: clock() };
       set({ ...rows, [tm.vehicle]: tm });
       return true;
     },
     vehicle: (v: string): Tm | undefined => rows[v],
+    receivedAt: (v: string): number | undefined => stamps[v],
     vehicles: (): string[] => names,
     subscribe(fn: () => void): () => void {
       subs.add(fn);

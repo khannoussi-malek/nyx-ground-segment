@@ -1,41 +1,22 @@
-import os
+import json
 import signal
-import socket
-import subprocess
-import sys
 import time
 import urllib.request
+from pathlib import Path
 
-from tests.support.env import REPO, dotenv, vid
+import pytest
 
-CODE = "from gs.ingest.main import main; main()"
-
-
-def _free_port() -> int:
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        port: int = s.getsockname()[1]
-        return port
-
-
-def _start(db_password: str | None = None) -> tuple[subprocess.Popen[bytes], int]:
-    env, port = dotenv(), _free_port()
-    proc_env = {
-        **os.environ,
-        "REDIS_URL": f"redis://ingest:{env['REDIS_INGEST_PW']}@127.0.0.1:{env['REDIS_HOST_PORT']}/0",
-        "DATABASE_URL": f"postgresql://gs_app:{db_password or env['GS_APP_PASSWORD']}"
-        f"@127.0.0.1:{env['DB_HOST_PORT']}/gs",
-        "CONSUMER_NAME": "ingest-main-test",
-        "VEHICLES": vid(),
-        "MISSION_DB": str(REPO / "mission"),
-        "BIND_HOST": "127.0.0.1",
-        "HEALTH_PORT": str(port),
-    }
-    return subprocess.Popen([sys.executable, "-c", CODE], cwd=REPO, env=proc_env), port
+import gs.ingest.main as main_mod
+from gs.ingest.errors import OperationalDbError
+from gs.ingest.events import rejected_key
+from tests.support.env import vid, wait_until
+from tests.support.ingest import start_ingest
+from tests.support.missionfiles import edit, mission_copy, set_formula
+from tests.support.pg import rows
 
 
 def test_sigterm_exits_zero_and_health_ok() -> None:
-    p, port = _start()
+    p, port = start_ingest()
     try:
         deadline = time.monotonic() + 10
         while True:
@@ -54,9 +35,62 @@ def test_sigterm_exits_zero_and_health_ok() -> None:
 
 
 def test_task_error_exits_nonzero() -> None:  # crash-only: a DB failure ends the process
-    p, _ = _start(db_password="wrong")
+    p, _ = start_ingest(db_password="wrong")
     try:
         assert p.wait(timeout=10) == 1
     finally:
         if p.poll() is None:
             p.kill()
+
+
+def test_operational_error_exits_one(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:  # D-ING-24: a vehicle task's OperationalDbError ends the process with 1
+    async def failing() -> None:
+        raise ExceptionGroup("task group", [OperationalDbError("25006: read-only")])
+
+    monkeypatch.setattr(main_mod, "_main", failing)
+    with pytest.raises(SystemExit) as e:
+        main_mod.main()
+    assert e.value.code == 1 and "25006: read-only" in caplog.text
+
+
+def test_ingest_health_reports_used_memory() -> None:
+    p, port = start_ingest()
+    try:
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                raw = urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=1).read()
+                body = json.loads(raw)
+                checks = body["checks"]  # owned fills once the lock is granted: wait for both
+                if checks.get("redis_used_memory") and checks.get("owned"):
+                    break
+            except OSError:
+                pass
+            assert p.poll() is None and time.monotonic() < deadline
+            time.sleep(0.1)
+        assert body["status"] == "ok" and body["checks"]["redis_used_memory"] > 0
+        assert len(body["checks"]["owned"]) == 1  # its one home vehicle
+    finally:
+        p.send_signal(signal.SIGTERM)
+        assert p.wait(timeout=5) == 0
+
+
+def test_main_starts_on_a_fallback_set_and_watches_mission(tmp_path: Path) -> None:  # D-ALM-12
+    m, token = mission_copy(tmp_path), vid()  # set keys are content hashes: make them new
+    edit(m / "commands.yaml", "Close the cabin isolation valve", f"Close valve {token}")
+    with (m / "parameters.yaml").open("a") as f:  # no telemetry column: start falls back
+        f.write("  cabin_humidity_pct: {unit: pct, type: float}\n")
+    rejected = rejected_key(set_formula(m))
+    p, _ = start_ingest(MISSION_DB=str(m))
+    try:
+        wait_until(lambda: bool(rows("select 1 from events where key=%s", rejected)), 10)
+        edit(m / "parameters.yaml", "  cabin_humidity_pct: {unit: pct, type: float}\n", "")
+        edit(m / "commands.yaml", token, f"{token} (main)")
+        new = set_formula(m)  # the watcher applies (and stores) it within two polls
+        wait_until(lambda: bool(rows("select 1 from limits_versions where set_sha256=%s", new)), 5)
+        assert p.poll() is None
+    finally:
+        p.send_signal(signal.SIGTERM)
+        assert p.wait(timeout=5) == 0

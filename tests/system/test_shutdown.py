@@ -7,7 +7,7 @@ import pytest
 from tests.support.compose import compose, container_exit_code, wait_healthy
 
 
-@pytest.mark.parametrize("svc", ["simulator", "ingest-1", "api"])
+@pytest.mark.parametrize("svc", ["simulator", "ingest-1", "ingest-2", "api"])
 def test_stop_within_grace(svc: str) -> None:
     t = time.monotonic()
     compose("stop", svc)

@@ -4,6 +4,7 @@ import asyncio
 import logging
 import random
 import signal
+import time
 from dataclasses import dataclass
 
 import redis.asyncio
@@ -13,6 +14,7 @@ from redis.backoff import NoBackoff
 from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import State, serve_health
 from gs.simulator.buffer import FrameBuffer, send_loop
+from gs.simulator.faults import FaultBoard, fault_routes
 from gs.simulator.frames import tick_loop
 
 MAXLEN = 360_000  # ~10 h at 10 Hz per vehicle (D-ING-06)
@@ -38,9 +40,9 @@ class SimSettings:
         )
 
 
-async def xadd_tm(r: redis.asyncio.Redis, stream: str, data: str) -> object:
+async def xadd_tm(r: redis.asyncio.Redis, stream: str, data: str, maxlen: int = MAXLEN) -> object:
     return await r.execute_command(  # type: ignore[no-untyped-call]
-        "XADD", stream, "ACKED", "MAXLEN", "~", MAXLEN, "*", "data", data
+        "XADD", stream, "ACKED", "MAXLEN", "~", maxlen, "*", "data", data
     )
 
 
@@ -55,15 +57,20 @@ async def run(s: SimSettings, stop: asyncio.Event) -> None:
     r = redis.asyncio.Redis.from_url(
         s.redis_url,
         socket_timeout=2,
-        # retry OFF: send_loop owns retries, so an XADD is never silently re-sent (D-SIM-05)
+        # retry OFF: send_loop owns retries (D-SIM-05). At-least-once: a timed-out XADD may
+        # have landed and is re-sent; ingest's idempotent key dedups it (G30)
         retry=Retry(NoBackoff(), 0),
     )
 
-    server = await serve_health(s.bind_host, s.health_port, lambda: sim_status(buf))
+    board = FaultBoard()
+    routes = fault_routes(board, s.vehicles, time.monotonic)
+    server = await serve_health(s.bind_host, s.health_port, lambda: sim_status(buf), routes)
     try:
         async with asyncio.TaskGroup() as tg:
             for v in s.vehicles:
-                tg.create_task(tick_loop(v, buf, random.Random(f"{s.seed}:{v}"), stop))
+                tg.create_task(
+                    tick_loop(v, buf, random.Random(f"{s.seed}:{v}"), stop, faults=board)
+                )
             tg.create_task(send_loop(buf, lambda st, d: xadd_tm(r, st, d), stop))
     finally:
         server.close()

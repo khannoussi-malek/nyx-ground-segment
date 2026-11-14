@@ -1,5 +1,5 @@
 x-app: &app
-  image: nyx-gs:local
+  image: nyx-gs:${GS_IMAGE_TAG:-local}   # per-worktree tag: parallel --build runs must not share one image
   build: .
   init: true
   restart: unless-stopped
@@ -79,12 +79,24 @@ services:
       interval: 2s
       timeout: 3s
       retries: 15
-  ingest-1:
+  ingest-1: &ingest
     <<: *app
     command: ["gs-ingest"]
-    environment: {REDIS_URL: "redis://ingest:${REDIS_INGEST_PW}@redis:6379/0",
-                  DATABASE_URL: "postgresql://gs_app:${GS_APP_PASSWORD}@db:5432/gs", CONSUMER_NAME: ingest-1,
-                  VEHICLES: "NYX-TA1,NYX-TA2", MISSION_DB: /mission, BIND_HOST: "0.0.0.0", HEALTH_PORT: "8081"}
+    environment: &ingest-env
+      REDIS_URL: "redis://ingest:${REDIS_INGEST_PW}@redis:6379/0"
+      DATABASE_URL: "postgresql://gs_app:${GS_APP_PASSWORD}@db:5432/gs"
+      CONSUMER_NAME: ingest-1
+      VEHICLES: "NYX-TA1,NYX-TA2"
+      MISSION_DB: /mission
+      BIND_HOST: "0.0.0.0"
+      HEALTH_PORT: "8081"
+      INGEST_HOMES: "ingest-1=NYX-TA1,ingest-2=NYX-TA2"
+      STEAL_IDLE_MS: "${STEAL_IDLE_MS:-30000}"
+      RECLAIM_IDLE_MS: "${RECLAIM_IDLE_MS:-30000}"
+      GS_TEST_HOOKS: "${GS_TEST_HOOKS:-0}"
+      CRASH_AT: "${CRASH_AT:-}"
+      STOP_AT: "${STOP_AT:-}"
+      HANG_AT: "${HANG_AT:-}"
     volumes: ["./mission:/mission:ro"]
     depends_on: {redis: {condition: service_healthy}, db: {condition: service_healthy},
                  migrate: {condition: service_completed_successfully}}
@@ -93,6 +105,9 @@ services:
       interval: 2s
       timeout: 3s
       retries: 15
+  ingest-2:
+    <<: *ingest
+    environment: {<<: *ingest-env, CONSUMER_NAME: ingest-2}
   api:
     <<: *app
     command: ["gs-api"]

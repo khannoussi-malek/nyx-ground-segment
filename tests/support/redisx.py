@@ -93,9 +93,14 @@ def recorded_frames(per_vehicle: int = 20) -> list[str]:
 GROUP = "ingest"
 
 
-def frame(v: str, seq: int) -> str:
-    """One valid simulator frame; t_onboard is a minute in the past plus 100 ms per seq."""
-    t = datetime.now(UTC) - timedelta(minutes=1) + timedelta(milliseconds=100 * seq)
+def time_base() -> datetime:
+    """A minute ago; frame times are base + 100 ms per seq (G14: one base per produce() call)."""
+    return datetime.now(UTC) - timedelta(minutes=1)
+
+
+def frame(v: str, seq: int, base: datetime | None = None) -> str:
+    """One valid simulator frame; t_onboard is `base` (default a minute ago) + 100 ms*seq."""
+    t = (base or time_base()) + timedelta(milliseconds=100 * seq)
     return make_frame(v, seq, t, random.Random(seq))
 
 
@@ -104,8 +109,9 @@ def xadd_raw(v: str, raw: str | bytes) -> str:
 
 
 def produce(v: str, n: int, start_seq: int = 0) -> None:
+    base = time_base()  # once per call: per-frame now() would add XADD latency to the period
     for seq in range(start_seq, start_seq + n):
-        xadd_raw(v, frame(v, seq))
+        xadd_raw(v, frame(v, seq, base))
 
 
 def pending(v: str) -> int:
@@ -146,6 +152,24 @@ def dlq_entries(v: str) -> list[str]:
     """Raw `data` of every tm:dlq record that came from stream tm:<v>."""
     entries: Any = client("admin").xrange("tm:dlq")
     return [f["data"] for _, f in entries if json.loads(f["data"]).get("stream") == f"tm:{v}"]
+
+
+def dlq_since(stream: str, since: datetime) -> list[str]:
+    """Raw `data` of tm:dlq records for `stream` added at or after `since` (by entry id)."""
+    ms = int(since.timestamp() * 1000)
+    entries: Any = client("admin").xrange("tm:dlq", min=str(ms))
+    return [f["data"] for _, f in entries if json.loads(f["data"]).get("stream") == stream]
+
+
+def pending_of(v: str, consumer: str) -> int:
+    """Entries in group ingest's PEL owned by `consumer` on tm:<v>; 0 while there is no group."""
+    try:
+        rows: Any = client("admin").xpending_range(f"tm:{v}", GROUP, "-", "+", 10_000, consumer)
+    except redis.ResponseError as e:
+        if "NOGROUP" not in str(e):
+            raise
+        return 0
+    return len(rows)
 
 
 def dlq_entry_for(entry_id: str) -> str:

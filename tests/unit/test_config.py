@@ -1,6 +1,8 @@
 import pytest
+from pydantic import TypeAdapter, ValidationError
 
 from gs.common.config import ConfigError, require, require_int, vehicle_list
+from gs.common.interfaces.base import VehicleId
 
 
 def test_require_returns_value(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -37,3 +39,18 @@ def test_vehicle_list_rejects_invalid_names(raw: str) -> None:
 
 def test_vehicle_list_strips_and_accepts_valid() -> None:
     assert vehicle_list(" NYX-TA1 , NYX-TA2,") == ("NYX-TA1", "NYX-TA2")
+
+
+@pytest.mark.parametrize("name", ["NYX-TA1", "A", "x", "", "NYX_TA1", "A" * 33, "A" * 32])
+def test_vehicle_list_agrees_with_model(name: str) -> None:
+    try:
+        TypeAdapter(VehicleId).validate_python(name)
+        model_ok = True
+    except ValidationError:
+        model_ok = False
+    try:
+        vehicle_list(name or ",")
+        cfg_ok = True
+    except ConfigError:
+        cfg_ok = False
+    assert cfg_ok == model_ok

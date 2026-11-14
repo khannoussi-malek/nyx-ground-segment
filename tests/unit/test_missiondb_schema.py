@@ -9,6 +9,7 @@ from gs.common.missiondb import (
     NAME_RE,
     RESERVED_NAMES,
     LimitCheck,
+    LimitEntry,
     MissionDbError,
     NumArg,
     RocCheck,
@@ -228,3 +229,11 @@ def test_unhashable_mapping_key_rejected() -> None:
 
 def test_deeply_nested_yaml_rejected() -> None:
     rejected("limits.yaml", limits=b"version: 1\nlimits: " + b"[" * 5_000 + b"]" * 5_000)
+
+
+def test_limit_entry_dump_round_trips() -> None:  # G21: a dump kept only the CheckConfig base
+    for name, entry in load_dir(MISSION_DIR).limits.items():
+        dumped = entry.model_dump()
+        assert LimitEntry.model_validate(dumped) == entry, name
+    lim, roc = load_dir(MISSION_DIR).limits["cabin_pressure_kpa"].model_dump()["checks"]
+    assert (lim["red_low"], lim["red_high"], roc["limit_per_s"]) == (95.0, 106.0, 0.15)

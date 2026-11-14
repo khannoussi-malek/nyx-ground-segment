@@ -72,6 +72,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/mission-db": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Mission Db */
+        get: operations["mission_db_api_mission_db_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/vehicles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Vehicles */
+        get: operations["vehicles_api_vehicles_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/healthz": {
         parameters: {
             query?: never;
@@ -93,6 +127,33 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** CheckConfig */
+        CheckConfig: {
+            /** Persistence */
+            persistence?: number | null;
+            /** Type */
+            type: string;
+        };
+        /** Command */
+        Command: {
+            /**
+             * Args
+             * @default {}
+             */
+            args: {
+                [key: string]: components["schemas"]["EnumArg"] | components["schemas"]["NumArg"];
+            };
+            /** Description */
+            description: string;
+            /** Hazard */
+            hazard?: string | null;
+            /** Hazardous */
+            hazardous: boolean;
+            /** Receive Timeout S */
+            receive_timeout_s?: number | null;
+            /** Verify Timeout S */
+            verify_timeout_s?: number | null;
+        };
         /** DlqRecord */
         DlqRecord: {
             /** Deliveries */
@@ -120,6 +181,21 @@ export interface components {
             reason: "json_invalid" | "schema" | "vehicle_mismatch" | "t_onboard_range" | "poison";
             /** Stream */
             stream: string;
+        };
+        /** EnumArg */
+        EnumArg: {
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "enum";
+            /** Values */
+            values: string[];
         };
         /** ErrorBody */
         ErrorBody: {
@@ -183,6 +259,33 @@ export interface components {
             /** Server Ms */
             server_ms: number;
         };
+        /** LimitCheck */
+        LimitCheck: {
+            /** Hysteresis Abs */
+            hysteresis_abs?: number | null;
+            /** Hysteresis Pct */
+            hysteresis_pct?: number | null;
+            /** Persistence */
+            persistence?: number | null;
+            /** Red High */
+            red_high?: number | null;
+            /** Red Low */
+            red_low?: number | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "limit";
+            /** Yellow High */
+            yellow_high?: number | null;
+            /** Yellow Low */
+            yellow_low?: number | null;
+        };
+        /** LimitView */
+        LimitView: {
+            /** Checks */
+            checks: (components["schemas"]["LimitCheck"] | components["schemas"]["RocCheck"])[];
+        };
         /** LoginRequest */
         LoginRequest: {
             /** Password */
@@ -194,6 +297,91 @@ export interface components {
         Me: {
             /** User */
             user: string;
+        };
+        /** MissionDbView */
+        MissionDbView: {
+            /** Commands */
+            commands: {
+                [key: string]: components["schemas"]["Command"];
+            };
+            /** Commands Sha256 */
+            commands_sha256: string;
+            /** Limits */
+            limits: {
+                [key: string]: components["schemas"]["LimitView"];
+            };
+            /** Limits Sha256 */
+            limits_sha256: string;
+            /** Parameters */
+            parameters: {
+                [key: string]: components["schemas"]["ParameterEntry"];
+            };
+            /** Parameters Sha256 */
+            parameters_sha256: string;
+            /** Set Sha256 */
+            set_sha256: string;
+        };
+        /** NumArg */
+        NumArg: {
+            /** Max */
+            max: number;
+            /** Min */
+            min: number;
+            /**
+             * Required
+             * @default false
+             */
+            required: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "float" | "int";
+            /**
+             * Unit
+             * @default
+             */
+            unit: string;
+        };
+        /** ParameterEntry */
+        ParameterEntry: {
+            /**
+             * Description
+             * @default
+             */
+            description: string;
+            /**
+             * Type
+             * @constant
+             */
+            type: "float";
+            /** Unit */
+            unit: string;
+        };
+        /** RocCheck */
+        RocCheck: {
+            /**
+             * Direction
+             * @default both
+             * @enum {string}
+             */
+            direction: "rising" | "falling" | "both";
+            /** Limit Per S */
+            limit_per_s: number;
+            /** Persistence */
+            persistence?: number | null;
+            /**
+             * Severity
+             * @enum {string}
+             */
+            severity: "YELLOW" | "RED";
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            type: "roc";
+            /** Window S */
+            window_s: number;
         };
         /** Snapshot */
         Snapshot: {
@@ -241,6 +429,15 @@ export interface components {
             };
             /** Vehicle */
             vehicle: string;
+        };
+        /** Vehicles */
+        Vehicles: {
+            /** Parameters */
+            parameters: {
+                [key: string]: components["schemas"]["ParameterEntry"];
+            };
+            /** Vehicles */
+            vehicles: string[];
         };
     };
     responses: never;
@@ -408,6 +605,82 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Me"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    mission_db_api_mission_db_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MissionDbView"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    vehicles_api_vehicles_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Vehicles"];
                 };
             };
             /** @description Unauthorized */

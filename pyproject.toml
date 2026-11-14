@@ -30,7 +30,10 @@ target-version = "py314"
 extend-exclude = ["docs", "graphify-out", ".superpowers"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B"]
+select = ["E", "F", "I", "UP", "B", "BLE001", "S110", "FIX"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["FIX"]
 
 [tool.ruff.lint.isort]
 # the git-ignored redis/ dir (generated users.acl) made ruff call redis first-party locally only

@@ -10,6 +10,8 @@ from pathlib import Path
 import psycopg
 import pytest
 
+from gs.alarms.contract import Level
+from gs.alarms.engine import compile_set
 from gs.common import migrate
 from gs.common.interfaces import FrameHeader, build_frame_model
 from gs.common.interfaces.export import write_all
@@ -17,6 +19,7 @@ from gs.common.missiondb import load_dir
 from gs.ingest.store import insert_frames
 from gs.ingest.validate import classify
 from gs.simulator.frames import make_frame
+from tests.support.alarms import Frame, run_engine
 from tests.support.env import REPO, vid
 from tests.support.gen import stale_files
 from tests.support.pg import app_dsn, owner_dsn, throwaway_db
@@ -24,12 +27,24 @@ from tests.support.pg import app_dsn, owner_dsn, throwaway_db
 PARAM = "cabin_humidity_pct"
 
 
-def tree_digest(*roots: str) -> str:
+def tree_digest(root: Path, *dirs: str) -> str:
     h = hashlib.sha256()
-    for p in sorted(p for r in roots for p in (REPO / r).rglob("*") if p.is_file()):
+    for p in sorted(p for d in dirs for p in (root / d).rglob("*") if p.is_file()):
         if "__pycache__" not in p.parts:
-            h.update(p.relative_to(REPO).as_posix().encode() + p.read_bytes())
+            h.update(p.relative_to(root).as_posix().encode() + p.read_bytes())
     return h.hexdigest()
+
+
+def test_tree_digest_detects_edits(tmp_path: Path) -> None:
+    shutil.copytree(REPO / "src", tmp_path / "src", ignore=shutil.ignore_patterns("__pycache__"))
+    before = tree_digest(tmp_path, "src")
+    f = tmp_path / "src/gs/common/time.py"
+    f.write_text(f.read_text() + "\n")
+    assert tree_digest(tmp_path, "src") != before
+    f.write_text(f.read_text()[:-1])
+    assert tree_digest(tmp_path, "src") == before
+    (tmp_path / "src/new.py").write_text("")
+    assert tree_digest(tmp_path, "src") != before
 
 
 def append(path: Path, text: str) -> None:
@@ -44,7 +59,7 @@ def stored_value(db: str, vehicle: str) -> float | None:
 
 
 async def test_add_parameter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    before = tree_digest("src", "interfaces")
+    before = tree_digest(REPO, "src", "interfaces")
     m = tmp_path / "mission"
     shutil.copytree(REPO / "mission", m)
     append(
@@ -76,7 +91,11 @@ async def test_add_parameter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         async with await psycopg.AsyncConnection.connect(app_dsn(name)) as c, c.transaction():
             assert len(await insert_frames(c, [frame], db.param_names)) == 1
         assert stored_value(name, vehicle) == 41.5
+    # the new parameter is limit-checked by the engine, with no engine edit (EX-01)
+    frames: list[Frame] = [(i, i * 0.1, {PARAM: 75.0}) for i in range(1, 4)]
+    tr = run_engine(compile_set(db), frames)
+    assert [(t.kind, t.severity, t.param) for t in tr] == [("RAISE", Level.RED, PARAM)]
     # no code change, and no generated file to commit (CI stale check stays green)
     write_all(tmp_path / "gen")
     assert stale_files(tmp_path / "gen") == []
-    assert tree_digest("src", "interfaces") == before
+    assert tree_digest(REPO, "src", "interfaces") == before

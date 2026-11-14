@@ -20,9 +20,12 @@ def _count() -> int:
 @pytest.fixture(scope="module")
 def up() -> Iterator[None]:
     sh("docker", "compose", "config", "-q")  # R16
-    sh("docker", "compose", "up", "-d", "--build", "--wait", "redis", "db", "simulator", "ingest-1")
+    sh(
+        "docker", "compose", "up", "-d", "--build", "--wait",
+        "redis", "db", "simulator", "ingest-1", "ingest-2",
+    )  # fmt: skip
     yield
-    sh("docker", "compose", "stop", "ingest-1", "simulator")
+    sh("docker", "compose", "stop", "ingest-1", "ingest-2", "simulator")
 
 
 @pytest.mark.usefixtures("up")
@@ -31,6 +34,11 @@ def test_healthy_and_stores_telemetry() -> None:
     a = _count()
     time.sleep(2)
     assert _count() >= a + 10  # ~10 Hz
+
+
+@pytest.mark.usefixtures("up")
+def test_ingest_2_healthy() -> None:
+    assert inspect_health("ingest-2") == "healthy"
 
 
 @pytest.mark.usefixtures("up")

@@ -12,7 +12,23 @@ from pathlib import Path
 from typing import Annotated, Any, Literal
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    GetJsonSchemaHandler,
+    PlainValidator,
+    SerializeAsAny,
+    ValidationError,
+    model_validator,
+)
+from pydantic.json_schema import JsonSchemaValue
+from pydantic_core import CoreSchema, core_schema
+
+from gs.alarms.checks import CHECKS, CheckConfig
+from gs.alarms.checks.limit import LimitCheck as LimitCheck  # moved there, re-exported
+from gs.alarms.checks.limit import deadband, floor, meets_floor
+from gs.alarms.checks.roc import RocCheck as RocCheck  # moved there, re-exported
 
 NAME_RE = r"^[a-z][a-z0-9_]{0,62}$"
 # frame fields, plus every BaseModel attribute: build_frame_model makes parameters model fields
@@ -56,47 +72,37 @@ class LimitDefaults(_M):
     persistence: int = Field(3, ge=1)
 
 
-class LimitCheck(_M):
-    type: Literal["limit"]
-    red_low: float | None = None
-    yellow_low: float | None = None
-    yellow_high: float | None = None
-    red_high: float | None = None
-    hysteresis_pct: float | None = Field(None, gt=0)
-    hysteresis_abs: float | None = Field(None, gt=0)
-    persistence: int | None = Field(None, ge=1)
-
-    @model_validator(mode="after")
-    def _shape(self) -> LimitCheck:
-        lows = (self.red_low, self.yellow_low)
-        highs = (self.yellow_high, self.red_high)
-        bounds = [v for v in (*lows, *highs) if v is not None]
-        if not bounds:
-            raise ValueError("a limit check needs at least one bound")
-        if any(a >= b for a, b in zip(bounds, bounds[1:], strict=False)):
-            raise ValueError("bounds must satisfy red_low < yellow_low < yellow_high < red_high")
-        if self.hysteresis_pct is not None and self.hysteresis_abs is not None:
-            raise ValueError("set hysteresis_pct or hysteresis_abs, not both")
-        one_sided = all(v is None for v in lows) or all(v is None for v in highs)
-        if one_sided and self.hysteresis_abs is None:
-            raise ValueError("a one-sided limit requires hysteresis_abs")
-        return self
+def _check_item(v: object) -> CheckConfig:
+    """A `checks` item is validated by the registered kind named in its `type` (D-EXT-01)."""
+    if isinstance(v, CheckConfig):
+        return v
+    kind = v.get("type") if isinstance(v, dict) else None
+    cls = CHECKS.get(kind) if isinstance(kind, str) else None
+    if cls is None:
+        raise ValueError(f"unknown check type {kind!r}; known: {', '.join(sorted(CHECKS))}")
+    return cls.Config.model_validate(v)
 
 
-class RocCheck(_M):
-    type: Literal["roc"]
-    limit_per_s: float = Field(gt=0)
-    window_s: float = Field(gt=0)
-    direction: Literal["rising", "falling", "both"] = "both"
-    severity: Literal["YELLOW", "RED"]
-    persistence: int | None = Field(None, ge=1)
+class _ChecksUnionSchema:
+    """JSON Schema of a `checks` item: discriminated union of every registered kind's Config."""
+
+    @staticmethod
+    def __get_pydantic_json_schema__(
+        _cs: CoreSchema, handler: GetJsonSchemaHandler
+    ) -> JsonSchemaValue:
+        choices = {k: CHECKS[k].Config.__pydantic_core_schema__ for k in sorted(CHECKS)}
+        return handler(core_schema.tagged_union_schema(choices, discriminator="type"))
 
 
-Check = Annotated[LimitCheck | RocCheck, Field(discriminator="type")]
+# SerializeAsAny: a dump keeps the item's own kind (red_low, limit_per_s, …), not just the
+# CheckConfig base fields (ruling G21); callers narrow with isinstance (G8)
+CheckItem = Annotated[
+    CheckConfig, PlainValidator(_check_item), _ChecksUnionSchema(), SerializeAsAny()
+]
 
 
 class LimitEntry(_M):
-    checks: list[Check]
+    checks: list[CheckItem]
 
     @model_validator(mode="after")
     def _one_per_type(self) -> LimitEntry:
@@ -172,6 +178,9 @@ class MissionDb:
     commands_sha256: str
     parameters_sha256: str
     set_sha256: str
+    limits_yaml: str  # the file texts, as stored in limits_versions
+    commands_yaml: str
+    parameters_yaml: str
 
 
 # ---- reading
@@ -226,7 +235,7 @@ def _resolve(limits: LimitsFile) -> dict[str, LimitEntry]:
     d = limits.defaults
     out: dict[str, LimitEntry] = {}
     for name, entry in limits.limits.items():
-        checks: list[LimitCheck | RocCheck] = []
+        checks: list[CheckItem] = []
         for c in entry.checks:
             upd: dict[str, Any] = {}
             if c.persistence is None:
@@ -236,6 +245,15 @@ def _resolve(limits: LimitsFile) -> dict[str, LimitEntry]:
             checks.append(c.model_copy(update=upd))
         out[name] = LimitEntry(checks=checks)
     return out
+
+
+def _check_floor(limits: dict[str, LimitEntry]) -> None:
+    """Deadband floor (D-ALM-02), on every limit check of every parameter."""
+    for name, entry in limits.items():
+        for c in entry.checks:
+            if isinstance(c, LimitCheck) and not meets_floor(c):
+                d, f = deadband(c), floor(c)
+                raise MissionDbError(_LIMITS, f"{name}: deadband {d:g} below floor {f:g}")
 
 
 def load(limits: bytes, commands: bytes, parameters: bytes) -> MissionDb:
@@ -251,17 +269,22 @@ def load(limits: bytes, commands: bytes, parameters: bytes) -> MissionDb:
     unknown = [k for k in lim.limits if k not in p.parameters]
     if unknown:
         raise MissionDbError(_LIMITS, f"limits for unknown parameter(s): {', '.join(unknown)}")
+    resolved = _resolve(lim)
+    _check_floor(resolved)
     hashes = [hashlib.sha256(b).hexdigest() for b in (limits, commands, parameters)]
     set_sha = hashlib.sha256("".join(f"{h}\n" for h in hashes).encode()).hexdigest()
     return MissionDb(
         parameters=dict(p.parameters),
-        limits=_resolve(lim),
+        limits=resolved,
         commands=dict(cmd.commands),
         param_names=tuple(p.parameters),
         limits_sha256=hashes[0],
         commands_sha256=hashes[1],
         parameters_sha256=hashes[2],
         set_sha256=set_sha,
+        limits_yaml=limits.decode(),  # _read already rejected non-UTF-8
+        commands_yaml=commands.decode(),
+        parameters_yaml=parameters.decode(),
     )
 
 

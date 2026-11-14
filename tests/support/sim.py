@@ -6,12 +6,15 @@ import random
 import socket
 import urllib.error
 import urllib.request
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import redis.exceptions
 
 from gs.simulator.buffer import FrameBuffer, send_loop
+from gs.simulator.faults import FaultBoard, FaultRequest
 from gs.simulator.frames import tick_loop
 from gs.simulator.main import SimSettings, run
 from tests.support.env import dotenv
@@ -86,11 +89,9 @@ def delete_fault(vehicle: str, fault: str, port: int | None = None) -> int:
     return _fault_call("DELETE", {"vehicle": vehicle, "fault": fault}, port)
 
 
-async def run_sim_with(
-    v: str, seconds: float, at: float, fault: tuple[str, dict[str, object]]
-) -> list[str]:
-    """In-process sim for `v` on a free health port; POST `fault` at `at` s; the raw `data` of
-    every tm:<v> entry after `seconds`."""
+@asynccontextmanager
+async def running_sim(v: str) -> AsyncIterator[int]:
+    """In-process sim for `v` against the compose redis; yields its free health port."""
     with socket.socket() as sock:
         sock.bind((HOST, 0))
         port = sock.getsockname()[1]
@@ -98,13 +99,63 @@ async def run_sim_with(
     url = f"redis://sim:{env['REDIS_SIM_PW']}@{HOST}:{env['REDIS_HOST_PORT']}/0"
     stop = asyncio.Event()
     task = asyncio.create_task(run(SimSettings(url, (v,), "1", HOST, port), stop))
-    await asyncio.sleep(at)
-    assert await asyncio.to_thread(post_fault, v, fault[0], port, **fault[1]) == 204
-    await asyncio.sleep(seconds - at)
-    stop.set()
-    await task
+    await asyncio.sleep(0.3)  # health server up
+    try:
+        yield port
+    finally:
+        stop.set()
+        await task
+
+
+async def run_sim_with(
+    v: str, seconds: float, at: float, fault: tuple[str, dict[str, object]]
+) -> list[str]:
+    """In-process sim for `v`; POST `fault` at `at` s; the raw `data` of every tm:<v> entry after
+    `seconds`."""
+    async with running_sim(v) as port:
+        await asyncio.sleep(at - 0.3)
+        assert await asyncio.to_thread(post_fault, v, fault[0], port, **fault[1]) == 204
+        await asyncio.sleep(seconds - at)
     entries: Any = client("admin").xrange(f"tm:{v}")
     return [str(f["data"]) for _, f in entries]
+
+
+def tick_entries(
+    n: int, act: Callable[[int, FaultBoard, float], None] = lambda *_: None
+) -> list[str]:
+    """Run tick_loop for `n` ticks on a fake clock; `act(k, board, mono)` runs just before tick k.
+    The raw entries the loop appended."""
+    clock, buf, stop, board, ticks = [0.0], FrameBuffer(), asyncio.Event(), FaultBoard(), [0]
+
+    async def sleep(d: float) -> None:
+        clock[0] += d
+
+    def now() -> datetime:
+        act(ticks[0], board, clock[0])
+        ticks[0] += 1
+        if ticks[0] == n:
+            stop.set()
+        return EPOCH + timedelta(seconds=clock[0])
+
+    asyncio.run(
+        tick_loop(
+            "NYX-TA1", buf, random.Random("1:NYX-TA1"), stop, lambda: clock[0], sleep, now, board
+        )
+    )
+    return [d for _, d in buf._q]
+
+
+def at_tick(k: int, *reqs: FaultRequest) -> Callable[[int, FaultBoard, float], None]:
+    def act(tick: int, board: FaultBoard, mono: float) -> None:
+        if tick == k:
+            for r in reqs:
+                board.add(r, mono)
+
+    return act
+
+
+def fault_req(fault: str, **params: object) -> FaultRequest:
+    return FaultRequest.model_validate({"vehicle": "NYX-TA1", "fault": fault, "params": params})
 
 
 def seqs_of(raws: list[str]) -> list[int]:

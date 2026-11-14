@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
 from gs.common.health import Route
 from gs.common.interfaces import VehicleId
@@ -64,12 +64,14 @@ class FaultRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     vehicle: VehicleId
     fault: FaultName
-    params: dict[str, object] = {}
+    params: dict[str, object] = Field(default_factory=dict, validate_default=True)
 
-    @model_validator(mode="after")
-    def _check_params(self) -> FaultRequest:
-        self.params = _PARAMS[self.fault].model_validate(self.params).model_dump(exclude_none=True)
-        return self
+    @field_validator("params")
+    @classmethod
+    def _check_params(cls, v: dict[str, object], info: ValidationInfo) -> dict[str, object]:
+        if (fault := info.data.get("fault")) is None:  # the fault name itself was invalid
+            return v
+        return _PARAMS[fault].model_validate(v).model_dump(exclude_none=True)
 
 
 class FaultClear(BaseModel):

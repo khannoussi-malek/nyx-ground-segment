@@ -71,11 +71,12 @@ async def tick_loop(
         t = now()  # stamped at the tick, before the frame enters the buffer
         mono = monotonic()
         active = board.active(vehicle, mono)
+        raw = draw_values(rng)
         if any(a.name == "freeze" for a in active):
-            frozen = frozen if frozen is not None else last
+            frozen = frozen or last or raw  # first frame emitted when nothing came before
         else:
             frozen = None
-        values = apply(draw_values(rng), active, mono, frozen or None)
+        values = apply(raw, active, mono, frozen)
         if jump := board.take_once(vehicle, "seq_jump"):
             seq = (seq + int(str(jump.params["by"]))) % 2**32
         dup, bad = board.take_once(vehicle, "duplicate"), board.take_once(vehicle, "malformed")

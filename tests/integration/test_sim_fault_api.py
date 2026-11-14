@@ -1,11 +1,8 @@
 import asyncio
 import json
-import socket
 
-from gs.simulator.main import SimSettings, run
-from tests.support.env import dotenv, vid
-from tests.support.redisx import HOST
-from tests.support.sim import delete_fault, post_fault, run_sim_with, seqs_of
+from tests.support.env import vid
+from tests.support.sim import delete_fault, post_fault, run_sim_with, running_sim, seqs_of
 
 
 async def test_dropout_10s_drops_100_frames_seq_continues() -> None:
@@ -54,15 +51,8 @@ async def test_freeze_repeats_values_while_seq_advances() -> None:
 
 
 async def test_post_422_and_delete_204() -> None:
-    with socket.socket() as sock:
-        sock.bind((HOST, 0))
-        port = sock.getsockname()[1]
-    env = dotenv()
-    url = f"redis://sim:{env['REDIS_SIM_PW']}@{HOST}:{env['REDIS_HOST_PORT']}/0"
-    v, stop = vid(), asyncio.Event()
-    task = asyncio.create_task(run(SimSettings(url, (v,), "1", HOST, port), stop))
-    await asyncio.sleep(0.5)
-    try:
+    v = vid()
+    async with running_sim(v) as port:
         t = asyncio.to_thread
         assert await t(post_fault, v, "dropout", port) == 422  # duration required
         assert await t(post_fault, v, "pause", port, n=1) == 422  # day 3
@@ -71,6 +61,3 @@ async def test_post_422_and_delete_204() -> None:
         assert await t(delete_fault, v, "freeze", port) == 204
         assert await t(delete_fault, v, "freeze", port) == 204  # idempotent
         assert await t(delete_fault, "NYX-OTHER", "freeze", port) == 422
-    finally:
-        stop.set()
-        await task

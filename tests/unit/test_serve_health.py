@@ -75,3 +75,22 @@ async def test_routes_post_json_and_204_has_no_body() -> None:
     finally:
         server.close()
         await server.wait_closed()
+
+
+async def test_too_many_header_lines_is_400_and_short_body_closes_quietly() -> None:
+    server = await serve_health("127.0.0.1", 0, lambda: ("ok", {}), {("POST", "/x"): _echo})
+    port = server.sockets[0].getsockname()[1]
+    try:
+        r, w = await asyncio.open_connection("127.0.0.1", port)
+        w.write(b"POST /x HTTP/1.1\r\n" + b"X-A: b\r\n" * 100)  # no blank line within the cap
+        assert (await r.read()).startswith(b"HTTP/1.1 400")
+        w.close()
+        r, w = await asyncio.open_connection("127.0.0.1", port)
+        w.write(b"POST /x HTTP/1.1\r\nContent-Length: 10\r\n\r\n{}")  # 2 of 10 bytes, then EOF
+        w.write_eof()
+        assert await r.read() == b""  # IncompleteRead: nothing to answer
+        w.close()
+        assert (await _get(port, "/healthz"))[0] == 200  # server survived
+    finally:
+        server.close()
+        await server.wait_closed()

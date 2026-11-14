@@ -10,6 +10,8 @@ from pathlib import Path
 import psycopg
 import pytest
 
+from gs.alarms.contract import Level
+from gs.alarms.engine import compile_set
 from gs.common import migrate
 from gs.common.interfaces import FrameHeader, build_frame_model
 from gs.common.interfaces.export import write_all
@@ -17,6 +19,7 @@ from gs.common.missiondb import load_dir
 from gs.ingest.store import insert_frames
 from gs.ingest.validate import classify
 from gs.simulator.frames import make_frame
+from tests.support.alarms import Frame, run_engine
 from tests.support.env import REPO, vid
 from tests.support.gen import stale_files
 from tests.support.pg import app_dsn, owner_dsn, throwaway_db
@@ -88,6 +91,10 @@ async def test_add_parameter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         async with await psycopg.AsyncConnection.connect(app_dsn(name)) as c, c.transaction():
             assert len(await insert_frames(c, [frame], db.param_names)) == 1
         assert stored_value(name, vehicle) == 41.5
+    # the new parameter is limit-checked by the engine, with no engine edit (EX-01)
+    frames: list[Frame] = [(i, i * 0.1, {PARAM: 75.0}) for i in range(1, 4)]
+    tr = run_engine(compile_set(db), frames)
+    assert [(t.kind, t.severity, t.param) for t in tr] == [("RAISE", Level.RED, PARAM)]
     # no code change, and no generated file to commit (CI stale check stays green)
     write_all(tmp_path / "gen")
     assert stale_files(tmp_path / "gen") == []

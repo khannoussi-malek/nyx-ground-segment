@@ -28,10 +28,10 @@ from gs.ingest.mission import MissionWatcher, start_set
 from gs.ingest.owner import MATCH
 from gs.ingest.validate import FieldStats
 from gs.ingest.worker import Ctx, Timing, process_batch, run_vehicle
-from tests.support.compose import compose, compose_ps, restart_count
+from tests.support.compose import compose, compose_ps, recreate, restart_count
 from tests.support.env import REPO, dotenv, vid, wait_until
 from tests.support.mission import MISSION_DIR
-from tests.support.pg import admin_dsn, app_dsn
+from tests.support.pg import admin_dsn, app_dsn, lock_holder
 from tests.support.redisx import GROUP, aclient, client, drained
 
 DEFAULT_TIMING = Timing()
@@ -245,3 +245,30 @@ def latest_seq(vehicle: str) -> int:
         ).fetchone()
     assert row is not None, f"no telemetry for {vehicle}"
     return int(row[0])
+
+
+KILL_CASES = [
+    "before_commit",
+    "after_commit_before_publish",
+    "after_publish_before_ack",
+    "docker_kill",
+    "crash_at_self_restart",
+]
+
+
+def kill_or_crash(case: str) -> None:
+    """Take NYX-TA1 from ingest-1 one way of KILL_CASES (fast_ingest workers); returns once
+    ingest-2 holds it (docker_kill) or ingest-1 has crashed once and holds it again."""
+    if case == "docker_kill":
+        wait_until(lambda: lock_holder("NYX-TA1") == "ingest-1", 30)
+        compose("kill", "ingest-1")
+        wait_until(lambda: lock_holder("NYX-TA1") == "ingest-2", 15)  # the peer, not a restart
+        return
+    point = "after_xack" if case == "crash_at_self_restart" else case
+    recreate(["ingest-1"], {**FAST_ENV, "CRASH_AT": point}, wait=False)
+    # the hook fires once the new ingest-1 owns NYX-TA1 again (after a hand-back), exits 99
+    # and comes back through `restart: unless-stopped`; meanwhile ingest-2 holds NYX-TA1
+    wait_until(lambda: restart_count("ingest-1") >= 1, 40)
+    wait_until(lambda: lock_holder("NYX-TA1") == "ingest-2", 15)
+    wait_until(lambda: lock_holder("NYX-TA1") == "ingest-1", 30)  # hand-back, no 2nd crash
+    assert restart_count("ingest-1") == 1  # the marker kept the hook from firing again

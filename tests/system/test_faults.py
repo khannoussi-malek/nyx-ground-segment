@@ -12,7 +12,7 @@ from gs.common.interfaces import DlqRecord
 from gs.ingest.link import FROZEN_S
 from tests.support.env import now, wait_until
 from tests.support.ingest import LIVE, wait_drained
-from tests.support.pg import app_dsn, events_for, stored
+from tests.support.pg import alarm_events_for, app_dsn, events_for, stored
 from tests.support.redisx import client, dlq_since
 from tests.support.sim import delete_fault, post_fault
 
@@ -85,5 +85,28 @@ def test_freeze_gives_frozen_event() -> None:
     assert len(events_for(V, "FROZEN", since=t0)) == 1
 
 
-# Integration agent: add the live-leak case here (ATP-05 / ALM-04, ALM-06):
-# test_leak_roc_then_red_one_alarm, which needs the alarm engine wired into ingest.
+LEAK_WAIT_S = 25.0  # -0.4 kPa/s from 101.3 reaches red_low 95 after ~16 s (design 3.4)
+
+
+def test_leak_roc_then_red_one_alarm() -> None:  # ATP-05 live leak, ALM-04/06 (3.4)
+    t0 = now()
+    assert post_fault(V, "leak") == 204
+    try:
+        wait_until(lambda: any(r["severity"] == "RED" for r in pressure_alarms(t0)), LEAK_WAIT_S)
+    finally:
+        delete_fault(V, "leak")
+    rows = pressure_alarms(t0)
+    assert (rows[0]["kind"], rows[0]["check_kind"], rows[0]["severity"]) == (
+        "RAISE",
+        "roc",
+        "YELLOW",
+    )
+    assert not rows[0]["alert"]  # only RED alerts (D-ALM-09)
+    assert sum(r["kind"] == "RAISE" for r in rows) == 1  # one alarm per (vehicle, param)
+    (esc,) = [r for r in rows if r["kind"] == "ESCALATE"]
+    assert (esc["check_kind"], esc["level"], esc["alert"]) == ("limit", "RED_LOW", True)
+    assert len({r["alarm_id"] for r in rows}) == 1
+
+
+def pressure_alarms(since: datetime) -> list[dict[str, Any]]:
+    return [r for r in alarm_events_for(V, since) if r["param"] == "cabin_pressure_kpa"]

@@ -41,6 +41,15 @@ def watchdog_ok(
     return all(v in seen and now - seen[v] < limit_s for v in owned)
 
 
+def watchdog_timeout(
+    seen: Mapping[str, float], owned: Collection[str], now: float, limit_s: float
+) -> float:
+    """G27: the remaining budget of the oldest owned loop, so a hung loop's dump fires limit_s
+    after its last pass (re-arming with the full limit would allow up to 2 x limit_s)."""
+    oldest = max((now - seen[v] for v in owned if v in seen), default=0.0)
+    return max(0.1, limit_s - oldest)
+
+
 def ingest_status(
     seen: Mapping[str, float], owned: Collection[str], now: float, used_memory: int | None
 ) -> tuple[State, dict[str, object]]:
@@ -122,9 +131,11 @@ async def tick(
         except redis.exceptions.RedisError as e:
             log.warning("steal check skipped (%s)", e)
             ok = False
-    if watchdog and watchdog_ok(ctx.loop_seen, ctx.owned, time.monotonic(), ctx.timing.watchdog_s):
-        # not re-armed while an owned loop hangs: the pending dump fires and exits (D-ING-26)
-        faulthandler.dump_traceback_later(ctx.timing.watchdog_s, exit=True)
+    now, limit = time.monotonic(), ctx.timing.watchdog_s
+    if watchdog and watchdog_ok(ctx.loop_seen, ctx.owned, now, limit):
+        # not re-armed once an owned loop hangs past the limit: the pending dump fires (D-ING-26)
+        timeout = watchdog_timeout(ctx.loop_seen, ctx.owned, now, limit)
+        faulthandler.dump_traceback_later(timeout, exit=True)
     return ok
 
 

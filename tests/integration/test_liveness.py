@@ -125,9 +125,11 @@ async def test_tick_rearms_watchdog_only_for_live_owned_loops(
     try:
         async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as c:
             ctx.owned.add("NYX-A")
-            ctx.loop_seen["NYX-A"] = time.monotonic()
+            ctx.loop_seen["NYX-A"] = time.monotonic() - 5  # last pass 5 s ago
             await liveness.tick(ctx, c, watchdog=True)
-            assert armed == [(7.5, {"exit": True})] and (ctx.used_memory[0] or 0) > 0
+            # G27: armed with the remaining budget, so a hang dies watchdog_s after its last pass
+            ((t, kw),) = armed
+            assert 2.0 < t <= 2.5 and kw == {"exit": True} and (ctx.used_memory[0] or 0) > 0
             ctx.loop_seen["NYX-A"] = time.monotonic() - 8  # a hung owned loop
             await liveness.tick(ctx, c, watchdog=True)
             assert len(armed) == 1  # not re-armed: the pending dump fires and exits

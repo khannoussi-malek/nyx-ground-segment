@@ -6,13 +6,29 @@ from typing import Any
 import pytest
 
 from tests.support.compose import ONE_SHOTS, compose_config
-from tests.support.env import dotenv
+from tests.support.env import REPO, dotenv
 
-APP = {"migrate", "simulator", "ingest-1", "api"}
+APP = {"migrate", "simulator", "ingest-1", "ingest-2", "api"}
 MINIO_IMAGE = (
     "bitnamilegacy/minio:2025.5.24"
     "@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c"
 )
+INGEST_ENV = {
+    "REDIS_URL",
+    "DATABASE_URL",
+    "CONSUMER_NAME",
+    "VEHICLES",
+    "MISSION_DB",
+    "BIND_HOST",
+    "HEALTH_PORT",
+    "INGEST_HOMES",
+    "STEAL_IDLE_MS",
+    "RECLAIM_IDLE_MS",
+    "GS_TEST_HOOKS",
+    "CRASH_AT",
+    "STOP_AT",
+    "HANG_AT",
+}
 ENV = {
     "redis": {"REDIS_HEALTH_PW"},
     "db": {
@@ -22,10 +38,8 @@ ENV = {
     "minio-init": {"MC_CONFIG_DIR", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET"},
     "migrate": {"DATABASE_URL", "MISSION_DB"},
     "simulator": {"REDIS_URL", "SIM_VEHICLES", "SIM_SEED", "BIND_HOST", "HEALTH_PORT"},
-    "ingest-1": {
-        "REDIS_URL", "DATABASE_URL", "CONSUMER_NAME", "VEHICLES", "MISSION_DB",
-        "BIND_HOST", "HEALTH_PORT",
-    },
+    "ingest-1": INGEST_ENV,
+    "ingest-2": INGEST_ENV,
     "api": {
         "REDIS_URL", "DATABASE_URL", "SESSION_SECRET", "USERS_FILE", "MISSION_DB", "VEHICLES",
         "UI_DIST", "BIND_HOST", "API_PORT",
@@ -65,6 +79,7 @@ USES = {  # secret keys each service's environment is derived from
     "migrate": {"GS_OWNER_PASSWORD"},
     "simulator": {"REDIS_SIM_PW"},
     "ingest-1": {"REDIS_INGEST_PW", "GS_APP_PASSWORD"},
+    "ingest-2": {"REDIS_INGEST_PW", "GS_APP_PASSWORD"},
     "api": {"REDIS_API_PW", "GS_APP_PASSWORD", "SESSION_SECRET"},
 }
 
@@ -121,3 +136,28 @@ def test_images_pinned(services: dict[str, dict[str, Any]]) -> None:
     assert services["redis"]["image"] == "redis:8.10.3"
     assert services["db"]["image"] == "timescale/timescaledb:2.32.0-pg17"
     assert services["minio"]["image"] == services["minio-init"]["image"] == MINIO_IMAGE
+
+
+def test_ingest_defaults(services: dict[str, dict[str, Any]]) -> None:
+    """Design defaults when the shell sets nothing."""
+    for svc in ("ingest-1", "ingest-2"):
+        env = services[svc]["environment"]
+        assert (env["STEAL_IDLE_MS"], env["RECLAIM_IDLE_MS"], env["GS_TEST_HOOKS"]) == (
+            "30000",
+            "30000",
+            "0",
+        )
+        assert env["INGEST_HOMES"] == "ingest-1=NYX-TA1,ingest-2=NYX-TA2"
+        assert env["CONSUMER_NAME"] == svc
+
+
+def test_ingest_2_is_opt_in_until_ownership_lands(services: dict[str, dict[str, Any]]) -> None:
+    """G1: two lock-less workers would interleave one vehicle's frames; Track B removes this."""
+    assert services["ingest-2"]["profiles"] == ["ingest2"]
+    assert "profiles" not in services["ingest-1"]
+
+
+def test_image_tag_is_per_worktree(services: dict[str, dict[str, Any]]) -> None:
+    """G3: parallel worktrees must not share one nyx-gs:local tag."""
+    assert services["api"]["image"] == f"nyx-gs:{dotenv().get('GS_IMAGE_TAG', 'local')}"
+    assert "GS_IMAGE_TAG=local" in (REPO / ".env.example").read_text().splitlines()

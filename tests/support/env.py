@@ -6,6 +6,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 
 import yaml
@@ -57,3 +58,16 @@ async def until(cond: Callable[[], bool], timeout: float) -> None:
         if time.monotonic() > deadline:
             raise AssertionError(f"condition not met within {timeout}s")
         await asyncio.sleep(0.05)
+
+
+def wait_until(cond: Callable[[], bool], timeout: float) -> None:
+    """Sync twin of `until`."""
+    deadline = time.monotonic() + timeout
+    while not cond():
+        if time.monotonic() > deadline:
+            raise AssertionError(f"condition not met within {timeout}s")
+        time.sleep(0.05)
+
+
+def now() -> datetime:
+    return datetime.now(UTC)

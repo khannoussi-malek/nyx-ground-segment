@@ -148,6 +148,22 @@ def dlq_entries(v: str) -> list[str]:
     return [f["data"] for _, f in entries if json.loads(f["data"]).get("stream") == f"tm:{v}"]
 
 
+def dlq_since(stream: str, since: datetime) -> list[str]:
+    """Raw `data` of tm:dlq records for `stream` added at or after `since` (by entry id)."""
+    ms = int(since.timestamp() * 1000)
+    entries: Any = client("admin").xrange("tm:dlq", min=str(ms))
+    return [f["data"] for _, f in entries if json.loads(f["data"]).get("stream") == stream]
+
+
+def pending_of(v: str, consumer: str) -> int:
+    """Entries in group ingest's PEL owned by `consumer` on tm:<v>; 0 while there is no group."""
+    try:
+        rows: Any = client("admin").xpending_range(f"tm:{v}", GROUP, "-", "+", 10_000, consumer)
+    except redis.ResponseError:
+        return 0
+    return len(rows)
+
+
 def dlq_entry_for(entry_id: str) -> str:
     entries: Any = client("admin").xrange("tm:dlq")
     (data,) = [f["data"] for _, f in entries if json.loads(f["data"]).get("entry_id") == entry_id]

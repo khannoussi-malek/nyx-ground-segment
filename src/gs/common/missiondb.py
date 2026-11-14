@@ -172,6 +172,9 @@ class MissionDb:
     commands_sha256: str
     parameters_sha256: str
     set_sha256: str
+    limits_yaml: str  # the file texts, as stored in limits_versions
+    commands_yaml: str
+    parameters_yaml: str
 
 
 # ---- reading
@@ -262,6 +265,9 @@ def load(limits: bytes, commands: bytes, parameters: bytes) -> MissionDb:
         commands_sha256=hashes[1],
         parameters_sha256=hashes[2],
         set_sha256=set_sha,
+        limits_yaml=limits.decode(),  # _read already rejected non-UTF-8
+        commands_yaml=commands.decode(),
+        parameters_yaml=parameters.decode(),
     )
 
 

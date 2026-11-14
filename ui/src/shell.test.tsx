@@ -87,6 +87,7 @@ test("App: logged in shows the console, opens the event stream and loads the mis
   expect(host.querySelector("header span")?.textContent).toBe("fc1");
   expect(buttonText("Log out")).toBe("Log out");
   expect(host.querySelector("main")).not.toBeNull();
+  expect(host.querySelector('section[aria-label="Alarms"]')).not.toBeNull(); // mounted (P-pf10)
   expect(FakeEventSource.opened).toEqual(["/api/events"]);
   expect(f).toHaveBeenCalledWith("/api/mission-db", { credentials: "same-origin" });
 });

@@ -131,6 +131,26 @@ header .sound-off {
 }
 header .sound-off:hover { background: var(--action-hover); }
 
+/* alarm list and ACK dialog */
+.alarms { padding: 1rem 1.5rem 0; }
+.alarms h2 { margin: 0 0 0.5rem; font-size: 1rem; }
+.alarms .filters { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 0.5rem; font-size: 0.875rem; }
+.alarms .filters label { display: flex; gap: 0.5rem; align-items: center; }
+.alarms td, .alarms th { padding: 0.375rem 0.5rem; text-align: left; vertical-align: baseline; }
+.alarms th .glyph { margin-right: 0.375rem; }
+.alarms tr[data-severity="RED"] { background: var(--red-tint); }
+.alarms tr[data-severity="YELLOW"] { background: var(--yellow-tint); }
+.alarms .hash { color: var(--ink-muted); font-size: 0.75rem; }
+.alarms .ack-status { margin-right: 0.75rem; font-weight: 600; }
+.alarms .empty { color: var(--ink-muted); }
+dialog.ack { border: 1px solid var(--field-border); border-radius: var(--radius); background: var(--surface); color: var(--ink); max-width: 32rem; }
+dialog.ack::backdrop { background: rgb(14 14 14 / 0.5); }
+dialog.ack h2 { margin-top: 0; }
+dialog.ack label { display: grid; gap: 0.25rem; font-size: 0.875rem; font-weight: 500; }
+dialog.ack textarea { font: inherit; }
+dialog.ack .actions { display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1rem; }
+dialog.ack [role="alert"] { color: var(--red); font-weight: 600; }
+
 /* vehicle grid */
 main {
   display: grid;

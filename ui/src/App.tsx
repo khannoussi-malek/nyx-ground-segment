@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { logout, me, missionDb, type MissionDb } from "./api";
 import { armAudio, beep, beepsFor, tone, toneActive, toneKeys, type ToneState } from "./audio";
 import { sessionKeySet } from "./keySet";
+import { AlarmList } from "./AlarmList";
 import { LiveTable } from "./LiveTable";
 import { Login } from "./Login";
 import { bootUser, checkSession, loadMission, safeLogout } from "./session";
@@ -111,6 +112,7 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
         <span>{user}</span>
         <button onClick={() => void safeLogout(logout).then(onLogout)}>Log out</button>
       </header>
+      <AlarmList store={store} mission={mission} user={user} />
       <main>
         <LiveTable store={store} mission={mission} />
       </main>

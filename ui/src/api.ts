@@ -39,3 +39,26 @@ export async function missionDb(): Promise<MissionDb | null> {
   if (!r.ok) throw fail("mission-db", r);
   return (await r.json()) as MissionDb;
 }
+
+type AckAccepted = components["schemas"]["AckAccepted"];
+type ErrorBody = components["schemas"]["ErrorBody"];
+export type AckResult = { ok: true; status: AckAccepted["status"] } | { ok: false; error: string; message: string };
+
+/** Ask for an ACK. 202 = the request is accepted (it may still be pending); anything else comes back as the server's
+ *  error + message for the dialog, a network failure as NETWORK. The same request id may be sent again: the server
+ *  treats it as the same request. */
+export async function ackAlarm(alarmId: string, requestId: string, note: string): Promise<AckResult> {
+  try {
+    const r = await fetch(`/api/alarms/${encodeURIComponent(alarmId)}/ack`, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...CLIENT },
+      body: JSON.stringify({ request_id: requestId, note }),
+    });
+    if (r.status === 202) return { ok: true, status: ((await r.json()) as AckAccepted).status };
+    const body = (await r.json().catch(() => null)) as Partial<ErrorBody> | null;
+    return { ok: false, error: body?.error ?? `HTTP_${r.status}`, message: body?.message ?? `ACK failed (${r.status})` };
+  } catch {
+    return { ok: false, error: "NETWORK", message: "Could not reach the ground segment" };
+  }
+}

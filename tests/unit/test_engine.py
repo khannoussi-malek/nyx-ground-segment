@@ -7,6 +7,7 @@ import pytest
 
 from gs.alarms.checks import CHECKS, CheckConfig, Reading, Sample, register
 from gs.alarms.checks.limit import LimitCheck
+from gs.alarms.checks.roc import RocState
 from gs.alarms.contract import Level
 from gs.alarms.engine import CompiledSet, compile_set, initial_state, step
 from gs.common.missiondb import LimitEntry, load_dir
@@ -17,6 +18,7 @@ from tests.support.alarms import (
     Frame,
     V,
     at,
+    feed,
     leak_frames,
     nominal_frames,
     run_engine,
@@ -55,11 +57,44 @@ def test_mixed_ring_escalates_to_its_minimum() -> None:  # red needs no own N (D
     ]
 
 
-def test_gap_resets_counters_not_alarm() -> None:  # D-ALM-04
+def test_gap_resets_counters_not_alarm() -> None:  # D-ALM-04, ruling G15
+    # the revealing frame is fresh data: classified after the ring is cleared
+    tr = run_engine(CSET, temp_series([31, 31, 31, 22, 22, 22]), resets={4})
+    assert [t.kind for t in tr] == ["RAISE"]  # ring (N, N) after 4, 5: no RTN yet
     tr = run_engine(CSET, temp_series([31, 31, 31, 22, 22, 22, 22]), resets={4})
-    assert [t.kind for t in tr] == ["RAISE"]  # ring cleared at the reset: 5, 6 only two fresh
-    tr = run_engine(CSET, temp_series([31, 31, 31, 22, 22, 22, 22, 22]), resets={4})
-    assert [(t.kind, t.trigger_seq) for t in tr] == [("RAISE", 2), ("RTN", 7)]
+    assert [(t.kind, t.trigger_seq) for t in tr] == [("RAISE", 2), ("RTN", 6)]
+
+
+def test_periodic_loss_still_raises() -> None:  # 1 frame in 4 lost: every 3rd frame reveals a GAP
+    tr = run_engine(CSET, temp_series([31.0] * 30), resets=set(range(0, 30, 3)))
+    assert [(t.kind, t.trigger_seq) for t in tr] == [("RAISE", 2)]
+
+
+def test_null_resets_the_ring() -> None:  # D-ALM-04: a NULL restarts persistence
+    tr = run_engine(CSET, temp_series([31, 31, 31, 22, 22, None, 22]))
+    assert [t.kind for t in tr] == ["RAISE"]  # (N, N) + NULL + N is not 3 in a row
+
+
+@pytest.mark.parametrize("how", ["null", "reset"])
+def test_null_or_reset_restarts_the_roc_window(how: str) -> None:
+    p = "cabin_pressure_kpa"
+    ramp: list[Frame] = [(i, i * PERIOD_S, {p: 101.3 - 0.05 * i}) for i in range(15)]
+    after: list[Frame] = [(i, i * PERIOD_S, {p: 100.55}) for i in range(15, 22)]
+    gap: Frame = (15, 1.5, {p: None}) if how == "null" else after[0]
+    frames = [*ramp, gap, *after[1:]]
+    state, tr = feed(initial_state(CSET), CSET, frames, resets={15} if how == "reset" else ())
+    assert [(t.kind, t.check_kind) for t in tr] == [("RAISE", "roc")]  # held: no opinion yet
+    roc = state.slots[(p, "roc")]
+    assert roc.ring == () and roc.level == Level.YELLOW
+    assert isinstance(roc.state, RocState) and roc.state.t[0] >= 1.5 + EPOCH.timestamp() - 1e-6
+
+
+def test_param_without_checks_is_skipped() -> None:  # ruling G16: may be unchecked
+    lim = files()["limits"]
+    i = lim.index(b"  rate_z_dps:")
+    cset = compile_set(ld(files(limits=lim[:i] + b"  rate_z_dps: {checks: []}\n")))
+    assert "rate_z_dps" not in cset.checks
+    assert run_engine(cset, [(0, 0.0, {"rate_z_dps": 99.0})]) == []
 
 
 def test_reset_before_raise_restarts_count() -> None:
@@ -116,7 +151,8 @@ def test_noise_one_alarm(param: str, bound: float, reading: str) -> None:  # ALM
         (i, i * PERIOD_S, {param: bound + rng.uniform(-amp, amp)}) for i in range(2000)
     ]
     kinds = [t.kind for t in run_engine(n1_set(), frames)]
-    assert kinds.count("RAISE") == 1 and "RTN" not in kinds and "CLEAR" not in kinds
+    assert kinds.count("RAISE") == 1
+    assert not {"RTN", "CLEAR", "DEESCALATE"} & set(kinds)
 
 
 def test_nominal_noise_no_alarm() -> None:  # Review Focus 5: 10 min at design 3.3 sigma
@@ -178,6 +214,7 @@ def test_plugin_kind_dispatched_through_registry() -> None:  # ALM-07: no engine
         frames: list[Frame] = [(i, i * PERIOD_S, {"bus_current_a_extra": 0.0}) for i in range(3)]
         (t,) = run_engine(cset, frames)
         assert (t.kind, t.check_kind, t.severity) == ("RAISE", "stuck", Level.RED)
+        assert t.level == "RED"  # no side: the level text is the severity alone
     finally:
         CHECKS.pop("stuck")
 

@@ -59,7 +59,8 @@ def compile_set(mdb: MissionDb) -> CompiledSet:
             if c.persistence is None:
                 raise ValueError(f"{param}/{c.type}: persistence not resolved")
             compiled.append((CHECKS[c.type](c), c.persistence))
-        checks[param] = tuple(compiled)
+        if compiled:  # `checks: []` = an unchecked parameter (ruling G16)
+            checks[param] = tuple(compiled)
     return CompiledSet(mdb.set_sha256, mdb.limits_sha256, checks)
 
 
@@ -72,9 +73,11 @@ def initial_state(cset: CompiledSet) -> EngineState:
     return EngineState(slots, {})
 
 
-def _slot_step(slot: Slot, chk: Check, n: int, s: Sample | None) -> Slot:
-    if s is None:  # NULL sample or reset: keep the level, restart ring and check state (D-ALM-04)
-        return replace(slot, ring=(), state=chk.initial())
+def _slot_step(slot: Slot, chk: Check, n: int, s: Sample | None, reset: bool) -> Slot:
+    if s is None or reset:  # keep the level, restart ring and check state (D-ALM-04)
+        slot = replace(slot, ring=(), state=chk.initial())
+    if s is None:  # a NULL is not classified; a reset's revealing frame is (ruling G15)
+        return slot
     st, r = chk.step(slot.state, s, slot.level)
     if r is None:  # no opinion: nothing pushed
         return replace(slot, state=st)
@@ -86,6 +89,10 @@ def _slot_step(slot: Slot, chk: Check, n: int, s: Sample | None) -> Slot:
         level = max(ring)
     side = None if level == Level.NOMINAL else (r.side or slot.side)
     return Slot(slot.kind, level, side, ring, st)
+
+
+def _level_text(sev: Level, side: str | None) -> str:
+    return f"{sev.name}_{side}" if side else sev.name
 
 
 @dataclass(frozen=True)
@@ -113,7 +120,7 @@ def _transition(
         param=param,
         kind=kind,
         check_kind=trigger.kind if trigger else None,
-        level=f"{sev.name}_{trigger.side}" if trigger else None,
+        level=_level_text(sev, trigger.side) if trigger else None,
         severity=sev,
         alarm_state=a.state,
         acked_sev=a.acked_sev,
@@ -168,14 +175,15 @@ def step(
     values: Mapping[str, float | None],
     reset: bool,
 ) -> tuple[EngineState, tuple[Transition, ...]]:
-    """One frame. `reset` (GAP, SEQ_RESET, data-STALE; the caller decides) acts like a NULL."""
+    """One frame. `reset` (GAP, SEQ_RESET, data-STALE; the caller decides) restarts every ring and
+    check state before the frame is classified; a NULL value restarts them and is not classified."""
     f = _Frame(vehicle, epoch, seq, t)
     slots, alarms = dict(state.slots), dict(state.alarms)
     out: list[Transition] = []
     for param, checks in cset.checks.items():
         v = values.get(param)
-        sample = None if v is None or reset else Sample(seq, t.timestamp(), v, period_s)
-        new = [_slot_step(slots[(param, c.kind)], c, n, sample) for c, n in checks]
+        sample = None if v is None else Sample(seq, t.timestamp(), v, period_s)
+        new = [_slot_step(slots[(param, c.kind)], c, n, sample, reset) for c, n in checks]
         slots.update({(param, s.kind): s for s in new})
         sev = max(s.level for s in new)
         trig = next(s for s in new if s.level == sev)  # first slot at that level, file order

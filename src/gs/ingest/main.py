@@ -11,7 +11,7 @@ import redis.asyncio
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
-from gs.common.config import ConfigError, require
+from gs.common.config import require, vehicle_list
 from gs.common.health import State, serve_health
 from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
@@ -20,13 +20,6 @@ from gs.ingest.worker import Ctx, run_vehicle
 
 STALE_S = 10.0  # a vehicle loop that has not passed for this long makes the service down
 SOCKET_TIMEOUT_S = 5  # must exceed the 1 s XREADGROUP block
-
-
-def _vehicles(raw: str) -> tuple[str, ...]:
-    names = tuple(v for v in (p.strip() for p in raw.split(",")) if v)
-    if not names:
-        raise ConfigError("VEHICLES lists no vehicle")
-    return names
 
 
 @dataclass(frozen=True)
@@ -45,7 +38,7 @@ class IngestSettings:
             redis_url=require("REDIS_URL"),
             database_url=require("DATABASE_URL"),
             consumer_name=require("CONSUMER_NAME"),
-            vehicles=_vehicles(require("VEHICLES")),
+            vehicles=vehicle_list(require("VEHICLES")),
             mission_db=require("MISSION_DB"),
             bind_host=require("BIND_HOST"),
             health_port=int(require("HEALTH_PORT")),

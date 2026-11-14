@@ -10,3 +10,10 @@ def require(name: str) -> str:
     if not value:
         raise ConfigError(f"missing required environment variable {name}")
     return value
+
+
+def vehicle_list(raw: str) -> tuple[str, ...]:
+    names = tuple(v for v in (p.strip() for p in raw.split(",")) if v)
+    if not names:
+        raise ConfigError("VEHICLES lists no vehicle")
+    return names

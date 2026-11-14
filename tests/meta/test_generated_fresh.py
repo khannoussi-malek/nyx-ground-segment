@@ -1,5 +1,6 @@
 """GS-EXT-04: committed JSON Schemas must equal what the pydantic models generate."""
 
+import json
 import os
 import shutil
 import subprocess
@@ -8,8 +9,11 @@ from pathlib import Path
 
 import pytest
 
+from gs.api.app import ROUTER, create_app
+from gs.api.openapi import build_openapi
+from gs.api.settings import Settings
 from gs.common.interfaces.export import write_all
-from tests.support.gen import REPO, stale_files
+from tests.support.gen import REPO, gen_types, stale_files
 
 
 def test_committed_schemas_are_fresh(tmp_path: Path) -> None:
@@ -40,3 +44,44 @@ def test_mission_edit_leaves_no_diff(tmp_path: Path, monkeypatch: pytest.MonkeyP
     monkeypatch.setenv("MISSION_DB", str(tmp_path / "mission"))
     write_all(tmp_path / "out")
     assert stale_files(tmp_path / "out") == []
+
+
+def test_openapi_has_interface_components(tmp_path: Path) -> None:
+    write_all(tmp_path)
+    doc = json.loads((tmp_path / "openapi.json").read_text())
+    assert {"FrameHeader", "DlqRecord", "Hello", "Snapshot", "Tm", "Hb"} <= set(
+        doc["components"]["schemas"]
+    )
+    assert {"/api/login", "/api/logout", "/api/me", "/api/events", "/healthz"} <= set(doc["paths"])
+    assert doc["x-generated"] == "make gen - do not edit"
+    assert stale_files(tmp_path) == []
+
+
+def test_schema_dts_is_deterministic_and_fresh(tmp_path: Path) -> None:  # A-EXT-13
+    write_all(tmp_path)
+    first = gen_types(tmp_path / "openapi.json", tmp_path / "a.d.ts")
+    assert gen_types(tmp_path / "openapi.json", tmp_path / "b.d.ts") == first
+    assert first == (REPO / "ui/src/api/schema.d.ts").read_bytes()
+
+
+def test_negative_control_openapi_edit_changes_schema_dts(tmp_path: Path) -> None:
+    write_all(tmp_path)
+    doc = json.loads((tmp_path / "openapi.json").read_text())
+    doc["components"]["schemas"]["Tm"]["properties"]["negative_control"] = {"type": "integer"}
+    edited = tmp_path / "edited.json"
+    edited.write_text(json.dumps(doc))
+    assert gen_types(edited, tmp_path / "c.d.ts") != (REPO / "ui/src/api/schema.d.ts").read_bytes()
+
+
+def test_served_openapi_is_the_built_document(tmp_path: Path) -> None:
+    app = create_app(
+        Settings(
+            redis_url="redis://x",
+            database_url="postgresql://x",
+            session_secret="s",
+            users_file=tmp_path / "u.yaml",
+            mission_db=tmp_path,
+            vehicles=(),
+        )
+    )
+    assert app.openapi() == build_openapi(ROUTER.routes)

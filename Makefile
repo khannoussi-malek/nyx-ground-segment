@@ -20,3 +20,4 @@ migrate:
 
 gen:
 	uv run python -m gs.common.interfaces.export
+	cd ui && npx openapi-typescript ../interfaces/openapi.json -o src/api/schema.d.ts

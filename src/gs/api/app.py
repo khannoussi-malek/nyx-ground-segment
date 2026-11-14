@@ -6,7 +6,7 @@ import secrets
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from http import HTTPStatus
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 import redis.asyncio
 from fastapi import APIRouter, Depends, FastAPI, Request, Response
@@ -28,6 +28,7 @@ from gs.api.auth import (
     sess_key,
     verify_password,
 )
+from gs.api.openapi import build_openapi
 from gs.api.settings import Settings
 from gs.common.missiondb import load_dir
 
@@ -133,6 +134,13 @@ ROUTER.add_api_route(
 )
 
 
+def _openapi(app: FastAPI) -> Callable[[], dict[str, Any]]:
+    def openapi() -> dict[str, Any]:
+        return build_openapi(app.routes)
+
+    return openapi
+
+
 def create_app(settings: Settings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -167,6 +175,7 @@ def create_app(settings: Settings) -> FastAPI:
         max_age=SESSION_TTL_S,
     )
     app.include_router(ROUTER)
+    app.openapi = _openapi(app)  # type: ignore[method-assign]
 
     @app.middleware("http")
     async def require_client_header(

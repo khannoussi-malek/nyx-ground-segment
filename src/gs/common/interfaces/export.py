@@ -7,9 +7,12 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from gs.api.app import ROUTER
+from gs.api.openapi import build_openapi
 from gs.common.interfaces import DlqRecord, FrameHeader, Hb, Hello, Snapshot, Tm
 from gs.common.missiondb import CommandsFile, LimitsFile, ParametersFile
 
+OPENAPI = "openapi.json"
 DIALECT = "https://json-schema.org/draft/2020-12/schema"
 
 # path under interfaces/ -> model; code-derived only (EX-01: nothing from mission/ content)
@@ -24,6 +27,10 @@ EXPORTS: dict[str, type[BaseModel]] = {
     "schemas/mission/commands.schema.json": CommandsFile,
     "schemas/mission/parameters.schema.json": ParametersFile,
 }
+
+
+def render_openapi() -> str:  # routes only: no settings or connections needed
+    return json.dumps(build_openapi(ROUTER.routes), indent=2, sort_keys=True) + "\n"
 
 
 def render(model: type[BaseModel]) -> str:
@@ -42,7 +49,9 @@ def write_all(root: Path) -> list[Path]:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(render(model), encoding="utf-8")
         written.append(path)
-    return written
+    api = root / OPENAPI
+    api.write_text(render_openapi(), encoding="utf-8")
+    return [*written, api]
 
 
 def main() -> None:

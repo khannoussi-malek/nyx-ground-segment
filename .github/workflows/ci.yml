@@ -16,10 +16,17 @@ jobs:
           version: "0.12.18"
           enable-cache: true
       - run: uv sync --frozen
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: cd ui && npm ci
+      - run: cd ui && npx tsc --noEmit && npm test
       - run: uv run ruff check
       - run: uv run ruff format --check
       - run: uv run mypy --strict src tests
-      - run: make gen && git diff --exit-code -- interfaces || (echo "generated code is stale: run make gen"; exit 1)
+      - run: make gen && git diff --exit-code -- interfaces ui/src/api || (echo "generated code is stale: run make gen"; exit 1)
 
   test:
     runs-on: ubuntu-latest
@@ -30,6 +37,12 @@ jobs:
           version: "0.12.18"
           enable-cache: true
       - run: uv sync --frozen
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: cd ui && npm ci
       - run: make env
       - run: docker compose up -d --wait redis db minio
       - run: docker compose run --rm minio-init

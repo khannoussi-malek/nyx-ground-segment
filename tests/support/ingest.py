@@ -20,6 +20,7 @@ from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
 from gs.ingest.events import insert_set
 from gs.ingest.fold import empty_state
+from gs.ingest.liveness import run_ticks
 from gs.ingest.owner import MATCH
 from gs.ingest.validate import FieldStats
 from gs.ingest.worker import Ctx, Timing, process_batch, run_vehicle
@@ -39,7 +40,12 @@ async def ensure_set(dsn: str | None = None) -> None:
 
 
 def make_ctx(
-    consumer: str, homes: Mapping[str, str] | None = None, timing: Timing = DEFAULT_TIMING
+    consumer: str,
+    homes: Mapping[str, str] | None = None,
+    timing: Timing = DEFAULT_TIMING,
+    vehicles: tuple[str, ...] = (),
+    steal_idle_ms: int = 30_000,
+    reclaim_idle_ms: int = 30_000,
 ) -> Ctx:
     mdb = load_dir(MISSION_DIR)
     return Ctx(
@@ -53,6 +59,9 @@ def make_ctx(
         Counter(),
         homes or {},
         timing,
+        vehicles,
+        steal_idle_ms,
+        reclaim_idle_ms,
     )
 
 
@@ -72,14 +81,18 @@ async def worker(
     homes: Mapping[str, str] | None = None,
     timing: Timing = DEFAULT_TIMING,
     dsn: str | None = None,
+    steal_idle_ms: int = 30_000,
+    reclaim_idle_ms: int = 30_000,
 ) -> AsyncIterator[Running]:
     """run_vehicle tasks; `homes=None` makes every vehicle home (no start delay, no hand-back).
     A custom `dsn` must already hold the start set (see ensure_set)."""
     if dsn is None:
         await ensure_set()
     homes = {v: consumer for v in vehicles} if homes is None else homes
-    ctx, stop = make_ctx(consumer, homes, timing), asyncio.Event()
-    tasks = [asyncio.create_task(run_vehicle(ctx, v, dsn or app_dsn("gs"), stop)) for v in vehicles]
+    ctx = make_ctx(consumer, homes, timing, tuple(vehicles), steal_idle_ms, reclaim_idle_ms)
+    stop, db = asyncio.Event(), dsn or app_dsn("gs")
+    tasks = [asyncio.create_task(run_vehicle(ctx, v, db, stop)) for v in vehicles]
+    tasks.append(asyncio.create_task(run_ticks(ctx, db, stop, watchdog=False)))
     try:
         yield Running(ctx, tasks)
     finally:
@@ -196,6 +209,8 @@ def start_ingest(
         "CONSUMER_NAME": "ingest-main-test",
         "VEHICLES": v,
         "INGEST_HOMES": f"ingest-main-test={v}",
+        "STEAL_IDLE_MS": "30000",
+        "RECLAIM_IDLE_MS": "30000",
         "MISSION_DB": str(REPO / "mission"),
         "BIND_HOST": "127.0.0.1",
         "HEALTH_PORT": str(port),

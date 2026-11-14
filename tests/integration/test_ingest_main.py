@@ -1,3 +1,4 @@
+import json
 import signal
 import time
 import urllib.request
@@ -47,3 +48,24 @@ def test_operational_error_exits_one(
     with pytest.raises(SystemExit) as e:
         main_mod.main()
     assert e.value.code == 1 and "25006: read-only" in caplog.text
+
+
+def test_ingest_health_reports_used_memory() -> None:
+    p, port = start_ingest()
+    try:
+        deadline = time.monotonic() + 10
+        while True:
+            try:
+                raw = urllib.request.urlopen(f"http://127.0.0.1:{port}/healthz", timeout=1).read()
+                body = json.loads(raw)
+                if body["checks"].get("redis_used_memory"):
+                    break
+            except OSError:
+                pass
+            assert p.poll() is None and time.monotonic() < deadline
+            time.sleep(0.1)
+        assert body["status"] == "ok" and body["checks"]["redis_used_memory"] > 0
+        assert len(body["checks"]["owned"]) == 1  # its one home vehicle
+    finally:
+        p.send_signal(signal.SIGTERM)
+        assert p.wait(timeout=5) == 0

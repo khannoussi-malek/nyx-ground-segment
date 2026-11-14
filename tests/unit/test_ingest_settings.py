@@ -12,6 +12,8 @@ BASE = {
     "BIND_HOST": "h",
     "HEALTH_PORT": "1",
     "INGEST_HOMES": "i1=NYX-A",
+    "STEAL_IDLE_MS": "3000",
+    "RECLAIM_IDLE_MS": "4000",
 }
 
 
@@ -59,3 +61,16 @@ def test_settings_carry_homes(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_missing_homes_fail_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ConfigError, match="INGEST_HOMES"):
         _settings(monkeypatch, "NYX-A", "")
+
+
+def test_thresholds_from_env(monkeypatch: pytest.MonkeyPatch) -> None:  # D-ENG-16
+    s = _settings(monkeypatch, "NYX-A")
+    assert (s.steal_idle_ms, s.reclaim_idle_ms) == (3000, 4000)
+
+
+@pytest.mark.parametrize("name", ["STEAL_IDLE_MS", "RECLAIM_IDLE_MS"])
+def test_thresholds_required(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    for k, v in {**BASE, "VEHICLES": "NYX-A", name: ""}.items():
+        monkeypatch.setenv(k, v)
+    with pytest.raises(ConfigError, match=name):
+        IngestSettings.from_env()

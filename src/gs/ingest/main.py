@@ -16,16 +16,16 @@ from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
 from gs.common.config import require, require_int, vehicle_list
-from gs.common.health import State, serve_health
+from gs.common.health import serve_health
 from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
 from gs.ingest.errors import OperationalDbError
 from gs.ingest.events import insert_set
+from gs.ingest.liveness import ingest_status, refresh_memory, run_ticks
 from gs.ingest.owner import parse_homes
 from gs.ingest.validate import FieldStats
 from gs.ingest.worker import Ctx, run_vehicle
 
-STALE_S = 10.0  # a vehicle loop that has not passed for this long makes the service down
 SOCKET_TIMEOUT_S = 5  # must exceed the 1 s XREADGROUP block
 
 
@@ -39,6 +39,8 @@ class IngestSettings:
     bind_host: str
     health_port: int
     homes: Mapping[str, str] = field(default_factory=dict)  # vehicle -> home consumer
+    steal_idle_ms: int = 30_000
+    reclaim_idle_ms: int = 30_000
 
     @classmethod
     def from_env(cls) -> IngestSettings:
@@ -52,15 +54,9 @@ class IngestSettings:
             bind_host=require("BIND_HOST"),
             health_port=require_int("HEALTH_PORT"),
             homes=parse_homes(require("INGEST_HOMES"), vehicles),
+            steal_idle_ms=require_int("STEAL_IDLE_MS"),
+            reclaim_idle_ms=require_int("RECLAIM_IDLE_MS"),
         )
-
-
-def ingest_status(
-    seen: dict[str, float], vehicles: tuple[str, ...], now: float
-) -> tuple[State, dict[str, object]]:
-    ages = {v: round(now - seen[v], 1) if v in seen else None for v in vehicles}
-    ok = all(a is not None and a < STALE_S for a in ages.values())
-    return ("ok" if ok else "down"), {"loop_age_s": ages}
 
 
 async def run(s: IngestSettings, stop: asyncio.Event) -> None:
@@ -84,16 +80,21 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
         mdb.set_sha256,
         Counter(),
         s.homes,
+        vehicles=s.vehicles,
+        steal_idle_ms=s.steal_idle_ms,
+        reclaim_idle_ms=s.reclaim_idle_ms,
     )
+    await refresh_memory(ctx)  # health knows Redis from the first request
     server = await serve_health(
         s.bind_host,
         s.health_port,
-        lambda: ingest_status(seen, tuple(sorted(ctx.owned)), time.monotonic()),
+        lambda: ingest_status(seen, ctx.owned, time.monotonic(), ctx.used_memory[0]),
     )
     try:
         async with asyncio.TaskGroup() as tg:  # any task error cancels the rest and exits 1
             for v in s.vehicles:
                 tg.create_task(run_vehicle(ctx, v, s.database_url, stop))
+            tg.create_task(run_ticks(ctx, s.database_url, stop, watchdog=True))
     finally:
         server.close()
         await server.wait_closed()

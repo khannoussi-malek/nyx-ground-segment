@@ -63,7 +63,12 @@ class Ctx:
     dup_or_late: Counter[str]  # vehicle -> frames the tracker saw as duplicate or late
     homes: Mapping[str, str]  # vehicle -> home consumer (INGEST_HOMES)
     timing: Timing = Timing()
+    vehicles: tuple[str, ...] = ()  # every vehicle this worker may own (steal checks)
+    steal_idle_ms: int = 30_000  # STEAL_IDLE_MS (D-ING-12; CI 3 000)
+    reclaim_idle_ms: int = 30_000  # RECLAIM_IDLE_MS (D-ING-26; CI 3 000)
     owned: set[str] = field(default_factory=set)  # mutated only by each vehicle's own task
+    reconnected_at: list[float | None] = field(default_factory=lambda: [None])  # monotonic
+    used_memory: list[int | None] = field(default_factory=lambda: [None])  # Redis INFO
 
 
 def to_tm(frame: FrameHeader, params: Sequence[str]) -> Tm:
@@ -313,23 +318,38 @@ async def _run_vehicle(ctx: Ctx, vehicle: str, dsn: str, stop: asyncio.Event) ->
 
 async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyncio.Event) -> None:
     """Takeover protocol (D-ING-11): load state, drain every pending entry of the group one at a
-    time (XAUTOCLAIM … 0, Review Focus 2), then read new entries behind the pre-read fence."""
+    time (XAUTOCLAIM … 0, Review Focus 2), then read new entries behind the pre-read fence.
+    Every pass sets the heartbeat; every reclaim_s the loop reclaims entries idle for
+    RECLAIM_IDLE_MS under any consumer, and a non-home holder checks for hand-back (D-ING-26)."""
     stream = f"tm:{vehicle}"
     home = ctx.homes.get(vehicle)
     vs, extra = await load_state(ctx, conn, vehicle)
-    drain, ready, backoff, cursor = True, False, BACKOFF_START_S, "0-0"
+    ready, backoff, was_down = False, BACKOFF_START_S, False
+    claim_idle: int | None = 0  # XAUTOCLAIM min-idle while draining; None = read new entries
+    cursor = "0-0"
     last_new = next_handback = time.monotonic()
+    next_reclaim = last_new + ctx.timing.reclaim_s
     while not stop.is_set():
-        ctx.loop_seen[vehicle] = time.monotonic()
+        now = ctx.loop_seen[vehicle] = time.monotonic()
+        if claim_idle is None and now >= next_reclaim:
+            claim_idle, cursor, next_reclaim = (
+                ctx.reclaim_idle_ms,
+                "0-0",
+                now + ctx.timing.reclaim_s,
+            )
         try:
             if not ready:
                 await _ensure_group(ctx.redis, stream)
                 ready = True
             await fence(conn)
-            if drain:
-                res: Any = await ctx.redis.xautoclaim(stream, GROUP, ctx.consumer, 0, cursor, 1)
+            await ctx.redis.set(f"hb:veh:{vehicle}", 1, ex=ctx.timing.hb_ttl_s)  # D-ING-25
+            if claim_idle is not None:
+                res: Any = await ctx.redis.xautoclaim(
+                    stream, GROUP, ctx.consumer, claim_idle, cursor, 1
+                )
                 cursor, claimed = res[0].decode(), res[1]
-                drain = cursor != "0-0"
+                if cursor == "0-0":
+                    claim_idle = None
             else:
                 res = await ctx.redis.xreadgroup(
                     GROUP, ctx.consumer, {stream: ">"}, count=COUNT, block=BLOCK_MS
@@ -347,9 +367,12 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
                 if nvs is not vs:
                     vs, extra = nvs, ()
             backoff = BACKOFF_START_S
+            if was_down:  # R2-23: start the steal hold-off
+                ctx.reconnected_at[0], was_down = time.monotonic(), False
         except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
             log.warning("redis unavailable for %s (%s); retry in %.1fs", stream, e, backoff)
-            drain, ready, cursor = True, False, "0-0"  # D-ING-08: re-read pending after reconnect
+            # D-ING-08: re-read every pending entry after reconnect
+            claim_idle, ready, cursor, was_down = 0, False, "0-0", True
             with contextlib.suppress(TimeoutError):
                 await asyncio.wait_for(stop.wait(), backoff)
             backoff = min(backoff * 2, BACKOFF_MAX_S)

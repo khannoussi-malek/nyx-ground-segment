@@ -193,7 +193,7 @@ def _read(raw: bytes, file: str, section: str) -> dict[str, Any]:
             if getattr(ev, "anchor", None) is not None:
                 raise MissionDbError(file, "YAML anchors and aliases are not allowed")
         doc = yaml.load(raw, Loader=_NoDupLoader)  # noqa: S506  (SafeLoader subclass)
-    except (yaml.YAMLError, UnicodeDecodeError) as e:
+    except (yaml.YAMLError, UnicodeDecodeError, RecursionError, TypeError) as e:
         raise MissionDbError(file, f"invalid YAML: {e}") from e
     if not isinstance(doc, dict):
         raise MissionDbError(file, "top level must be a mapping")

@@ -210,3 +210,12 @@ def test_shorter_timeout_override_accepted() -> None:
         b"    hazardous: false\n", b"    hazardous: false\n    receive_timeout_s: 2\n"
     )
     assert ld(files(commands=ok)).commands["isolate_valve"].receive_timeout_s == 2
+
+
+def test_unhashable_mapping_key_rejected() -> None:
+    err = rejected("limits.yaml", limits=b"version: 1\n? [a]\n: 1\nlimits: {}\n")
+    assert "unhashable" in err.message
+
+
+def test_deeply_nested_yaml_rejected() -> None:
+    rejected("limits.yaml", limits=b"version: 1\nlimits: " + b"[" * 5_000 + b"]" * 5_000)

@@ -1,0 +1,10 @@
+version: 1
+parameters:
+  cabin_pressure_kpa: {unit: kPa, type: float, description: Cabin total pressure}
+  cabin_temp_c: {unit: degC, type: float, description: Cabin temperature}
+  bus_voltage_v: {unit: V, type: float, description: Main bus voltage}
+  bus_current_a: {unit: A, type: float, description: Main bus current}
+  tank_pressure_bar: {unit: bar, type: float, description: Propellant tank pressure}
+  rate_x_dps: {unit: deg/s, type: float, description: Attitude rate X}
+  rate_y_dps: {unit: deg/s, type: float, description: Attitude rate Y}
+  rate_z_dps: {unit: deg/s, type: float, description: Attitude rate Z}

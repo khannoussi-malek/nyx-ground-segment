@@ -20,11 +20,30 @@ from gs.common.interfaces import (
     UiEvent,
 )
 from gs.common.interfaces.render import schema_sha12
+from gs.common.interfaces.sse import (
+    AckRequestView,
+    Alarm,
+    AlarmView,
+    Cmd,
+    CommandView,
+    EventView,
+    Link,
+    TransitionView,
+)
 from tests.support.env import REPO
 
 # UiEvent is a RootModel (a union): it cannot be a StrictModel or set `extra`; its members are
 # interface models themselves, so the checks below skip roots and cover the members.
-MODELS = [m for m in INTERFACE_MODELS if not issubclass(m, RootModel)]
+# Resync (a UiEvent member) and the *View models are not in INTERFACE_MODELS but ship in the schema.
+MODELS = [
+    *(m for m in INTERFACE_MODELS if not issubclass(m, RootModel)),
+    Resync,
+    TransitionView,
+    AckRequestView,
+    AlarmView,
+    CommandView,
+    EventView,
+]
 
 
 def test_every_interface_model_is_strict() -> None:
@@ -128,3 +147,64 @@ def test_new_defaults_keep_gate2_shapes() -> None:
 def test_schema_sha12_matches_committed_file() -> None:
     data = (REPO / "interfaces/schemas/tcack.schema.json").read_bytes()
     assert schema_sha12(TcAck) == hashlib.sha256(data).hexdigest()[:12]
+
+
+T0 = datetime(2026, 11, 15, 10, tzinfo=UTC)
+
+
+def _alarm_view() -> AlarmView:
+    last = TransitionView(
+        key="k", kind="RAISE", t=T0, alert=True, by_user="system", note=None,
+        check_kind="limit", level="RED_HIGH", value=1.5,
+    )  # fmt: skip
+    return AlarmView(
+        alarm_id=uuid4(), vehicle="NYX-TA1", param="p", state="UNACK", severity="RED",
+        level="RED_HIGH", trigger_check="limit", limits_sha256="a", set_sha256="b",
+        opened_at=T0, closed_at=None, last=last,
+        ack_request=AckRequestView(
+            request_id=uuid4(), by_user="fc1", status="pending", status_reason=None
+        ),
+    )  # fmt: skip
+
+
+def _command_view() -> CommandView:
+    return CommandView(
+        cmd_id=uuid4(), vehicle="NYX-TA1", name="isolate_valve",
+        args={"valve": "A", "n": 1, "x": 0.5},
+        hazardous=True, reason=None, issued_by="fc1", state="QUEUED", failure_reason=None,
+        queued_at=T0, sent_at=None, received_at=None, verified_at=None, failed_at=None,
+        late_verified_at=None, late_ack_at=None, late_ack_accepted=None, outcome=None,
+    )  # fmt: skip
+
+
+def test_alarm_and_command_views_construct_and_dump() -> None:
+    a, c = _alarm_view(), _command_view()
+    assert AlarmView.model_validate_json(a.model_dump_json()) == a
+    assert CommandView.model_validate_json(c.model_dump_json()) == c
+    assert '"opened_at":"2026-11-15T10:00:00.000000Z"' in a.model_dump_json()
+
+
+def _members() -> list[Tm | Alarm | Cmd | Link | Resync]:
+    tm = Tm(vehicle="NYX-TA1", seq=1, t_onboard=T0, mode="TEST", last_cmd_id=None, values={})
+    link = Link(
+        event=EventView(key="k", vehicle=None, kind="LOS", t_onboard=None, details={"a": [1]})
+    )
+    return [
+        tm,
+        Alarm(alarm=_alarm_view()),
+        Cmd(command=_command_view()),
+        link,
+        Resync(vehicle="NYX-TA1"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("member", "kind"), list(zip(_members(), ["tm", "alarm", "cmd", "link", "resync"], strict=True))
+)
+def test_ui_event_round_trips_every_member(
+    member: Tm | Alarm | Cmd | Link | Resync, kind: str
+) -> None:
+    got = UiEvent.model_validate_json(member.model_dump_json()).root
+    assert type(got) is type(member)
+    assert got.kind == kind
+    assert got == member

@@ -12,12 +12,11 @@ def outcome(
 ) -> Outcome | None:
     if failure_reason is None:
         return None
-    if failure_reason == "SEND_ERROR":
-        return "NOT_SENT"
     if failure_reason == "REJECTED":
         return "NOT_EXECUTED"
+    # P-pf16: vehicle evidence is checked before SEND_ERROR, so evidence is never "safe to retry"
     if late_verified_at is not None:
         return "EXECUTED_LATE"
     if late_ack_accepted is None:
-        return "UNKNOWN"
+        return "NOT_SENT" if failure_reason == "SEND_ERROR" else "UNKNOWN"
     return "RECEIVED_LATE" if late_ack_accepted else "NOT_EXECUTED"

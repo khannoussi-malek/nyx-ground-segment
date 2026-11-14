@@ -21,6 +21,10 @@ T = datetime(2026, 11, 15, tzinfo=UTC)
         ("NOT_VERIFIED", None, None, "UNKNOWN"),
         ("ACK_INVALID", T, None, "EXECUTED_LATE"),
         ("ACK_INVALID", None, None, "UNKNOWN"),
+        ("NOT_VERIFIED", T, None, "EXECUTED_LATE"),
+        ("SEND_ERROR", T, None, "EXECUTED_LATE"),  # P-pf16: vehicle evidence beats "safe to retry"
+        ("SEND_ERROR", None, True, "RECEIVED_LATE"),
+        ("SEND_ERROR", None, False, "NOT_EXECUTED"),
     ],
 )
 def test_outcome_table(

@@ -32,3 +32,12 @@ async def test_insert_set_once() -> None:
         )
         row = await cur.fetchone()
     assert row == (db.limits_yaml,)
+
+
+async def test_datetime_details_stored_as_iso_z() -> None:
+    v = vid()
+    ev = GroundEvent(seq_key("SEQ_RESET", v, E), v, "SEQ_RESET", E, {"prev_epoch": E})
+    async with await psycopg.AsyncConnection.connect(app_dsn("gs")) as c:
+        async with c.transaction():
+            await insert_events(c, [ev])
+    assert events_for(v)[0]["details"] == {"prev_epoch": "2026-11-14T10:00:00.000000Z"}

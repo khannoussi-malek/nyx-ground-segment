@@ -1,5 +1,6 @@
 """Ground events: kinds, deterministic keys (R5) and idempotent inserts."""
 
+import json
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
@@ -74,6 +75,16 @@ def alarm_id_for(raise_key: str) -> uuid.UUID:
     return uuid.uuid5(uuid.NAMESPACE_URL, "nyx-alarm/" + raise_key)
 
 
+def _iso(o: object) -> str:
+    if isinstance(o, datetime):
+        return iso_z(o)  # D-ENG-18: every time leaving the process
+    raise TypeError(f"not JSON serializable: {type(o).__name__}")
+
+
+def details_json(details: Mapping[str, Any]) -> str:
+    return json.dumps(details, default=_iso)
+
+
 async def insert_events(conn: psycopg.AsyncConnection, events: Sequence[GroundEvent]) -> int:
     """Inside the caller's transaction; returns the rows actually inserted."""
     inserted = 0
@@ -81,7 +92,7 @@ async def insert_events(conn: psycopg.AsyncConnection, events: Sequence[GroundEv
         cur = await conn.execute(
             "INSERT INTO events (key, vehicle, kind, t_onboard, details) VALUES (%s,%s,%s,%s,%s)"
             " ON CONFLICT (key) DO NOTHING",
-            (e.key, e.vehicle, e.kind, e.t_onboard, Jsonb(dict(e.details))),
+            (e.key, e.vehicle, e.kind, e.t_onboard, Jsonb(dict(e.details), dumps=details_json)),
         )
         inserted += cur.rowcount
     return inserted

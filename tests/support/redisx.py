@@ -159,7 +159,9 @@ def pending_of(v: str, consumer: str) -> int:
     """Entries in group ingest's PEL owned by `consumer` on tm:<v>; 0 while there is no group."""
     try:
         rows: Any = client("admin").xpending_range(f"tm:{v}", GROUP, "-", "+", 10_000, consumer)
-    except redis.ResponseError:
+    except redis.ResponseError as e:
+        if "NOGROUP" not in str(e):
+            raise
         return 0
     return len(rows)
 

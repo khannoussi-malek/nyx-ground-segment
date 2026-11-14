@@ -96,9 +96,9 @@ def test_make_up_down_reset_commands(root: Path) -> None:
     up = sh("make", "-n", "up", "ENV_INIT=true", cwd=root).stdout
     assert "docker compose up -d --build --wait" in up
     assert "docker compose up -d --build --wait " not in up
-    assert "docker compose down" in sh("make", "-n", "down", cwd=root).stdout
+    assert "docker compose --profile ingest2 down" in sh("make", "-n", "down", cwd=root).stdout
     reset = sh("make", "-n", "reset", cwd=root).stdout
-    assert "docker compose down -v" in reset
+    assert "docker compose --profile ingest2 down -v" in reset
     assert "rm -f .env users.yaml redis/users.acl" in reset
 
 

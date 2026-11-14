@@ -1,11 +1,14 @@
 """Static compose rules (D-ENG-03); they read `docker compose config --format json`."""
 
+import json
+import os
 import re
+import subprocess
 from typing import Any
 
 import pytest
 
-from tests.support.compose import ONE_SHOTS, compose_config
+from tests.support.compose import ONE_SHOTS, PROFILE_ENV, compose_config
 from tests.support.env import REPO, dotenv
 
 APP = {"migrate", "simulator", "ingest-1", "ingest-2", "api"}
@@ -157,7 +160,17 @@ def test_ingest_2_is_opt_in_until_ownership_lands(services: dict[str, dict[str, 
     assert "profiles" not in services["ingest-1"]
 
 
-def test_image_tag_is_per_worktree(services: dict[str, dict[str, Any]]) -> None:
+def test_image_tag_is_per_worktree() -> None:
     """G3: parallel worktrees must not share one nyx-gs:local tag."""
-    assert services["api"]["image"] == f"nyx-gs:{dotenv().get('GS_IMAGE_TAG', 'local')}"
+    assert "nyx-gs:${GS_IMAGE_TAG:-local}" in (REPO / "docker-compose.yml").read_text()
     assert "GS_IMAGE_TAG=local" in (REPO / ".env.example").read_text().splitlines()
+    out = subprocess.run(
+        ["docker", "compose", "config", "--format", "json"],
+        cwd=REPO,
+        env={**os.environ, **PROFILE_ENV, "GS_IMAGE_TAG": "x"},
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    svcs = json.loads(out)["services"]
+    assert {n: svcs[n]["image"] for n in APP} == {n: "nyx-gs:x" for n in APP}

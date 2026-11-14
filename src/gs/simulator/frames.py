@@ -6,6 +6,7 @@ import random
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
+from uuid import UUID
 
 from gs.common.time import iso_z
 from gs.simulator.buffer import FrameBuffer
@@ -23,13 +24,19 @@ def draw_values(rng: random.Random) -> dict[str, float]:
     return {p: rng.gauss(nominal, sigma) for p, (nominal, sigma) in NOMINALS.items()}
 
 
-def build_frame(vehicle: str, seq: int, t: datetime, values: Mapping[str, float]) -> str:
+def build_frame(
+    vehicle: str,
+    seq: int,
+    t: datetime,
+    values: Mapping[str, float],
+    last_cmd_id: UUID | None = None,
+) -> str:
     frame = {
         "vehicle": vehicle,
         "seq": seq,
         "t_onboard": iso_z(t),
         "mode": "TEST",
-        "last_cmd_id": None,
+        "last_cmd_id": str(last_cmd_id) if last_cmd_id else None,
         **values,
     }
     return json.dumps(frame, allow_nan=False)

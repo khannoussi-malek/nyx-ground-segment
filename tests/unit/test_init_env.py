@@ -105,3 +105,16 @@ def test_make_up_down_reset_commands(root: Path) -> None:
 def test_env_is_private_to_the_owner(root: Path) -> None:
     run_init_env(root)
     assert (root / ".env").stat().st_mode & 0o777 == 0o600
+
+
+def test_acl_lines_equal_design_3_7(root: Path) -> None:
+    """Every generated line is the design §3.7 line with the hashes substituted."""
+    run_init_env(root)
+    env = parse_env(root / ".env")
+    text = (REPO / "docs/design.md").read_text()
+    block = text.split("### 3.7", 1)[1].split("```")[1]
+    want = block
+    for name in ("health", "api", "sim", "ingest", "admin"):
+        digest = hashlib.sha256(env[f"REDIS_{name.upper()}_PW"].encode()).hexdigest()
+        want = want.replace(f"user {name} on #<sha256>", f"user {name} on #{digest}")
+    assert (root / "redis/users.acl").read_text().splitlines() == want.strip().splitlines()

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from gs.common.config import ConfigError
@@ -8,6 +10,7 @@ BASE = {
     "SIM_SEED": "1",
     "BIND_HOST": "h",
     "HEALTH_PORT": "1",
+    "MISSION_DB": "/mission",
 }
 
 
@@ -35,3 +38,12 @@ def test_bad_health_port_names_the_variable(monkeypatch: pytest.MonkeyPatch) -> 
 def test_lowercase_vehicle_name_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ConfigError, match="SIM_VEHICLES"):
         _settings(monkeypatch, "nyx-ta1")
+
+
+def test_mission_db_is_a_path(monkeypatch: pytest.MonkeyPatch) -> None:
+    assert _settings(monkeypatch, "NYX-TA1").mission_db == Path("/mission")
+
+
+def test_mission_db_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
+    with pytest.raises(ConfigError, match="MISSION_DB"):
+        _settings(monkeypatch, "NYX-TA1", MISSION_DB="")

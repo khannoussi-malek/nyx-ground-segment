@@ -1,7 +1,7 @@
 # Host needs only Docker + make (ENG-01); secrets are generated in a throwaway container.
 ENV_INIT = docker run --rm --user "$$(id -u):$$(id -g)" -v "$(CURDIR)":/w -w /w python:3.14-slim python scripts/init_env.py
 
-.PHONY: env up down reset migrate gen e2e
+.PHONY: env up down reset migrate gen e2e perf
 
 env:
 	@$(ENV_INIT)
@@ -24,3 +24,6 @@ gen:
 
 e2e:
 	cd e2e && npx playwright test
+
+perf:
+	uv run python -m perf.run_n

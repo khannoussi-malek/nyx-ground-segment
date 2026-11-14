@@ -2,8 +2,7 @@
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -20,34 +19,12 @@ from tests.support.ingest import worker
 from tests.support.mission import MISSION_DIR
 from tests.support.missionfiles import edit, mission_copy, set_formula, sha256_file
 from tests.support.pg import app_dsn, owner_dsn, rows, throwaway_db
-from tests.support.redisx import drained, xadd_raw
+from tests.support.redisx import drained, stream_values, xadd_raw
 
 SHIPPED = load_dir(MISSION_DIR)
 NOMINAL = {p: nom for p, (nom, _) in NOMINALS.items()}
 ROC_LINE = next(ln for ln in (MISSION_DIR / "limits.yaml").read_text().splitlines() if "roc" in ln)
 Values = Callable[[float], dict[str, float]]
-
-
-@asynccontextmanager
-async def stream_values(v: str, values: Values) -> AsyncIterator[None]:
-    """Live 10 Hz frames from now on: t_onboard = start + 100 ms × seq, every parameter at its
-    nominal, overridden by `values(seconds since start)`."""
-    stop, t0, w0 = asyncio.Event(), now(), time.monotonic()
-
-    async def run() -> None:
-        seq = 0
-        while not stop.is_set():
-            t = seq / 10
-            xadd_raw(v, build_frame(v, seq, t0 + timedelta(seconds=t), NOMINAL | values(t)))
-            seq += 1
-            await asyncio.sleep(max(0.0, w0 + seq / 10 - time.monotonic()))
-
-    task = asyncio.create_task(run())
-    try:
-        yield
-    finally:
-        stop.set()
-        await task
 
 
 def applied(v: str, set_sha256: str, db: str = "gs") -> list[dict[str, Any]]:

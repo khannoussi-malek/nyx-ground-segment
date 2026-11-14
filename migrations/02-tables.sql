@@ -45,7 +45,8 @@ CREATE TABLE alarm_events (                              -- history; never prune
   key text NOT NULL UNIQUE,                              -- vehicle/param/epoch/trigger_seq/transition, or ACK request_id
   alarm_id uuid REFERENCES alarms, vehicle text NOT NULL, param text NOT NULL,
   kind text NOT NULL CHECK (kind IN ('RAISE','ESCALATE','DEESCALATE','RTN','ACK','CLEAR')),   -- no LEVEL (D-ALM-11)
-  check_kind text, level text, severity text, check_set text NOT NULL DEFAULT 'default',  -- D-EXT-06
+  check_kind text, level text, severity text, value double precision,  -- value: the triggering reading (sample, or slope per second for a ROC check)
+  check_set text NOT NULL DEFAULT 'default',  -- D-EXT-06
   trigger_seq bigint, trigger_t_onboard timestamptz,     -- ALM-05 start stamp (R10)
   after_epoch timestamptz, after_seq bigint, after_t_onboard timestamptz,  -- on ACK: the vehicle's last frame before the batch it was applied in (D-ALM-14, R2-10)
   processed_at timestamptz NOT NULL DEFAULT clock_timestamp(),   -- ALM-05 end stamp
@@ -64,7 +65,7 @@ CREATE TABLE commands (                                  -- current state; full 
   cmd_id uuid PRIMARY KEY, vehicle text NOT NULL, name text NOT NULL, args jsonb NOT NULL,
   args_hash text NOT NULL, hazardous boolean NOT NULL, reason text, issued_by text NOT NULL,
   state text NOT NULL CHECK (state IN ('QUEUED','SENT','RECEIVED','VERIFIED','FAILED')),
-  failure_reason text CHECK (failure_reason IN ('SEND_ERROR','REJECTED','NOT_RECEIVED','NOT_VERIFIED')),
+  failure_reason text CHECK (failure_reason IN ('SEND_ERROR','REJECTED','NOT_RECEIVED','NOT_VERIFIED','ACK_INVALID')),
   queued_at timestamptz NOT NULL, sent_at timestamptz,   -- outcome is computed from failure_reason + late evidence (D-CMD-02)
   received_at timestamptz, verified_at timestamptz, failed_at timestamptz, late_verified_at timestamptz,
   late_ack_at timestamptz, late_ack_accepted boolean);   -- a tcack that arrived after NOT_RECEIVED (D-CMD-04, R2-04)

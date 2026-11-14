@@ -26,6 +26,13 @@ def test_tm_nyx_scoping() -> None:  # A-R2R-9, design 3.7
     assert consumers[0]["name"] == "ingest-1"
 
 
+def test_api_may_dlq_but_not_frames() -> None:  # D-ING-27: schema-rejected ui:events entry
+    api = client("api")
+    assert api.xadd("tm:dlq", {"data": "{}"})
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        api.xadd("tm:NYX-TA1", {"data": "{}"})
+
+
 def test_default_user_is_off() -> None:
     port = int(dotenv()["REDIS_HOST_PORT"])
     with pytest.raises(redis.exceptions.AuthenticationError):

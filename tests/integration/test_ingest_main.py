@@ -50,6 +50,7 @@ def test_operational_error_exits_one(
         raise ExceptionGroup("task group", [OperationalDbError("25006: read-only")])
 
     monkeypatch.setattr(main_mod, "_main", failing)
+    monkeypatch.setattr(main_mod, "setup_logging", lambda service: None)  # keep caplog's handler
     with pytest.raises(SystemExit) as e:
         main_mod.main()
     assert e.value.code == 1 and "25006: read-only" in caplog.text

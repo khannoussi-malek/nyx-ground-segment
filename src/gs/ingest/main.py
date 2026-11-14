@@ -18,6 +18,7 @@ from redis.backoff import NoBackoff
 from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import serve_health
 from gs.common.hooks import Hooks
+from gs.common.logs import setup_logging
 from gs.ingest.errors import OperationalDbError
 from gs.ingest.events import insert_events
 from gs.ingest.liveness import ingest_status, refresh_memory, run_ticks
@@ -113,7 +114,7 @@ log = logging.getLogger(__name__)
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    setup_logging("gs-ingest")
     try:
         asyncio.run(_main())
     except* OperationalDbError as eg:  # D-ING-24: exit; locks free, restart re-reads our PEL

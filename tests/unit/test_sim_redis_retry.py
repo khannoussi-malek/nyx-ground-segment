@@ -7,6 +7,7 @@ import pytest
 import redis.asyncio
 
 from gs.simulator.main import SimSettings, run
+from tests.support.mission import MISSION_DIR
 
 
 async def test_run_builds_client_with_zero_retries(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -20,6 +21,8 @@ async def test_run_builds_client_with_zero_retries(monkeypatch: pytest.MonkeyPat
     monkeypatch.setattr(redis.asyncio.Redis, "from_url", spy)
     stop = asyncio.Event()
     stop.set()
-    await run(SimSettings("redis://localhost:1/0", ("NYX-TA1",), "1", "127.0.0.1", 0), stop)
+    await run(
+        SimSettings("redis://localhost:1/0", ("NYX-TA1",), "1", "127.0.0.1", 0, MISSION_DIR), stop
+    )
     retry = built[0].get_retry()
     assert retry is not None and retry.get_retries() == 0

@@ -18,6 +18,7 @@ from gs.simulator.faults import FaultBoard, FaultRequest
 from gs.simulator.frames import tick_loop
 from gs.simulator.main import SimSettings, run
 from tests.support.env import dotenv
+from tests.support.mission import MISSION_DIR
 from tests.support.redisx import HOST, client
 
 EPOCH = datetime(2026, 11, 14, 10, tzinfo=UTC)
@@ -98,7 +99,7 @@ async def running_sim(v: str) -> AsyncIterator[int]:
     env = dotenv()
     url = f"redis://sim:{env['REDIS_SIM_PW']}@{HOST}:{env['REDIS_HOST_PORT']}/0"
     stop = asyncio.Event()
-    task = asyncio.create_task(run(SimSettings(url, (v,), "1", HOST, port), stop))
+    task = asyncio.create_task(run(SimSettings(url, (v,), "1", HOST, port, MISSION_DIR), stop))
     await asyncio.sleep(0.3)  # health server up
     try:
         yield port

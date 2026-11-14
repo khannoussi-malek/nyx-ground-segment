@@ -1,11 +1,11 @@
 """gs-sim: two-vehicle 10 Hz telemetry simulator writing tm:<vehicle> streams."""
 
 import asyncio
-import logging
 import random
 import signal
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import redis.asyncio
 from redis.asyncio.retry import Retry
@@ -13,6 +13,7 @@ from redis.backoff import NoBackoff
 
 from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import State, serve_health
+from gs.common.logs import setup_logging
 from gs.simulator.buffer import FrameBuffer, send_loop
 from gs.simulator.faults import FaultBoard, fault_routes
 from gs.simulator.frames import tick_loop
@@ -28,6 +29,7 @@ class SimSettings:
     seed: str
     bind_host: str
     health_port: int
+    mission_db: Path
 
     @classmethod
     def from_env(cls) -> SimSettings:
@@ -37,6 +39,7 @@ class SimSettings:
             seed=require("SIM_SEED"),
             bind_host=require("BIND_HOST"),
             health_port=require_int("HEALTH_PORT"),
+            mission_db=Path(require("MISSION_DB")),
         )
 
 
@@ -87,5 +90,5 @@ async def _main() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    setup_logging("gs-sim")
     asyncio.run(_main())

@@ -1,9 +1,12 @@
+import asyncio
 import random
+import time
 from datetime import datetime, timedelta
 from typing import Any
 
 import psycopg
 import pytest
+import redis.exceptions
 from psycopg.rows import dict_row
 
 from gs.ingest import store
@@ -168,3 +171,49 @@ async def test_engine_state_version_mismatch_reset() -> None:
     e = row("engine_state", v)
     assert e is not None and (e["schema_version"], e["last_seq"]) == (state_version(), 19)
     assert not SEQ_KINDS & set(kinds(v))  # seq_state still continues the tracker
+
+
+async def test_silence_threshold_lower_bound() -> None:  # LOS at > 2 s, not earlier
+    v, base = vid(), now() - timedelta(minutes=1)
+    put(v, range(10), base)
+    async with worker([v]):
+        await until(lambda: stored(v) == 10, 5)
+        await asyncio.sleep(1.5)
+        assert events_for(v, "LOS") == []
+        await until(lambda: len(events_for(v, "LOS")) == 1, 2.0)
+
+
+async def test_redis_outage_is_not_los(monkeypatch: pytest.MonkeyPatch) -> None:  # D-UI-04/15
+    v, base = vid(), now() - timedelta(minutes=1)
+    put(v, range(10), base)
+    async with worker([v]) as w:
+        await until(lambda: stored(v) == 10, 5)
+        real = w.ctx.redis.xreadgroup
+        down_until = time.monotonic() + 3.0
+        recovered: list[float] = []
+
+        async def broker_down(*a: Any, **k: Any) -> Any:
+            if time.monotonic() < down_until:
+                raise redis.exceptions.ConnectionError("broker down")
+            if not recovered:
+                recovered.append(time.monotonic())
+            return await real(*a, **k)
+
+        monkeypatch.setattr(w.ctx.redis, "xreadgroup", broker_down)
+        await until(lambda: bool(recovered), 8)
+        await asyncio.sleep(1.5 - (time.monotonic() - recovered[0]))
+        assert events_for(v, "LOS") == []
+
+
+async def test_reset_event_written_while_silent() -> None:  # extra rides with the LOS
+    v, base = vid(), now() - timedelta(minutes=1)
+    put(v, range(10), base)
+    async with worker([v]):
+        await until(lambda: drained(v), 5)
+    with psycopg.connect(admin_dsn("gs")) as c:
+        c.execute("update engine_state set schema_version = -1 where vehicle=%s", (v,))
+    async with worker([v]):  # no new frame: only the silence path writes
+        await until(lambda: len(events_for(v, "LOS")) == 1, 5)
+    assert len(events_for(v, "ENGINE_STATE_RESET")) == 1
+    e = row("engine_state", v)
+    assert e is not None and e["schema_version"] == state_version()

@@ -132,15 +132,16 @@ async def load_state(
 
 
 async def _silence(
-    ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, vs: VehicleState
+    conn: psycopg.AsyncConnection, vehicle: str, vs: VehicleState, extra: Sequence[GroundEvent]
 ) -> VehicleState:
-    """LOS after STALE_S without a new frame: LOS + engine_state in one small transaction."""
+    """LOS after STALE_S without a new frame: LOS (+ pending `extra`) and engine_state in one
+    small transaction. Returns `vs` unchanged when no LOS was due."""
     ls, ev = on_silence(vs.link, vehicle, vs.seq)
     if not ev:
         return vs
     nvs = VehicleState(vs.seq, ls, vs.frozen, vs.set_sha256)
     async with conn.transaction():
-        await write_outcome(conn, vehicle, nvs, Outcome((), ev, 0))
+        await write_outcome(conn, vehicle, nvs, Outcome((), (*extra, *ev), 0))
     return nvs
 
 
@@ -186,7 +187,9 @@ async def run_vehicle(ctx: Ctx, vehicle: str, dsn: str, stop: asyncio.Event) -> 
                     last_new = time.monotonic()
                 vs = nvs
                 if time.monotonic() - last_new > STALE_S:
-                    vs = await _silence(ctx, conn, vehicle, vs)
+                    nvs = await _silence(conn, vehicle, vs, extra)
+                    if nvs is not vs:
+                        vs, extra = nvs, ()
                 backoff = BACKOFF_START_S
             except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
                 log.warning("redis unavailable for %s (%s); retry in %.1fs", stream, e, backoff)
@@ -194,3 +197,4 @@ async def run_vehicle(ctx: Ctx, vehicle: str, dsn: str, stop: asyncio.Event) -> 
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), backoff)
                 backoff = min(backoff * 2, BACKOFF_MAX_S)
+                last_new = time.monotonic()  # a broker outage is not loss of signal (D-UI-04/15)

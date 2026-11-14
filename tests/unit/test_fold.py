@@ -118,3 +118,18 @@ def test_frozen_run_survives_reload() -> None:
 
 def test_state_version_stable_positive() -> None:
     assert state_version() == state_version() and 0 <= state_version() < 2**31
+
+
+def test_seq_jump_aos_lost_unknown() -> None:  # G13, D-ING-16: counter jump ≠ lost frames
+    frames = [fr(i, i / 10) for i in range(10)] + [fr(1010, 0.9 + 10.0)]
+    _, out = fold(empty_state(SHA), V, frames, PARAMS)
+    assert [e.kind for e in out.events] == ["SEQ_JUMP", "LOS", "AOS"]
+    assert out.events[0].details["lost"] == 1000 and out.events[2].details["lost_frames"] is None
+
+
+def test_in_order_aos_lost_zero() -> None:  # stale but in order: nothing lost
+    frames = [fr(0, 0.0), fr(1, 5.0)]
+    _, out = fold(empty_state(SHA), V, frames, PARAMS)
+    assert [e.kind for e in out.events] == ["LOS", "AOS"] and out.events[1].details[
+        "lost_frames"
+    ] == 0

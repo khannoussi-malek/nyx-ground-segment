@@ -58,9 +58,8 @@ def fold(
             dup += 1
             continue
         events += ev
-        lost = (
-            None if k in ("SEQ_RESET", "SEQ_ANOMALY") else next((e.details["lost"] for e in ev), 0)
-        )
+        # G13 / D-ING-16: only a GAP counts lost frames; a counter jump or reset is of unknown size
+        lost = ev[0].details["lost"] if k == "GAP" else 0 if k in ("FIRST", "IN_ORDER") else None
         ls, lev, _stale = link.on_frame(
             ls, vehicle, prev, f.t_onboard, lost
         )  # stale → engine reset, Task 16

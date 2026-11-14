@@ -1,10 +1,14 @@
 import asyncio
 import json
+from typing import Any
+
+import pytest
 
 from tests.support.env import until, vid
 from tests.support.ingest import process_batch_once, worker
 from tests.support.pg import seqs_by_t_received, stored, stored_row
 from tests.support.redisx import (
+    GROUP,
     client,
     drained,
     frame,
@@ -92,3 +96,24 @@ async def test_unknown_and_missing_fields_counted_and_stored_as_null() -> None: 
     row = stored_row(v, 0)
     assert row["rate_z_dps"] is None and row["bus_voltage_v"] is not None
     assert json.loads(ui_tm(v)[0])["values"]["rate_z_dps"] is None
+
+
+async def test_reconnect_rereads_own_pel(caplog: pytest.LogCaptureFixture) -> None:  # D-ING-03/08
+    v = vid()
+    produce(v, 5)
+    ids: list[Any] = [
+        i for i, _ in read_without_ack(v, consumer="other")
+    ]  # pending elsewhere: a `>` read can never return them
+    async with worker([v]) as w:
+        await until(lambda: v in w.ctx.loop_seen, timeout=2)
+        await asyncio.sleep(0.3)  # worker is now in its `>` loop
+        client("admin").xclaim(
+            f"tm:{v}",
+            GROUP,
+            "ingest-test",
+            min_idle_time=0,
+            message_ids=ids,
+        )
+        client("admin").execute_command("CLIENT", "KILL", "USER", "ingest")  # type: ignore[no-untyped-call]
+        await until(lambda: stored(v) == 5, timeout=7)
+    assert "redis unavailable" in caplog.text  # the error reached the backoff loop

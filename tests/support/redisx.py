@@ -10,6 +10,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import redis.asyncio
+from redis.asyncio.retry import Retry
 
 import redis
 from gs.simulator.frames import make_frame
@@ -29,10 +30,16 @@ def client(user: str, decode: bool = True) -> redis.Redis:
     return redis.Redis(host=HOST, port=port, username=user, password=pw, decode_responses=decode)
 
 
-def aclient(user: str, decode: bool = True) -> redis.asyncio.Redis:
+def aclient(user: str, decode: bool = True, retry: Retry | None = None) -> redis.asyncio.Redis:
     port, pw = _creds(user)
+    extra: dict[str, Any] = {"retry": retry} if retry else {}
     return redis.asyncio.Redis(
-        host=HOST, port=port, username=user, password=pw, decode_responses=decode
+        host=HOST,
+        port=port,
+        username=user,
+        password=pw,
+        decode_responses=decode,
+        **extra,
     )
 
 

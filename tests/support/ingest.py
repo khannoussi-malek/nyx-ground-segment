@@ -6,6 +6,8 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
 import psycopg
+from redis.asyncio.retry import Retry
+from redis.backoff import NoBackoff
 
 from gs.common.interfaces import build_frame_model
 from gs.common.missiondb import load_dir
@@ -19,7 +21,12 @@ from tests.support.redisx import aclient
 def make_ctx(consumer: str) -> Ctx:
     names = load_dir(MISSION_DIR).param_names
     return Ctx(
-        consumer, build_frame_model(names), names, aclient("ingest", decode=False), FieldStats(), {}
+        consumer,
+        build_frame_model(names),
+        names,
+        aclient("ingest", decode=False, retry=Retry(NoBackoff(), 0)),
+        FieldStats(),
+        {},
     )
 
 

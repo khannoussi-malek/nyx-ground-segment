@@ -18,9 +18,16 @@ from tests.support.env import now, until
 from tests.support.ingest import worker
 from tests.support.pg import admin_dsn, events_for, open_alarm
 from tests.support.redisx import client, dlq_since, drained, produce_values, xadd_data
-from tests.support.sse import publish_tm, sse
+from tests.support.sse import Stream, publish_tm, sse
 
 TEMP = "cabin_temp_c"
+
+
+async def tm_of(s: Stream, v: str) -> dict[str, Any]:
+    """The next tm of `v`: a running stack's simulator publishes other vehicles' tm too."""
+    while (d := (await s.next_of("tm"))[1])["vehicle"] != v:
+        pass
+    return d
 
 
 def hub(live: LiveApi) -> Hub:
@@ -35,7 +42,8 @@ async def test_invalid_ui_event_dlq(live_api: LiveApi) -> None:  # D-ING-27, req
         await s2.next_of("snapshot")
         xadd_data("ui:events", '{"kind":"tm","vehicle":"NYX-TA1"}')
         publish_tm(live_api.vehicle, 1)
-        assert (await s1.next_of("tm"))[1]["seq"] == 1 and (await s2.next_of("tm"))[1]["seq"] == 1
+        v = live_api.vehicle
+        assert (await tm_of(s1, v))["seq"] == 1 and (await tm_of(s2, v))["seq"] == 1
     (rec,) = dlq_since("ui:events", t0)
     assert '"reason":"schema"' in rec and '"stream":"ui:events"' in rec
     key = mismatch_key("ui-event", schema_sha12(UiEvent))  # once per schema version, ever
@@ -59,7 +67,7 @@ async def test_slow_client_overflow_closes_then_snapshot(live_api: LiveApi) -> N
         for seq in range(20):
             publish_tm(v, 100 + seq)
         for seq in range(20):
-            assert (await fast.next_of("tm"))[1]["seq"] == 100 + seq  # the others keep going
+            assert (await tm_of(fast, v))["seq"] == 100 + seq  # the others keep going
     assert slow.closed.is_set() and slow not in h.clients and slow.queue.qsize() == 5
     async with sse(live_api) as again:  # the closed client's watchdog reconnects
         _, snap = await again.next_of("snapshot")

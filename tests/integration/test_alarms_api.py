@@ -8,14 +8,15 @@ from typing import Any
 
 import httpx
 import pytest
+from psycopg_pool import AsyncConnectionPool
 
 from gs.api import alarms
 from gs.api.app import create_app
 from gs.ingest import acks
-from tests.support.env import dotenv, now, until, vid
+from tests.support.env import now, until, vid
 from tests.support.http import CLIENT_HEADERS, FC2_PW, api_settings, authed, get_json
 from tests.support.ingest import owned, worker
-from tests.support.pg import app_dsn, audit_rows, open_alarm, rows
+from tests.support.pg import audit_rows, open_alarm, rows
 from tests.support.redisx import drained, produce_values
 
 TEMP = "cabin_temp_c"
@@ -161,13 +162,17 @@ async def test_ack_requires_session_and_header(app: Any) -> None:
         assert (r.status_code, r.json()["error"]) == (403, "CLIENT_HEADER_REQUIRED")
 
 
-async def test_database_down_is_503(users_file: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_database_down_is_503(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(alarms, "DB_TIMEOUT_S", 0.5)  # a closed port: the pool never connects
-    down = create_app(api_settings(users_file, database_url=app_dsn("gs").replace(
-        f":{dotenv()['DB_HOST_PORT']}/", ":1/")))  # fmt: skip
-    async with authed(down) as c:
-        for r in (await c.get("/api/alarms"), await ack(c, str(uuid.uuid4()))):
-            assert (r.status_code, r.json()["error"]) == (503, "UNAVAILABLE")
+    async with authed(app) as c:  # login audits to the database: log in first, then cut it
+        bad = AsyncConnectionPool("postgresql://x@127.0.0.1:1/x", min_size=1, open=False)
+        await bad.open(wait=False)
+        app.state.pool = bad
+        try:
+            for r in (await c.get("/api/alarms"), await ack(c, str(uuid.uuid4()))):
+                assert (r.status_code, r.json()["error"]) == (503, "UNAVAILABLE")
+        finally:
+            await bad.close()
 
 
 async def test_request_id_reused_for_another_ack_is_422(app: Any) -> None:  # review of T10

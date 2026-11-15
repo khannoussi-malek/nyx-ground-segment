@@ -3,6 +3,8 @@
 One page for the person at the console. All times are UTC and end in `Z`, for example `14:03:17Z`. Text in bold is exactly what the console shows.
 
 ## Read the console
+![The console during a cabin leak: the RED LOW cabin pressure alarm on NYX-TA1 at the top of the alarm list](img/console-leak.png)
+
 - One row per parameter and vehicle. A value is grey when nominal; colour, text and a glyph appear only for YELLOW or RED. A RED badge on a row that is also stale shows the last limit as "was RED LOW".
 - Next to a value you may see a freshness mark: **STALE** (older than 2 s), **FROZEN** (all analog values identical for 2 s or more) or **NO DATA** (no value yet). No mark means fresh.
 - An alarm row says in words why it fired (for example "YELLOW - RATE FALLING -0.40 kPa/s (limit 0.15)") and shows two 8-character hash prefixes. They identify the limits file and the whole mission database that were live when it fired; quote them when you report a limit question.
@@ -16,6 +18,7 @@ Banners follow one order, highest first: **NO LIVE CONNECTION** (this browser lo
 
 ## Acknowledge an alarm
 Press **ACK** on the alarm, type a note (required), confirm. The row shows **ACK PENDING** (with your name) until the ground software applies it, normally within 1 s, then ACKED. While ground processing is down it says **ACK NOT APPLIED – processing down**: the request waits and nothing is applied yet. A refused or superseded request shows the server's reason, or `ACK REJECTED` / `ACK SUPERSEDED` (someone already acknowledged it); try once more and tell the test conductor if a rejection repeats. An alarm that returned to normal before anyone acknowledged it shows **RETURNED, UNACKNOWLEDGED** until you do.
+If the alarm changes while the dialog is open (it escalates, returns or clears), the dialog closes and the row says **Alarm changed – review it before acknowledging**: read the alarm again, then ACK it again. ACK is disabled while **NO LIVE CONNECTION** or **GROUND PROCESSING DOWN** is shown, because the screen may be out of date.
 
 ## Send a command
 Choose the target vehicle yourself (there is no default), the command and its arguments. A hazardous command asks for confirmation: the dialog repeats vehicle, command, arguments and the hazard text, wants a reason of at least 10 characters, and enables **Confirm** only after you type the vehicle ID (for example `NYX-TA2`). The confirmation lasts 60 s. If the console says "<name> **sent the same command** N s ago" (within 2 s), do not send it again; look at the command list. After a network error it says "May have been sent - check the command list before sending again": do that first.

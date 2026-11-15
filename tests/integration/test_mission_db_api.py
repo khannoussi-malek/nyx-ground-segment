@@ -156,3 +156,17 @@ async def test_ingest_rejected_set_publish_error_is_contained() -> None:
         await publish_events(down)([ev])  # logged, never raised into the watcher
     finally:
         await down.aclose()
+
+
+async def test_api_start_rejection_reaches_consoles_in_the_snapshot(
+    users_file: Path, tmp_path: Path
+) -> None:  # P-pf9, Task 27b: no console is connected while the lifespan starts
+    m, token = mission_copy(tmp_path), vid()
+    edit(m / "commands.yaml", "Close the cabin isolation valve", f"Close valve {token}")
+    with (m / "parameters.yaml").open("a") as f:  # no telemetry column: start falls back
+        f.write("  cabin_humidity_pct: {unit: pct, type: float}\n")
+    key = rejected_key(set_formula(m))
+    app = api_on(users_file, m)
+    async with authed(app):
+        snap = await app.state.hub.snapshot()
+    assert [e.kind for e in snap.events if e.key == key] == ["LIMITS_REJECTED"]

@@ -1,23 +1,11 @@
-import { execSync } from "node:child_process";
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
+import { cell as paramCell, compose, login, seqOf, VEHICLES } from "./helpers";
 
-const VEHICLES = ["NYX-TA1", "NYX-TA2"];
-const cell = (page: Page, v: string) =>
-  page.locator(`[data-vehicle="${v}"][data-param="cabin_pressure_kpa"]`);
-const seqOf = (page: Page, v: string) => async () => Number(await cell(page, v).getAttribute("data-seq"));
-
-async function login(page: Page, user: string, pw: string | undefined) {
-  if (!pw) throw new Error(`no demo password for ${user} in .env`);
-  await page.goto("/");
-  await page.getByLabel("User").fill(user);
-  await page.getByLabel("Password").fill(pw);
-  await page.getByRole("button", { name: "Log in" }).click();
-}
-
-const restartApi = () => execSync("docker compose restart api", { cwd: "..", stdio: "ignore" });
+const cell = (page: Parameters<typeof paramCell>[0], v: string) => paramCell(page, v, "cabin_pressure_kpa");
+const restartApi = () => compose("restart", "api");
 
 test("login, live values update, recovers after api restart, logout", async ({ page }) => {
-  await login(page, "fc1", process.env.DEMO_PW_FC1);
+  await login(page, "fc1");
   for (const v of VEHICLES) {
     await expect(cell(page, v)).toBeVisible();
     const s0 = await seqOf(page, v)();
@@ -37,7 +25,7 @@ test("login, live values update, recovers after api restart, logout", async ({ p
 });
 
 test("a revoked session returns to the login form", async ({ page }) => {
-  await login(page, "fc2", process.env.DEMO_PW_FC2);
+  await login(page, "fc2");
   await expect(cell(page, "NYX-TA1")).toBeVisible();
   // another "context": the same cookie jar logs out server-side
   const r = await page.context().request.post("/api/logout", { headers: { "X-GS-Client": "console" } });

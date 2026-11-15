@@ -6,16 +6,19 @@ import time
 import urllib.request
 from datetime import datetime
 
+import httpx
 import psycopg
 import pytest
 
 from gs.common.time import iso_z
 from gs.simulator.frames import PERIOD_S
-from tests.support.compose import api_url, compose, restart_count
+from tests.support.compose import api_url, compose, restart_count, wait_healthy
 from tests.support.env import now, wait_until
+from tests.support.http import CLIENT_HEADERS
 from tests.support.ingest import INGEST, LIVE, wait_drained
 from tests.support.pg import app_dsn, events_for, gapless, lock_holder, seqs_since
 from tests.support.redisx import dlq_since
+from tests.support.sse import live_stack
 
 OUTAGE_S = 10.0
 HEALTHY_S = 60.0  # the api's /healthz (it includes Redis) is green again
@@ -67,3 +70,21 @@ def test_redis_stop_10s_recovers() -> None:
             assert events_for(v, kind, since=t0) == [], f"{v}: unexpected {kind}"
     for svc in INGEST:
         assert "stole" not in logs_since(svc, t0), f"{svc} stole a vehicle after the outage"
+
+
+def test_first_login_and_command_after_a_redis_restart_succeed() -> None:  # P-pf47
+    """Every pooled api connection from before the restart is closed by the server; the first
+    requests after it must not 503 (retry stays off, R28: the pool reconnects at checkout)."""
+    live_stack()  # the api's pool holds connections from before the restart
+    compose("restart", "redis")
+    wait_healthy("redis")  # not /healthz: its own Redis check would use up a stale connection
+    live = live_stack()  # asserts the first login is 204
+    body = {"vehicle": "NYX-TA1", "name": "isolate_valve", "args": {"valve": "A"}}
+    r = httpx.post(
+        f"{live.url}/api/commands",
+        json=body,
+        cookies={"session": live.cookie},
+        headers=CLIENT_HEADERS,
+        timeout=5,
+    )
+    assert r.status_code == 202, r.text

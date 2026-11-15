@@ -286,6 +286,36 @@ test("recheck after a throttled background tab: silence over 3 s is noticed with
   expect(s.link().connected).toBe(false);
 });
 
+test("healthySince: when the broker came back up, or the vehicle's owner came back; null if never interrupted", () => {
+  let now = 1000;
+  const s = createStore(() => now, { setTimeout: (() => 1) as never, clearTimeout: () => {} });
+  expect(s.healthySince("NYX-TA1")).toBeNull();
+  s.setGround("up"); // up without a down first: no outage
+  expect(s.healthySince("NYX-TA1")).toBeNull();
+  s.setGround("down");
+  now = 5000;
+  s.setGround("up");
+  expect(s.healthySince("NYX-TA1")).toBe(5000);
+  s.setProcessing({ "NYX-TA1": false, "NYX-TA2": true });
+  now = 9000;
+  s.setProcessing({ "NYX-TA1": true, "NYX-TA2": true });
+  expect(s.healthySince("NYX-TA1")).toBe(9000);
+  expect(s.healthySince("NYX-TA2")).toBe(5000);
+});
+
+test("recheck after a throttled background tab: an hb over 3 s old forgets the processing map (P-pf42b)", () => {
+  let now = 0;
+  const s = createStore(() => now, { setTimeout: (() => 1) as never, clearTimeout: () => {} }); // timer never fires
+  s.setProcessing({ "NYX-TA1": true });
+  now = 2999;
+  s.noteMessage(); // other messages keep the link
+  s.recheck();
+  expect(s.link().processing).toEqual({ "NYX-TA1": true });
+  now = 3000;
+  s.recheck();
+  expect(s.link()).toEqual({ connected: true, broker: "up", processing: {} });
+});
+
 test("the latency probe gets a receipt for every accepted tm, with its server age, and none for a dropped one", () => {
   const got: unknown[][] = [];
   const s = createStore(undefined, undefined, { receipt: (...a) => void got.push(a) });
@@ -293,4 +323,28 @@ test("the latency probe gets a receipt for every accepted tm, with its server ag
   s.applyTm(tm(1, "2026-11-14T10:00:00.100000Z")); // dropped
   s.applyTm(tm(2, "2026-11-14T10:00:00.200000Z", "NYX-TA2"));
   expect(got).toEqual([["NYX-TA1", 1, 5], ["NYX-TA2", 2, 5]]);
+});
+
+test("healthySince: an owner word back after the hb went silent (unknown -> true) is a recovery too", () => {
+  let now = 1000;
+  const fire: (() => void)[] = [];
+  const s = createStore(() => now, { setTimeout: ((fn: () => void) => fire.push(fn)) as never, clearTimeout: () => {} });
+  s.setProcessing({ "NYX-TA1": true });
+  fire.at(-1)!(); // no hb for SILENCE_MS: the map is forgotten
+  expect(s.link().processing).toEqual({});
+  now = 7000;
+  s.setProcessing({ "NYX-TA1": true });
+  expect(s.healthySince("NYX-TA1")).toBe(7000);
+});
+
+test("healthySince is null while the vehicle's LOS is open: a loss from before an outage gets no grace", () => {
+  let now = 1000;
+  const s = createStore(() => now, { setTimeout: (() => 1) as never, clearTimeout: () => {} });
+  s.applyLink(eventView("los:1", { kind: "LOS", vehicle: "NYX-TA1" }));
+  s.setGround("down");
+  now = 5000;
+  s.setGround("up");
+  expect(s.healthySince("NYX-TA1")).toBeNull();
+  s.applyLink(eventView("aos:1", { kind: "AOS", vehicle: "NYX-TA1" }));
+  expect(s.healthySince("NYX-TA1")).toBe(5000);
 });

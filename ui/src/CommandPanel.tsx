@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { listCommands, sendCommand, type CommandRequest, type MissionDb } from "./api";
-import { AMBIGUOUS_TEXT, rejectedText } from "./commandText";
+import { AMBIGUOUS_TEXT, cmdLabel, rejectedText } from "./commandText";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type { Store } from "./store";
 import { Timeline } from "./Timeline";
@@ -79,7 +79,7 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
     }
   }
   const accepted = (r: CommandRequest) => {
-    setNote(`${r.name} queued for ${r.vehicle}`); // names its command: a late answer may belong to an earlier one
+    setNote(`${cmdLabel(r.name, r.args)} queued for ${r.vehicle}`); // names its command and args: a late answer may belong to an earlier one
     void refresh(r.vehicle);
   };
   async function send() {
@@ -133,8 +133,7 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
       <ul className="command-list">
         {commands.slice(0, SHOWN).map((c) => (
           <li key={c.cmd_id} data-cmd-id={c.cmd_id} data-state={c.state}>
-            <strong>{c.vehicle}</strong> {c.name}
-            {Object.keys(c.args).length > 0 && ` (${Object.entries(c.args).map(([k, v]) => `${k} = ${v}`).join(", ")})`}
+            <strong>{c.vehicle}</strong> {cmdLabel(c.name, c.args)}
             {" · "}{c.issued_by}{" · "}{c.state}
             <Timeline c={c} mission={mission} />
           </li>

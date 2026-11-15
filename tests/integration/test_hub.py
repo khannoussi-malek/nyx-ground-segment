@@ -1,6 +1,7 @@
 """The API's one ui:events reader (Task 11): rejection, slow clients, broker state, heartbeats."""
 
 import asyncio
+from collections.abc import Iterator
 from datetime import timedelta
 from typing import Any
 
@@ -14,6 +15,7 @@ from gs.common.interfaces import UiEvent
 from gs.common.interfaces.render import schema_sha12
 from gs.ingest.events import mismatch_key
 from tests.integration.conftest import LiveApi
+from tests.support.compose import compose, wait_healthy
 from tests.support.env import now, until
 from tests.support.ingest import worker
 from tests.support.pg import admin_dsn, events_for, open_alarm
@@ -35,6 +37,20 @@ def hub(live: LiveApi) -> Hub:
     return h
 
 
+@pytest.fixture
+def compose_api_stopped() -> Iterator[None]:
+    """The compose api reads ui:events too: it would DLQ the same bad entry and could win the
+    once-per-schema INTERFACE_MISMATCH insert. Stopped for the test (this project's api only),
+    started again after; the result no longer depends on whether an earlier test stopped it."""
+    compose("stop", "api")
+    try:
+        yield
+    finally:
+        compose("start", "api")
+        wait_healthy("api")
+
+
+@pytest.mark.usefixtures("compose_api_stopped")
 async def test_invalid_ui_event_dlq(live_api: LiveApi) -> None:  # D-ING-27, requirements name
     t0 = now()
     async with sse(live_api) as s1, sse(live_api) as s2:
@@ -169,6 +185,7 @@ async def test_stalled_reader_is_ground_down_and_degraded(
     assert (health["status"], health["checks"]["ui_events"]) == ("degraded", "stalled")
 
 
+@pytest.mark.usefixtures("compose_api_stopped")
 async def test_mismatch_event_reaches_the_console(live_api: LiveApi) -> None:
     key = mismatch_key("ui-event", schema_sha12(UiEvent))  # written once per schema version:
     with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:  # clear an earlier run's row

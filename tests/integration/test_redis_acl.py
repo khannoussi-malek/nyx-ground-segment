@@ -52,3 +52,26 @@ def test_acl_log_check_fails_on_denial_then_passes_after_reset() -> None:
     assert run_check_acl_log() == 1
     client("admin").acl_log_reset()
     assert run_check_acl_log() == 0
+
+
+def test_api_command_set_permitted() -> None:  # every command the API sends (D-CMD-06/07/11)
+    v, admin = vid(), client("admin")
+    since_ms = int(admin.time()[0]) * 1000
+    api = client("api")
+    lock, confirm = f"cmdlock:{v}:isolate_valve", f"confirm:{vid()}"
+    assert api.set(lock, "c|fc1", nx=True, px=2000)
+    assert api.set(confirm, "fc1|h", nx=True, px=60000)
+    assert api.getdel(confirm) == "fc1|h"
+    with api.pipeline(transaction=True) as p:  # the compare-and-delete release (D-CMD-11)
+        p.watch(lock)  # type: ignore[no-untyped-call]
+        assert p.get(lock) == "c|fc1"
+        p.multi()
+        p.delete(lock)
+        assert p.execute() == [1]
+    assert api.xadd(f"tc:{v}", {"data": "{}"})
+    assert api.xadd("tm:dlq", {"data": "{}"})
+    api.xread({"ui:events": "0-0"}, count=1)
+    api.mget([f"hb:veh:{v}", "hb:veh:NYX-TA1"])
+    log: Any = admin.acl_log()
+    mine = [e for e in log if e["username"] == "api" and e["timestamp-last-updated"] >= since_ms]
+    assert mine == []

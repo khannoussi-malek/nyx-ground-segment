@@ -15,6 +15,7 @@ import redis.asyncio
 import redis.exceptions
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
+from redis.maint_notifications import MaintNotificationsConfig
 
 from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import serve_health
@@ -78,15 +79,23 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
     async with await psycopg.AsyncConnection.connect(s.database_url, autocommit=True) as conn:
         # stores the set (engine_state.set_sha256 references it) or falls back (D-ALM-12)
         mdb, rejected = await start_set(conn, Path(s.mission_db))
-        await insert_events(conn, rejected)
+        won = await insert_events(conn, rejected)  # autocommit: committed here
     # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
     # no client-side retry: every connection error must reach run_vehicle's backoff loop, which
     # re-reads our PEL and never re-sends a non-idempotent XADD behind our back (D-ING-03/08)
+    # maintenance notifications off: a pooled connection the server closed is reconnected at
+    # checkout instead of failing the pass into the backoff loop (P-pf47, see the api)
     r = redis.asyncio.Redis.from_url(
-        s.redis_url, socket_timeout=SOCKET_TIMEOUT_S, retry=Retry(NoBackoff(), 0)
+        s.redis_url,
+        socket_timeout=SOCKET_TIMEOUT_S,
+        retry=Retry(NoBackoff(), 0),
+        maint_notifications_config=MaintNotificationsConfig(enabled=False),
     )
+    publish = publish_events(r)
+    if won:  # only when our insert won, like the watcher (P-pf9): a restart does not repeat it
+        await publish(rejected)
     watcher = MissionWatcher(
-        Path(s.mission_db), s.database_url, s.consumer_name, mdb, on_events=publish_events(r)
+        Path(s.mission_db), s.database_url, s.consumer_name, mdb, on_events=publish
     )
     seen: dict[str, float] = {}  # a standby task (lock not granted) is not a stale loop
     ctx = Ctx(

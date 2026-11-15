@@ -27,7 +27,7 @@ from gs.common.interfaces import Ground, Snapshot, Tm, UiEvent
 from gs.common.interfaces.base import StrictModel
 from gs.common.interfaces.dlq import schema_reject
 from gs.common.interfaces.render import schema_sha12
-from gs.common.interfaces.sse import AlarmView
+from gs.common.interfaces.sse import AlarmView, EventView
 from gs.common.interfaces.ui_event import Resync
 from gs.common.uievents import UI_EVENTS
 from gs.common.views import alarm_views, command_views, event_views
@@ -37,7 +37,9 @@ CLIENT_QUEUE = 1000  # SSE frames buffered per client before it is closed
 RETRY_S = 1.0  # between XREAD attempts while the broker is down
 HB_S = 1.0  # hb:veh:<v> poll period (the SSE hb carries the result)
 SNAPSHOT_COMMANDS = 50  # per vehicle (ruling R-r)
-SNAPSHOT_EVENTS = 50
+SNAPSHOT_EVENTS = 50  # newest overall, plus each vehicle's newest LOS/AOS and FROZEN
+CARRIED_KINDS = (("LOS", "AOS"), ("FROZEN",))  # build_snapshot: one newest event per vehicle each
+EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 BLOCK_MS = 1000
 STALE_S = 3.0  # no reader pass for this long: it hangs; consoles get ground{down}
 DB_WAIT_S = 2.0  # pool wait in the reader, so a database stall can't hold up the deltas
@@ -86,17 +88,28 @@ async def build_snapshot(
     conn: psycopg.AsyncConnection, vehicles: Sequence[str], params: Sequence[str], now: datetime
 ) -> Snapshot:
     """Last values (with FROZEN), the open alarms of each vehicle, and the newest
-    SNAPSHOT_COMMANDS commands and SNAPSHOT_EVENTS events overall, newest first (ruling R-r;
+    SNAPSHOT_COMMANDS commands and SNAPSHOT_EVENTS events overall (+ each vehicle's newest
+    LOS/AOS and FROZEN), newest first (ruling R-r;
     the console keeps the order). The one snapshot function for connect, reconnect, resync,
     broker up and overflow (D-UI-02)."""
     alarms: list[AlarmView] = []
     for v in vehicles:
         alarms += await alarm_views(conn, vehicle=v)
+    events = await event_views(conn, limit=SNAPSHOT_EVENTS)
+    # + each vehicle's newest LOS/AOS and FROZEN when they fell out of the newest (an open LOS
+    # carries its last frame's time): the console's LOS banner and its LOS / FROZEN tones read
+    # them. Older than every event above, so appending keeps newest first.
+    keys, links = {e.key for e in events}, list[EventView]()
+    for v in vehicles:
+        for kinds in CARRIED_KINDS:
+            links += await event_views(conn, vehicle=v, kinds=kinds, limit=1)
+    old = [e for e in links if e.key not in keys]
+    events += sorted(old, key=lambda e: e.t_onboard or EPOCH, reverse=True)
     return Snapshot(
         vehicles=await _last_values(conn, vehicles, params, now),
         alarms=alarms,
         commands=await command_views(conn, limit=SNAPSHOT_COMMANDS),
-        events=await event_views(conn, limit=SNAPSHOT_EVENTS),
+        events=events,
     )
 
 

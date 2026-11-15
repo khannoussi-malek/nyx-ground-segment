@@ -5,7 +5,7 @@ export const formatValue = (v: number | null): string => {
   return s.replace("-", "\u2212"); // true minus: as wide as a tabular digit, lines up in columns
 };
 
-export const sortedEntries = (values: Readonly<Record<string, number | null>>) =>
+export const sortedEntries = <T,>(values: Readonly<Record<string, T>>): [string, T][] =>
   Object.entries(values).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
 
 /** Age now = server age at send (api_now − t_onboard) + time since receipt, one browser clock (D-UI-05). */

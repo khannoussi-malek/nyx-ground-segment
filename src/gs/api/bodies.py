@@ -1,9 +1,9 @@
 """REST request/response bodies (frozen for the day-3 tracks; generated into schema.d.ts)."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator
 
 from gs.common.interfaces.base import StrictModel, UtcTime, VehicleId
 from gs.common.interfaces.sse import CommandView, EventView, TransitionView
@@ -14,12 +14,33 @@ class _Body(StrictModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class _Request(_Body):
+    """A request body: text Postgres refuses (NUL, or a lone surrogate from a JSON \\ud800
+    escape, which has no UTF-8 form) is a 422 VALIDATION_ERROR before any side effect, never a
+    500 or a 503 after a confirm token was spent (Task 27b). Never on response bodies: an
+    ErrorBody echoes user text, NUL included (review of Task 27b).
+    ponytail: top-level str fields only; the one dict (command args) is checked against the
+    mission db before anything is stored."""
+
+    @field_validator("*")
+    @classmethod
+    def _postgres_text(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            if "\x00" in v:
+                raise ValueError("text must not contain NUL (\\u0000)")
+            try:
+                v.encode()
+            except UnicodeEncodeError as e:
+                raise ValueError("text must be valid UTF-8 (no unpaired surrogates)") from e
+        return v
+
+
 class ErrorBody(_Body):
     error: str
     message: str
 
 
-class LoginRequest(_Body):
+class LoginRequest(_Request):
     user: str
     password: str
 
@@ -33,7 +54,7 @@ class Health(_Body):
     checks: dict[str, str]
 
 
-class CommandRequest(_Body):
+class CommandRequest(_Request):
     vehicle: VehicleId
     name: str
     args: dict[str, ArgValue]
@@ -58,7 +79,7 @@ class CommandConflict(_Body):
     cmd_id: UUID | None = None
 
 
-class AckRequest(_Body):
+class AckRequest(_Request):
     # FastAPI validates the decoded JSON in python mode, where a strict UUID rejects the string
     request_id: Annotated[UUID, Field(strict=False)]
     note: str
@@ -71,7 +92,7 @@ class AckAccepted(_Body):
     status: Literal["pending", "applied", "superseded", "rejected"]
 
 
-class SessionStart(_Body):
+class SessionStart(_Request):
     vehicle: VehicleId
     name: Annotated[str, Field(min_length=1, max_length=200)]
 

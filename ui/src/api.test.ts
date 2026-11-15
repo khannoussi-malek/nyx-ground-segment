@@ -63,24 +63,24 @@ test("missionDb is a plain same-origin GET: the body, null on 401, throws otherw
 
 const RID = "7c0e1a64-3c58-4b43-a3b0-0d0a6c0d0e11";
 
-test("ackAlarm posts the request id and note; 202 is ok with the status", async () => {
+test("ackAlarm posts the request id, note and seen_key; 202 is ok with the status", async () => {
   const f = stub(202, { request_id: RID, status: "pending" });
-  expect(await ackAlarm("a/1", RID, "seen")).toEqual({ ok: true, status: "pending" });
+  expect(await ackAlarm("a/1", RID, "seen", "ALARM/k1")).toEqual({ ok: true, status: "pending" });
   expect(f).toHaveBeenCalledWith("/api/alarms/a%2F1/ack", {
     method: "POST",
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-GS-Client": "console" },
-    body: JSON.stringify({ request_id: RID, note: "seen" }),
+    body: JSON.stringify({ request_id: RID, note: "seen", seen_key: "ALARM/k1" }),
   });
 });
 
 test("ackAlarm hands the server's error and message back, never throws", async () => {
   stub(409, { error: "ALARM_CLEARED", message: "alarm already cleared" });
-  expect(await ackAlarm("a", RID, "n")).toEqual({ ok: false, error: "ALARM_CLEARED", message: "alarm already cleared" });
+  expect(await ackAlarm("a", RID, "n", "k")).toEqual({ ok: false, error: "ALARM_CLEARED", message: "alarm already cleared" });
   stub(502); // a proxy page, no JSON body
-  expect(await ackAlarm("a", RID, "n")).toEqual({ ok: false, error: "HTTP_502", message: "ACK failed (502)" });
+  expect(await ackAlarm("a", RID, "n", "k")).toEqual({ ok: false, error: "HTTP_502", message: "ACK failed (502)" });
   vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
-  expect(await ackAlarm("a", RID, "n")).toMatchObject({ ok: false, error: "NETWORK" });
+  expect(await ackAlarm("a", RID, "n", "k")).toMatchObject({ ok: false, error: "NETWORK" });
 });
 
 const REQ = { vehicle: "NYX-TA2", name: "vent_cabin", args: { duration_s: 3 } };

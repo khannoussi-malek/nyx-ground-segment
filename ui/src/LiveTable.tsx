@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { MissionDb } from "./api";
-import { conditionFor } from "./banners";
+import { vehicleCondition } from "./banners";
 import { ageAt } from "./format";
 import { paramViews } from "./params";
 import type { Probe } from "./probe";
@@ -27,7 +27,7 @@ function Vehicle({ store, v, mission, clock, probe }: { store: Store; v: string;
   useTick(AGE_TICK_MS);
   if (!tm) return null;
   const ageMs = ageAt(tm.age_ms, store.receivedAt(v), clock());
-  const condition = conditionFor({ ...link, processing: link.processing[v], ageMs, frozen: tm.frozen });
+  const condition = vehicleCondition(store, v, clock());
   // FROZEN is counted from the rows; only the vehicle-level conditions replace the summary
   const banner = condition === "FROZEN" || condition === "STALE" ? undefined : (condition ?? undefined);
   // no row state before the first snapshot: the gauge fill and the summary wait for the engine (G26)

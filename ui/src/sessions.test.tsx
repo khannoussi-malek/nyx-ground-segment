@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
+import type { MissionDb } from "./api";
 import { sessionReport, sessionView } from "./fixtures";
 import { SessionPanel } from "./SessionPanel";
 import { createStore, ingest } from "./store";
@@ -34,11 +35,11 @@ function server(initial: unknown[] = [], handlers: Record<string, (init?: { body
   vi.stubGlobal("fetch", f);
   return { f, state };
 }
-function mount() {
+function mount(mission: MissionDb | null = null) {
   const store = createStore();
   const tm = (vehicle: string) => ({ kind: "tm", vehicle, seq: 1, t_onboard: "2026-11-14T10:00:00.000000Z", mode: "TEST", last_cmd_id: null, values: {}, age_ms: 1, frozen: false });
   ingest(store, "snapshot", { kind: "snapshot", vehicles: { "NYX-TA1": tm("NYX-TA1"), "NYX-TA2": tm("NYX-TA2") }, alarms: [], commands: [], events: [] });
-  act(() => root.render(<SessionPanel store={store} />));
+  act(() => root.render(<SessionPanel store={store} mission={mission} />));
   return store;
 }
 const flush = () => act(async () => {});
@@ -244,4 +245,18 @@ test("report answers arriving out of order: the slow answer for A never overwrit
   await act(async () => held["/api/sessions/1/report"]!(json(200, sessionReport({ session: sessionView({ id: 1, name: "A", ended_at: "2026-11-14T10:10:00Z" }) }))));
   expect(host.querySelector(".report h3")!.textContent).toContain("B"); // still B
   expect(host.querySelector("a[download]")!.getAttribute("href")).toBe("/api/sessions/2/report.csv");
+});
+
+test("the report lists its parameters in mission-db order (jsonb reorders keys), unknown ones after, sorted", async () => {
+  const ended = sessionView({ id: 2, ended_at: "2026-11-14T10:10:00Z" });
+  const stat = { avg: 1, max: 1, min: 1, n: 1, unit: "u" };
+  // jsonb sorts keys by length, then bytes: this is the order the server sends
+  const parameters = { zz: stat, o2_pct: stat, legacy: stat, cabin_temp_c: stat, cabin_pressure_kpa: stat };
+  server([ended], { "GET /api/sessions/2/report": () => json(200, sessionReport({ parameters })) });
+  const meta = { unit: "u", type: "float" };
+  mount({ parameters: { cabin_pressure_kpa: meta, cabin_temp_c: meta, o2_pct: meta, absent: meta } } as unknown as MissionDb);
+  await flush();
+  await act(async () => button("Report")!.click());
+  const order = [...host.querySelectorAll(".report tbody th")].map((th) => th.textContent);
+  expect(order).toEqual(["cabin_pressure_kpa", "cabin_temp_c", "o2_pct", "legacy", "zz"]);
 });

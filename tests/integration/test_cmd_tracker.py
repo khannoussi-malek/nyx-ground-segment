@@ -18,7 +18,7 @@ from gs.commanding.tracker import LATE_WINDOW_S, TCACK_COUNT, apply_change, trac
 from gs.common.interfaces.render import schema_sha12
 from gs.common.interfaces.streams import Tc, TcAck
 from gs.common.views import command_views
-from gs.ingest.events import mismatch_key
+from gs.ingest.events import late_key, mismatch_key
 from gs.ingest.liveness import ingest_status
 from gs.ingest.worker import Ctx
 from tests.support.env import until, vid
@@ -280,6 +280,28 @@ async def test_cmd_messages_published() -> None:
         validate_ui_event(m)
 
 
+async def test_late_verification_publishes_link() -> None:  # P-pf9, Task 27b
+    v = vid()
+    sent = now() - timedelta(seconds=8)
+    cmd_id = insert_cmd(
+        v, state="FAILED", sent_at=sent, queued_at=sent - timedelta(seconds=0.1),
+        failure_reason="NOT_RECEIVED", failed_at=sent + timedelta(seconds=5),
+    )  # fmt: skip
+    produce_values(v, {"cabin_temp_c": [22.0] * 5}, last_cmd_id=cmd_id, base=now())  # the echo
+
+    def links() -> list[dict[str, Any]]:
+        msgs = [json.loads(f["data"]) for _, f in stream_entries("ui:events")]
+        return [m for m in msgs if m["kind"] == "link" and m["event"]["key"] == late_key(cmd_id)]
+
+    async with worker([v]):
+        await until(lambda: bool(links()), 5)
+    [m] = links()
+    validate_ui_event(m)
+    assert (m["event"]["kind"], m["event"]["vehicle"]) == ("LATE_VERIFICATION", v)
+    assert m["event"]["details"]["cmd_id"] == str(cmd_id)
+    assert row_of(v, cmd_id)["late_verified_at"] is not None  # committed before the publish
+
+
 async def test_guard_lost_writes_no_audits() -> None:  # a concurrent change won the row
     v = vid()
     cmd_id = insert_cmd(v, state="FAILED", failure_reason="SEND_ERROR", failed_at=now())
@@ -349,7 +371,25 @@ async def test_invalid_tcack_dlq_not_retried() -> None:
     assert await outcome_of(cmd_id) == "UNKNOWN"
 
 
-async def test_tracker_error_never_touches_frames() -> None:
+def drop_trigger(fn: str) -> None:
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
+        c.execute("SET lock_timeout = '5s'")  # a lock wait fails, never hangs the run
+        c.execute(f"DROP TRIGGER {fn} ON commands")
+
+
+@pytest.mark.parametrize("slow_txn", [False, True])
+async def test_tracker_error_never_touches_frames(
+    monkeypatch: pytest.MonkeyPatch, slow_txn: bool
+) -> None:
+    if slow_txn:  # the tracker is mid-transaction most of the time: the DROP below lands in it
+        echoes = tracker_mod._echoes
+
+        async def slow(*a: Any) -> dict[UUID, datetime]:
+            out = await echoes(*a)
+            await asyncio.sleep(0.3)
+            return out
+
+        monkeypatch.setattr(tracker_mod, "_echoes", slow)
     v = vid()
     cmd_id = insert_cmd(v)
     tcack(v, cmd_id, now())
@@ -370,8 +410,9 @@ async def test_tracker_error_never_touches_frames() -> None:
             await asyncio.sleep(0.5)
             assert len(rows("select seq from telemetry where vehicle=%s", v)) > n  # frames commit
             assert not run.done() and row_of(v, cmd_id)["state"] == "SENT" and pending(v) == 1
-            with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
-                c.execute(f"DROP TRIGGER {fn} ON commands")
+            # off the event loop: DROP TRIGGER waits for the worker's open tracker transaction,
+            # which only this loop can finish (a sync call here deadlocked the full run for 2 h)
+            await asyncio.to_thread(drop_trigger, fn)
             await until(lambda: row_of(v, cmd_id)["state"] == "RECEIVED", 5)
             assert pending(v) == 0
     finally:

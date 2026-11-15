@@ -85,10 +85,12 @@ async def test_set_applied_after_two_equal_polls(tmp_path: Path) -> None:  # EX-
     m, v = mission_copy(tmp_path), vid()
     async with worker([v], mission_dir=m), stream_values(v, temp([22.0])):
         await until(lambda: bool(applied(v, SHIPPED.set_sha256)), 5)
-        edit(m / "limits.yaml", "yellow_high: 27.0", "yellow_high: 26.5")  # A'
+        # A': a value no other run stored (atp02's e2e edit stores 26.5 in the shared database)
+        a1 = f"yellow_high: 26.{time.time_ns() % 10**6:06d}"
+        edit(m / "limits.yaml", "yellow_high: 27.0", a1)
         first = set_formula(m)
         await asyncio.sleep(0.3)
-        edit(m / "limits.yaml", "yellow_high: 26.5", "yellow_high: 26.0")  # A'' (polls are 1 s)
+        edit(m / "limits.yaml", a1, "yellow_high: 26.0")  # A'' (polls are 1 s)
         await until(lambda: bool(applied(v, set_formula(m))), 5)
     assert applied_sets(v) == [SHIPPED.set_sha256, set_formula(m)]
     assert rows("select 1 from limits_versions where set_sha256=%s", first) == []

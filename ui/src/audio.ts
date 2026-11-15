@@ -62,17 +62,16 @@ export function toneActive(store: Store): Record<string, string> {
   const link = store.link();
   if (!link.connected) return store.hasSnapshot() ? { "*|NLC": "NLC" } : {}; // before the first snapshot there is nothing to lose
   if (link.broker === "down") return { "*|BROKER": "BROKER" };
-  const events = store.events();
   const active: Record<string, string> = {};
   for (const v of store.vehicles()) {
     if (link.processing[v] === false) {
       active[`${v}|GPD`] = "GPD";
       continue;
     }
-    const lastLink = events.find((e) => e.vehicle === v && (e.kind === "LOS" || e.kind === "AOS"));
+    const lastLink = store.lastLink(v);
     if (lastLink?.kind === "LOS") active[lastLink.key] = "LOS";
     else if (store.vehicle(v)?.frozen) {
-      const f = events.find((e) => e.vehicle === v && e.kind === "FROZEN");
+      const f = store.lastFrozen(v);
       if (f) active[f.key] = "FROZEN";
     }
   }

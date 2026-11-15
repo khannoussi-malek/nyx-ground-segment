@@ -46,8 +46,11 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration", "tests/meta"]
 asyncio_mode = "auto"
-addopts = "-m 'not spike'"  # spikes run on demand: pytest -m spike (D-EXT-18)
-markers = ["spike: exploratory tool trial, not part of the gate"]
+addopts = "-m 'not spike and not after_coverage'"  # on demand: pytest -m spike / -m after_coverage
+markers = [
+    "spike: exploratory tool trial, not part of the gate",
+    "after_coverage: needs coverage.json from the coverage run; gate on from Task 24 (D-ENG-21)",
+]
 pythonpath = ["."]
 
 [dependency-groups]

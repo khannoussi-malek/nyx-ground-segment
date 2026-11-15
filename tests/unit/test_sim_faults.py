@@ -90,6 +90,17 @@ def test_invalid_requests(body: dict[str, object]) -> None:
 
 
 @pytest.mark.parametrize("name", ["pause", "hold_exec"])
-def test_pause_and_hold_exec_not_yet_accepted(name: str) -> None:  # day 3 (D-SIM-06)
+@pytest.mark.parametrize("params", [{}, {"duration_s": 0}, {"n": 1}, {"duration_s": "6"}])
+def test_pause_and_hold_exec_need_a_duration(name: str, params: dict[str, object]) -> None:
     with pytest.raises(ValidationError):
-        FaultRequest.model_validate({"vehicle": V, "fault": name, "params": {"n": 1}})
+        FaultRequest.model_validate({"vehicle": V, "fault": name, "params": params})
+
+
+@pytest.mark.parametrize("name", ["pause", "hold_exec"])
+def test_pause_and_hold_exec_are_timed(name: str) -> None:  # D-SIM-07, day 3
+    b = FaultBoard()
+    b.add(req(name, duration_s=6), 0.0)
+    [a] = b.active(V, 5.9)
+    assert (a.name, a.params) == (name, {"duration_s": 6})
+    assert b.active(V, 6.0) == ()
+    assert apply(P, [a], 1.0, None) == P  # no value effect: they act on the command path

@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { formatAge } from "./format";
 import { Glyph } from "./Glyph";
 import { ParamRow, type ParamView } from "./ParamRow";
@@ -14,11 +15,16 @@ export type VehicleCardProps = {
   /** true once every row's state comes from the engine (day 3); until then no summary is shown,
    *  because "NOMINAL" without alarm data could hide an open RED */
   statesWired?: boolean;
+  /** called after each new frame (seq) was committed: the latency probe waits for the paint from here (D-UI-14) */
+  onCommit?: () => void;
 };
 
 const SUMMARY_GLYPH = { red: "red", yellow: "yellow", muted: "stale", down: "nodata" } as const;
 
 export function VehicleCard(c: VehicleCardProps) {
+  const { onCommit, seq } = c;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- once per frame, not per new callback identity
+  useEffect(() => onCommit?.(), [seq]);
   const summary =
     c.statesWired || c.banner ? vehicleSummary(c.params.map((p) => p.state ?? NOMINAL_OK), c.banner) : null;
   return (

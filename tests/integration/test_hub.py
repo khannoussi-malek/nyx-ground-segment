@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Any
 
 import httpx
+import psycopg
 import pytest
 import redis.exceptions
 
@@ -15,7 +16,7 @@ from gs.ingest.events import mismatch_key
 from tests.integration.conftest import LiveApi
 from tests.support.env import now, until
 from tests.support.ingest import worker
-from tests.support.pg import events_for, open_alarm
+from tests.support.pg import admin_dsn, events_for, open_alarm
 from tests.support.redisx import client, dlq_since, drained, produce_values, xadd_data
 from tests.support.sse import publish_tm, sse
 
@@ -88,6 +89,7 @@ async def test_broker_down_ground_then_up_and_snapshot(
 
     async with sse(live_api) as s:
         await s.next_of("snapshot")
+        assert (await s.next_of("ground"))[1]["broker"] == "up"  # sent on every connect
         monkeypatch.setattr(r, "xread", flaky)
         assert (await s.next_of("ground", timeout=4))[1]["broker"] == "down"
         assert not hub(live_api).broker_up
@@ -97,11 +99,78 @@ async def test_broker_down_ground_then_up_and_snapshot(
     assert hub(live_api).broker_up and fails == [0]
 
 
-async def test_down_broker_on_connect_sends_ground_down(live_api: LiveApi) -> None:
-    hub(live_api).broker_up = False  # as after a failed XREAD
+def failing_xread(
+    live: LiveApi, monkeypatch: pytest.MonkeyPatch, times: int, exc: type[Exception]
+) -> list[int]:
+    """The hub's next `times` XREADs raise `exc`; returns the countdown."""
+    r = live.app.state.redis
+    real, left = r.xread, [times]
+
+    async def flaky(*a: Any, **k: Any) -> Any:
+        if left[0]:
+            left[0] -= 1
+            raise exc("test: injected")
+        return await real(*a, **k)
+
+    monkeypatch.setattr(r, "xread", flaky)
+    return left
+
+
+async def test_down_broker_on_connect_sends_ground_down(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    failing_xread(live_api, monkeypatch, 1000, redis.exceptions.ConnectionError)
+    await until(lambda: not hub(live_api).broker_up, 3)
     async with sse(live_api) as s:
         kinds = [k for k, _ in await s.take(3)]
     assert kinds == ["hello", "snapshot", "ground"] and s.last["broker"] == "down"
+
+
+async def test_connect_always_sends_the_broker_state(live_api: LiveApi) -> None:
+    async with sse(live_api) as s:  # a stale BROKER banner must clear on reconnect
+        kinds = [k for k, _ in await s.take(3)]
+    assert kinds == ["hello", "snapshot", "ground"] and s.last["broker"] == "up"
+
+
+async def test_reader_exception_is_ground_down_then_up(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # Task 11 review: never a silent reader
+    async with sse(live_api) as s:
+        await s.next_of("ground")
+        left = failing_xread(live_api, monkeypatch, 2, RuntimeError)
+        assert (await s.next_of("ground", timeout=4))[1]["broker"] == "down"
+        assert (await s.next_of("ground", timeout=6))[1]["broker"] == "up"
+        await s.next_of("snapshot")
+    assert left == [0] and hub(live_api).up()
+
+
+async def test_stalled_reader_is_ground_down_and_degraded(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    r = live_api.app.state.redis
+
+    async def hang(*a: Any, **k: Any) -> Any:
+        await asyncio.sleep(30)  # a reader that never returns
+
+    async with sse(live_api) as s:
+        await s.next_of("ground")
+        monkeypatch.setattr(r, "xread", hang)
+        assert (await s.next_of("ground", timeout=5))[1]["broker"] == "down"  # STALE_S + 1 hb
+    async with httpx.AsyncClient(base_url=live_api.url) as c:
+        health = (await c.get("/healthz")).json()
+    assert (health["status"], health["checks"]["ui_events"]) == ("degraded", "stalled")
+
+
+async def test_mismatch_event_reaches_the_console(live_api: LiveApi) -> None:
+    key = mismatch_key("ui-event", schema_sha12(UiEvent))  # written once per schema version:
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:  # clear an earlier run's row
+        c.execute("delete from events where key = %s", (key,))
+    async with sse(live_api) as s:
+        await s.next_of("ground")
+        xadd_data("ui:events", '{"kind":"no-such-kind"}')  # no helper selects this kind
+        _, link = await s.next_of("link")
+        await s.next_of("snapshot")  # restores what the dropped entry may have carried
+    assert (link["event"]["key"], link["event"]["kind"]) == (key, "INTERFACE_MISMATCH")
 
 
 async def test_hb_carries_processing(live_api: LiveApi) -> None:  # D-UI-15, D-ING-25

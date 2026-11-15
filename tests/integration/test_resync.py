@@ -9,8 +9,9 @@ import psycopg
 import pytest
 
 from gs.api import events
+from gs.ingest.events import GroundEvent, insert_events
 from tests.integration.conftest import LiveApi
-from tests.support.env import now, until
+from tests.support.env import now, until, vid
 from tests.support.ingest import worker
 from tests.support.pg import app_dsn, events_for, open_alarm
 from tests.support.redisx import alarm_msgs, client, drained, produce_values
@@ -63,20 +64,28 @@ async def test_snapshot_has_alarms_commands_events_frozen(live_api: LiveApi) -> 
     produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 25}, base=base)  # RED, then 2.5 s frozen
     async with worker([v]):
         await until(lambda: drained(v) and bool(events_for(v, "FROZEN")), 5)
-    cmd_id = uuid.uuid4()
+    w = vid()  # a second vehicle: commands and events are the newest overall (R-r, as written)
+    cmds = [uuid.uuid4(), uuid.uuid4()]
     with psycopg.connect(app_dsn("gs")) as c:
-        c.execute(
-            "insert into commands (cmd_id, vehicle, name, args, args_hash, hazardous, issued_by,"
-            " state, queued_at) values (%s, %s, 'vent_cabin', '{\"duration_s\": 2}', 'h', true,"
-            " 'fc1', 'QUEUED', clock_timestamp())",
-            (cmd_id, v),
-        )
+        for cmd_id, veh in zip(cmds, (v, w), strict=True):  # w's is the newer
+            c.execute(
+                "insert into commands (cmd_id, vehicle, name, args, args_hash, hazardous,"
+                " issued_by, state, queued_at) values (%s, %s, 'vent_cabin',"
+                " '{\"duration_s\": 2}', 'h', true, 'fc1', 'QUEUED', clock_timestamp())",
+                (cmd_id, veh),
+            )
+    keys = [f"TEST/{v}/older", f"TEST/{w}/newer"]
+    async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as ac:
+        for key, veh in zip(keys, (v, w), strict=True):
+            await insert_events(ac, [GroundEvent(key, veh, "LOS", None, {})])
     async with sse(live_api) as s:
         _, snap = await s.next_of("snapshot")
     validate("snapshot", snap)
     a = open_alarm(v, TEMP)
     assert a is not None and [x["alarm_id"] for x in snap["alarms"]] == [str(a["alarm_id"])]
-    assert [c["cmd_id"] for c in snap["commands"]] == [str(cmd_id)]
+    assert [c["cmd_id"] for c in snap["commands"][:2]] == [str(cmds[1]), str(cmds[0])]
+    assert [e["key"] for e in snap["events"][:2]] == [keys[1], keys[0]]  # newest first
+    assert len(snap["commands"]) <= 50 and len(snap["events"]) <= 50
     kinds = {e["kind"] for e in snap["events"] if e["vehicle"] == v}
     assert {"FROZEN", "LIMITS_APPLIED"} <= kinds
     tm = snap["vehicles"][v]

@@ -9,7 +9,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import Request
 from fastapi.responses import StreamingResponse
@@ -21,6 +21,10 @@ from gs.api.hub import build_snapshot as build_snapshot  # re-exported: tests pa
 from gs.common.interfaces import Ground, Hb, Hello
 
 SSE_RETRY_MS = 1000
+
+
+def _ground(hub: Hub) -> Literal["up", "down"]:
+    return "up" if hub.up() else "down"
 
 
 async def _stream(request: Request) -> AsyncIterator[bytes]:
@@ -37,8 +41,9 @@ async def _stream(request: Request) -> AsyncIterator[bytes]:
                 conn, deps.vehicles(request), deps.mission(request).param_names, datetime.now(UTC)
             )
         yield format_sse("snapshot", snap)
-        if not hub.broker_up:
-            yield format_sse("ground", Ground(broker="down"))
+        # always the broker state: the console keeps it across reconnects (Task 11 review)
+        shown = _ground(hub)
+        yield format_sse("ground", Ground(broker=shown))
         stop = asyncio.ensure_future(st.shutdown.wait())
         closed = asyncio.ensure_future(client.closed.wait())  # overflow: end, the client reconnects
         get = asyncio.ensure_future(client.queue.get())
@@ -52,10 +57,16 @@ async def _stream(request: Request) -> AsyncIterator[bytes]:
             if stop.done() or closed.done():
                 break
             if get.done():
-                yield get.result()
+                frame = get.result()
+                if frame.startswith(b"event: ground\n"):  # the hub's own transition
+                    shown = "up" if b'"broker":"up"' in frame else "down"
+                yield frame
                 get = waits[2] = asyncio.ensure_future(client.queue.get())
             if time.monotonic() - last_hb >= HB_S:
                 last_hb = time.monotonic()
+                if (now := _ground(hub)) != shown:  # a hung reader broadcasts nothing itself
+                    shown = now
+                    yield format_sse("ground", Ground(broker=now))
                 hb = Hb(server_ms=ms(datetime.now(UTC)), processing=dict(hub.processing))
                 yield format_sse("hb", hb)
     finally:  # also runs when the client disconnects (the response task is cancelled)

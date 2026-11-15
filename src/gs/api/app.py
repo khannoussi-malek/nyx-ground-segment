@@ -82,8 +82,11 @@ async def healthz(request: Request) -> Response:
             checks[name] = "down"
     up = all(v == "ok" for v in checks.values())
     status: Literal["ok", "degraded", "down"] = "ok" if up else "down"
-    if up and request.app.state.hub.degraded:  # a ui:events entry was rejected (D-ING-27)
+    hub = request.app.state.hub
+    if up and hub.degraded:  # a ui:events entry was rejected (D-ING-27)
         status, checks["ui_events"] = "degraded", "degraded"
+    elif up and not hub.up():  # the reader failed or hangs: no deltas reach any console
+        status, checks["ui_events"] = "degraded", "stalled"
     body = Health(status=status, checks=checks)
     return JSONResponse(body.model_dump(), status_code=200 if up else 503)
 
@@ -130,9 +133,11 @@ def create_app(settings: Settings) -> FastAPI:
             yield
         finally:
             app.state.shutdown.set()
-            await reader
-            await pool.close()
-            await app.state.redis.aclose()
+            try:
+                await reader
+            finally:  # a reader error at shutdown must not leak the pool or the client
+                await pool.close()
+                await app.state.redis.aclose()
 
     app = FastAPI(lifespan=lifespan)
     app.state.shutdown = asyncio.Event()  # set by GracefulServer.handle_exit and on lifespan exit

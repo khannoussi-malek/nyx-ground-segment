@@ -148,18 +148,20 @@ def to_tm(frame: FrameHeader, params: Sequence[str], frozen: bool = False) -> Tm
     )
 
 
+def to_link(e: GroundEvent) -> Link:
+    t = None if e.t_onboard is None else e.t_onboard.astimezone(UTC)
+    details = json.loads(details_json(e.details))  # times as iso_z, UUIDs as text
+    return Link(event=EventView(key=e.key, vehicle=e.vehicle, kind=e.kind, t_onboard=t,
+                                details=details))  # fmt: skip
+
+
 def _links(events: Sequence[GroundEvent], vs: VehicleState) -> list[Link]:
     """One `link` per committed ground event (clients dedupe by key), each logged with vehicle
     and the tracker's last seq (ENG-05, P-pf9)."""
     seq = None if vs.seq is None else vs.seq.last_seq
-    out = []
     for e in events:
         log.info("%s %s", e.kind, e.key, extra={"vehicle": e.vehicle, "seq": seq})
-        t = None if e.t_onboard is None else e.t_onboard.astimezone(UTC)
-        details = json.loads(details_json(e.details))  # times as iso_z, UUIDs as text
-        view = EventView(key=e.key, vehicle=e.vehicle, kind=e.kind, t_onboard=t, details=details)
-        out.append(Link(event=view))
-    return out
+    return [to_link(e) for e in events]
 
 
 def _shown_now(msgs: Sequence[UiMessage], vs: VehicleState) -> set[UUID]:

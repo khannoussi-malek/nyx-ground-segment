@@ -27,11 +27,12 @@ from gs.common.interfaces import Ground, Snapshot, Tm, UiEvent
 from gs.common.interfaces.base import StrictModel
 from gs.common.interfaces.dlq import schema_reject
 from gs.common.interfaces.render import schema_sha12
-from gs.common.interfaces.sse import AlarmView, CommandView, EventView
+from gs.common.interfaces.sse import AlarmView
 from gs.common.interfaces.ui_event import Resync
 from gs.common.uievents import UI_EVENTS
 from gs.common.views import alarm_views, command_views, event_views
 from gs.ingest.events import GroundEvent, insert_events, mismatch_key
+from gs.ingest.worker import to_link
 
 CLIENT_QUEUE = 1000  # SSE frames buffered per client before it is closed
 RETRY_S = 1.0  # between XREAD attempts while the broker is down
@@ -39,6 +40,8 @@ HB_S = 1.0  # hb:veh:<v> poll period (the SSE hb carries the result)
 SNAPSHOT_COMMANDS = 50  # per vehicle (ruling R-r)
 SNAPSHOT_EVENTS = 50
 BLOCK_MS = 1000
+STALE_S = 3.0  # no reader pass for this long: it hangs; consoles get ground{down}
+DB_WAIT_S = 2.0  # pool wait in the reader, so a database stall can't hold up the deltas
 DLQ = "tm:dlq"
 CONSUMER = "api"
 log = logging.getLogger(__name__)
@@ -83,21 +86,18 @@ async def _last_values(
 async def build_snapshot(
     conn: psycopg.AsyncConnection, vehicles: Sequence[str], params: Sequence[str], now: datetime
 ) -> Snapshot:
-    """Last values (with FROZEN), open alarms, the newest commands and events of each vehicle
-    (ground events once). The one snapshot function for connect, reconnect, resync, broker up
-    and overflow (D-UI-02)."""
+    """Last values (with FROZEN), the open alarms of each vehicle, and the newest
+    SNAPSHOT_COMMANDS commands and SNAPSHOT_EVENTS events overall, newest first (ruling R-r;
+    the console keeps the order). The one snapshot function for connect, reconnect, resync,
+    broker up and overflow (D-UI-02)."""
     alarms: list[AlarmView] = []
-    commands: list[CommandView] = []
-    events: dict[str, EventView] = {}
-    for v in vehicles:  # ponytail: the view loaders filter one vehicle; two vehicles = 2 passes
+    for v in vehicles:
         alarms += await alarm_views(conn, vehicle=v)
-        commands += await command_views(conn, vehicle=v, limit=SNAPSHOT_COMMANDS)
-        events |= {e.key: e for e in await event_views(conn, vehicle=v, limit=SNAPSHOT_EVENTS)}
     return Snapshot(
         vehicles=await _last_values(conn, vehicles, params, now),
         alarms=alarms,
-        commands=commands,
-        events=list(events.values()),
+        commands=await command_views(conn, limit=SNAPSHOT_COMMANDS),
+        events=await event_views(conn, limit=SNAPSHOT_EVENTS),
     )
 
 
@@ -122,6 +122,11 @@ class Hub:
         self.broker_up = True
         self.processing: dict[str, bool] = {v: False for v in self.vehicles}
         self.degraded = False  # an entry failed the ui-event model; until restart (D-ING-27)
+        self.alive_at = time.monotonic()  # the reader's last pass
+
+    def up(self) -> bool:
+        """Deltas flow: the broker answers and the reader is not hung."""
+        return self.broker_up and time.monotonic() - self.alive_at < STALE_S
 
     def subscribe(self) -> Client:
         c = Client(asyncio.Queue(self.queue_size))
@@ -141,47 +146,68 @@ class Hub:
                 self.clients.discard(c)
 
     async def snapshot(self) -> Snapshot:
-        async with self.pool.connection() as conn:
+        async with self.pool.connection(timeout=DB_WAIT_S) as conn:
             return await build_snapshot(conn, self.vehicles, self.params(), datetime.now(UTC))
 
-    async def _broadcast_snapshot(self) -> None:
+    async def _snapshot_frame(self) -> bytes | None:
+        """None when the database is unreachable (the clients keep their deltas); any other
+        error propagates to run()'s catch-all."""
         try:
-            snap = await self.snapshot()
-        except (psycopg.Error, PoolTimeout) as e:  # the clients keep their deltas
+            return format_sse("snapshot", await self.snapshot())
+        except (psycopg.Error, PoolTimeout) as e:
             log.warning("snapshot for broadcast failed: %s: %s", type(e).__name__, e)
+            return None
+
+    async def _broadcast_snapshot(self) -> None:
+        if (frame := await self._snapshot_frame()) is not None:
+            self.broadcast(frame)
+
+    def _down(self, e: Exception) -> None:
+        if not self.broker_up:
             return
-        self.broadcast(format_sse("snapshot", snap))
+        self.broker_up = False
+        if isinstance(e, redis.exceptions.RedisError):
+            log.warning("ui:events unreachable (%s: %s)", type(e).__name__, e)
+        else:  # a bug in the reader: the consoles must see ground down, not silence (R2-12)
+            log.exception("ui:events reader failed; retrying")
+        self.broadcast(format_sse("ground", Ground(broker="down")))
 
     async def run(self, stop: asyncio.Event) -> None:
         last_id: str | None = None  # None: take the tail first
         next_poll = 0.0
         while not stop.is_set():
+            self.alive_at = time.monotonic()
             try:
                 if last_id is None:
                     tail: Any = await self.redis.xrevrange(UI_EVENTS, count=1)
                     last_id = str(tail[0][0]) if tail else "0-0"
+                if time.monotonic() >= next_poll:  # also before the first XREAD
+                    next_poll = time.monotonic() + HB_S
+                    await self._poll_processing()
                 read = await self._xread(last_id, stop)
                 if read is None:
                     return
                 if not self.broker_up:
-                    log.info("ui:events reachable again")
-                    self.broker_up = True
-                    self.broadcast(format_sse("ground", Ground(broker="up")))
-                    await self._broadcast_snapshot()
+                    await self._recovered()
                 for _, entries in read:
                     for entry_id, fields in entries:
                         last_id = entry_id
                         await self._handle(entry_id, fields.get("data", ""))
-                if time.monotonic() >= next_poll:
-                    next_poll = time.monotonic() + HB_S
-                    await self._poll_processing()
-            except redis.exceptions.RedisError as e:
-                if self.broker_up:
-                    log.warning("ui:events unreachable (%s: %s)", type(e).__name__, e)
-                    self.broker_up = False
-                    self.broadcast(format_sse("ground", Ground(broker="down")))
+            except Exception as e:  # noqa: BLE001  never a silent reader (Task 11 review)
+                self._down(e)
                 with contextlib.suppress(TimeoutError):
                     await asyncio.wait_for(stop.wait(), RETRY_S)
+
+    async def _recovered(self) -> None:
+        """ground{up} with fresh processing, then a snapshot (deltas may have been missed); the
+        snapshot is built first, so one that keeps failing leaves the broker down, not flapping."""
+        frame = await self._snapshot_frame()
+        await self._poll_processing()
+        log.info("ui:events reachable again")
+        self.broker_up = True
+        self.broadcast(format_sse("ground", Ground(broker="up")))
+        if frame is not None:
+            self.broadcast(frame)
 
     async def _poll_processing(self) -> None:
         """hb:veh:<v> set by the owner's read loop (D-ING-25): a healthy owner exists."""
@@ -218,14 +244,18 @@ class Hub:
         """D-ING-27 for ui:events: DLQ record, one INTERFACE_MISMATCH event per schema version,
         /healthz degraded; the stream carries on. XREAD has no ack: the entry is skipped."""
         log.warning("ui:events entry %s fails the ui-event model; to %s: %s", entry_id, DLQ, detail)
-        self.degraded = True
-        rec = schema_reject(raw, UI_EVENTS, entry_id, detail, datetime.now(UTC))
-        await self.redis.xadd(DLQ, {"data": rec.model_dump_json()})
+        self.degraded = True  # first: a DLQ failure below still leaves health and the event
         key = mismatch_key("ui-event", schema_sha12(UiEvent))
         details = {"stream": UI_EVENTS, "consumer": CONSUMER, "detail": detail}
         ev = GroundEvent(key, None, "INTERFACE_MISMATCH", None, details)
+        inserted = 0
         try:
-            async with self.pool.connection() as conn, conn.transaction():
-                await insert_events(conn, [ev])
+            async with self.pool.connection(timeout=DB_WAIT_S) as conn, conn.transaction():
+                inserted = await insert_events(conn, [ev])
         except (psycopg.Error, PoolTimeout) as e:
             log.warning("INTERFACE_MISMATCH not recorded: %s: %s", type(e).__name__, e)
+        if inserted:  # one link per committed ground event (P-pf9), and a snapshot that
+            self.broadcast(format_sse("link", to_link(ev)))  # restores what was dropped
+            await self._broadcast_snapshot()
+        rec = schema_reject(raw, UI_EVENTS, entry_id, detail, datetime.now(UTC))
+        await self.redis.xadd(DLQ, {"data": rec.model_dump_json()})

@@ -264,6 +264,16 @@ async def test_nul_or_huge_user_is_422_not_503(lone: tuple[httpx.AsyncClient, st
         assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR")
 
 
+async def test_nul_in_an_extra_key_is_422_not_500(
+    lone: tuple[httpx.AsyncClient, str, str],
+) -> None:  # review of Task 27b: error bodies echo user text and must not refuse NUL
+    c, _, _ = lone
+    body = {"user": "a", "password": "b", "\x00": 1}
+    r = await c.post("/api/login", json=body, headers=H)
+    assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR"), r.text
+    assert "\x00" in r.json()["message"]  # the server's own words, NUL included
+
+
 async def test_no_session_without_audit_row(
     lone: tuple[httpx.AsyncClient, str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -285,13 +285,16 @@ test("the ACK sends seen_key = the alarm's last.key shown when the dialog opened
   expect(bodies(f)[0]).toMatchObject({ note: "seen", seen_key: "k1" });
 });
 
-test("seen_key is captured at open: a newer alarm prop at submit is not re-read, a retry resends the same key and id", async () => {
+test("seen_key is captured at open: neither a newer alarm prop nor the live alarm is read at submit, a retry resends the same key and id", async () => {
   const f = stubAck(503, { error: "BROKER_DOWN", message: "try again" });
-  const render = (key: string) =>
-    act(() => root.render(<AckDialog alarm={alarmView({ last: { ...a1.last, key } })} current={a1} live mission={MDB} opener={null} onDone={() => {}} onCancel={() => {}} onChanged={() => {}} />));
+  const render = (key: string) => {
+    const a = alarmView({ last: { ...a1.last, key } });
+    // onChanged a no-op: the dialog stays open, so a submit that read either prop would send k2
+    act(() => root.render(<AckDialog alarm={a} current={a} live mission={MDB} opener={null} onDone={() => {}} onCancel={() => {}} onChanged={() => {}} />));
+  };
   render("k1");
   typeNote("seen");
-  render("k2"); // the live alarm moved on while the dialog stayed open
+  render("k2"); // the alarm prop and the live alarm both moved on while the dialog stayed open
   await act(async () => button("ACK")!.click());
   await act(async () => button("ACK")!.click()); // retry
   const [first, retry] = bodies(f);

@@ -673,3 +673,9 @@ async def test_text_postgres_rejects_is_422_before_any_side_effect(api: Api) -> 
     assert client("admin").keys(f"cmdlock:{api.v}:*") == []
     ok = await api.fc1.post("/api/commands", json={**body, "reason": REASON})
     assert ok.status_code == 202, ok.text  # the token was not spent by the refused body
+
+
+async def test_nul_arg_name_is_422_not_500(api: Api) -> None:  # review of Task 27b
+    r = await api.fc1.post("/api/commands", json={**api.iso(), "args": {"\x00": 1}})
+    assert (r.status_code, r.json()["error"]) == (422, "INVALID_ARGS"), r.text
+    assert commands_for(api.v) == [] and api.tc() == []

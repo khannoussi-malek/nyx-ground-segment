@@ -131,13 +131,16 @@ _Z = "%Y-%m-%dT%H:%M:%SZ"
 
 def next_ta9_window(hours: int) -> tuple[datetime, datetime]:
     """`hours` whole UTC hours of NYX-TA9 history that nothing has covered yet: from six days ago,
-    or the hour after the last stored TA9 frame. A backfill behind earlier TA9 frames would be
+    or the hour after the last TA9 frame, stored or archived. A backfill behind earlier TA9 frames would be
     DUP_OR_LATE (R2-14), so a used-up stack cannot be backfilled again."""
     now = datetime.now(UTC)
     start = hour_of(now - timedelta(days=6))
-    last = rows("select max(t_onboard) as t from telemetry where vehicle=%s", TA9)[0]["t"]
-    if last is not None:
-        start = max(start, hour_of(last) + HOUR)
+    # hot rows are deleted after the retention, so the archive rows count as history too
+    last_hot = rows("select max(t_onboard) as t from telemetry where vehicle=%s", TA9)[0]["t"]
+    last_arch = rows("select max(hour) as h from archive_object where vehicle=%s", TA9)[0]["h"]
+    for t in (last_hot, last_arch):
+        if t is not None:
+            start = max(start, hour_of(t) + HOUR)
     end = start + hours * HOUR
     if end > now - HOUR:
         raise RuntimeError(

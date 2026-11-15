@@ -10,8 +10,9 @@ from datetime import datetime
 import pytest
 
 from gs.archiver.hours import object_key
+from gs.common.hooks import CRASH_CODE
 from tests.support.archive import TA9, archive_rows, backfill_ta9, next_ta9_window, stored_in
-from tests.support.compose import compose, recreate, restart_count
+from tests.support.compose import compose, container_exit_code, recreate, restart_count
 from tests.support.env import wait_until
 from tests.support.s3 import inspect_health, s3_client
 
@@ -32,27 +33,34 @@ def _backfill_one_hour() -> datetime:
     return t_from
 
 
+def _docker_update_restart(policy: str) -> None:
+    cid = compose("ps", "-a", "-q", "archiver").stdout.strip()
+    subprocess.run(
+        ["docker", "update", f"--restart={policy}", cid], check=True, capture_output=True
+    )
+
+
 @pytest.mark.parametrize("point", ["archive:after_put", "archive:after_reread"])
-def test_kill_mid_upload_then_resume(point: str) -> None:
+def test_kill_mid_upload_then_resume(point: str, monkeypatch: pytest.MonkeyPatch) -> None:
     hour = _backfill_one_hour()
-    # recreate without --wait: the hook kills the first pass; retention 1000 h keeps the hot rows
-    recreate(
-        ["archiver"],
-        {"GS_TEST_HOOKS": "1", "ARCHIVER_CRASH_AT": point, "ARCHIVE_LOOP_S": "2",
-         "HOT_RETENTION_H": "1000"},
-        wait=False,
-    )  # fmt: skip
-    wait_until(lambda: restart_count("archiver") >= 1, 120)  # the new container died on the hook
-    # the crash is before the row insert: nothing is recorded for the hour at that moment
-    # (the restarted process needs a second to start, connect and rebuild the hour)
-    assert hour not in [r["hour"] for r in archive_rows(TA9)]
+    for k, v in {"GS_TEST_HOOKS": "1", "ARCHIVER_CRASH_AT": point, "ARCHIVE_LOOP_S": "2",
+                 "HOT_RETENTION_H": "1000"}.items():  # fmt: skip
+        monkeypatch.setenv(k, v)  # retention 1000 h keeps the hot rows
+    compose("up", "--no-start", "--no-deps", "archiver")  # a new container with the hook armed
+    _docker_update_restart("no")  # stay down once it dies: "while it is down" is then exact
+    compose("start", "archiver")
+    wait_until(lambda: container_exit_code("archiver") == CRASH_CODE, 120)  # it died on the hook
+    assert hour not in [r["hour"] for r in archive_rows(TA9)]  # killed before the row insert
+    assert stored_in(TA9, hour) == HOURLY_FRAMES  # and the hot rows are all there
+    _docker_update_restart("unless-stopped")
+    compose("start", "archiver")  # the hook fired once per container (marker file): no second kill
     wait_until(lambda: hour in [r["hour"] for r in archive_rows(TA9)], 180)  # resumed
     (row,) = [r for r in archive_rows(TA9) if r["hour"] == hour]
     data = s3_client("root").get_object("archive", object_key(TA9, hour)).read()
     assert hashlib.sha256(data).hexdigest() == row["sha256"]  # the object is the recorded one
     assert row["rows"] == HOURLY_FRAMES and row["version"] == 0
     assert stored_in(TA9, hour) == HOURLY_FRAMES  # hot rows intact
-    assert restart_count("archiver") == 1  # killed once (the marker), not in a crash loop
+    assert restart_count("archiver") == 0  # no crash loop after the resume
 
 
 def test_backfill_cli_in_compose() -> None:

@@ -42,18 +42,21 @@ def _rows(md: str) -> list[Row]:
         if len(cells) < 7 or cells[3] not in ("M", "S"):
             continue
         refs: list[Ref] = []
-        last = ""
-        for span in re.findall(r"`([^`]*)`", cells[5]):
-            for r in REF.finditer(span):
-                if r["path"]:
-                    last = (
-                        r["path"]
-                        if r["path"].startswith(("tests/", "e2e", "ui", "perf", "scripts"))
-                        else "tests/" + r["path"]
-                    )
-                    refs.append(Ref(last, r["name"]))
-                elif last:
-                    refs.append(Ref(last, r["bare"]))
+        # a bare ::name continues the previous file, but "planned, ...:" starts a new clause and
+        # must not borrow the file named before it (that ref then names no file and is skipped)
+        for clause in re.split(r"(?i)planned[^`]*:", cells[5]):
+            last = ""
+            for span in re.findall(r"`([^`]*)`", clause):
+                for r in REF.finditer(span):
+                    if r["path"]:
+                        last = (
+                            r["path"]
+                            if r["path"].startswith(("tests/", "e2e", "ui", "perf", "scripts"))
+                            else "tests/" + r["path"]
+                        )
+                        refs.append(Ref(last, r["name"]))
+                    elif last:
+                        refs.append(Ref(last, r["bare"]))
         out.append(Row(m["id"], cells[2], cells[5], refs))
     return out
 
@@ -70,11 +73,12 @@ def _defines(text: str, name: str) -> bool:
 
 
 def missing(refs: list[Ref], root: Path = REPO) -> list[str]:
-    out = []
+    out: list[str] = []
     for r in dict.fromkeys(refs):
         f = root / r.path
         if not f.is_file():
-            out.append(f"{r.path}: file absent")
+            if (line := f"{r.path}: file absent") not in out:
+                out.append(line)
         elif r.name and not _defines(f.read_text(), r.name):
             out.append(f"{r.path}::{r.name}: not defined")
     return out
@@ -89,12 +93,13 @@ FIXTURE = """\
 | A-02 | x | I | S | D | Inspection of the README | I | |
 | A-03 | x | T | E | D | `unit/test_skip.py::test_x` | E | |
 | A-04 | x | T | M | D | `integration/test_b.py::test_b` and `::test_c` | 1 | |
+| A-05 | x | T | M | D | `unit/test_a.py::test_one`; planned, with Task 9: `::test_late` | 1 | |
 """
 
 
 def test_trace_parser_on_a_fixture_table() -> None:
     ev = evidence(FIXTURE)
-    assert sorted(ev) == ["A-01", "A-02", "A-04"]  # E rows are not part of the 47
+    assert sorted(ev) == ["A-01", "A-02", "A-04", "A-05"]  # E rows are not part of the 47
     assert [(r.path, r.name) for r in ev["A-01"]] == [
         ("tests/unit/test_a.py", "test_one"),
         ("tests/unit/test_a.py", "test_two"),
@@ -106,6 +111,17 @@ def test_trace_parser_on_a_fixture_table() -> None:
         ("tests/integration/test_b.py", "test_b"),
         ("tests/integration/test_b.py", "test_c"),
     ]
+
+
+def test_a_planned_marker_does_not_borrow_the_previous_file() -> None:
+    assert [(r.path, r.name) for r in evidence(FIXTURE)["A-05"]] == [
+        ("tests/unit/test_a.py", "test_one")
+    ]
+
+
+def test_missing_lists_an_absent_file_once(tmp_path: Path) -> None:
+    refs = [Ref("tests/unit/nope.py", "a"), Ref("tests/unit/nope.py", "b")]
+    assert missing(refs, tmp_path) == ["tests/unit/nope.py: file absent"]
 
 
 def test_missing_finds_absent_file_and_absent_name(tmp_path: Path) -> None:

@@ -43,3 +43,46 @@ def test_main_reports_bad_subject_in_a_real_repo(
     assert c.main("HEAD~1") == 0
     run("commit", "-q", "--allow-empty", "-m", "update stuff")
     assert c.main("HEAD~2") == 1
+
+
+def _repo(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *messages: str) -> None:
+    def run(*a: str) -> None:
+        subprocess.run(
+            ["git", "-c", "user.name=t", "-c", "user.email=t@t", *a],
+            cwd=tmp_path,
+            check=True,
+            capture_output=True,
+        )
+
+    run("init", "-q", "-b", "main")
+    run("commit", "-q", "--allow-empty", "-m", "feat: base")
+    for m in messages:
+        run("commit", "-q", "--allow-empty", "-m", m)
+    monkeypatch.chdir(tmp_path)
+
+
+def test_a_coauthor_trailer_fails_in_a_real_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repo(tmp_path, monkeypatch, "feat: ok\n\nCo-Authored-By: Someone <a@b.c>")
+    assert c.main("HEAD~1") == 1
+
+
+def test_ai_attribution_fails_in_a_real_repo(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repo(tmp_path, monkeypatch, "feat: ok\n\nGenerated with a tool")
+    assert c.main("HEAD~1") == 1
+
+
+def test_mentioning_claude_fails_and_a_clean_body_passes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _repo(tmp_path, monkeypatch, "fix: handle the case\n\nA normal body line.")
+    assert c.main("HEAD~1") == 0
+    subprocess.run(
+        ["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty",
+         "-m", "docs: x\n\nwritten by Claude"],
+        cwd=tmp_path, check=True, capture_output=True,
+    )  # fmt: skip
+    assert c.main("HEAD~2") == 1

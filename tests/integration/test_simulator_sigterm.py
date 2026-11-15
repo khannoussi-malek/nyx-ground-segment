@@ -26,6 +26,7 @@ def test_sigterm_exits_zero() -> None:
         "SIM_SEED": "1",
         "BIND_HOST": "127.0.0.1",
         "HEALTH_PORT": str(port),
+        "MISSION_DB": str(REPO / "mission"),
     }
     p = subprocess.Popen([sys.executable, "-c", CODE], cwd=REPO, env=proc_env)
     try:

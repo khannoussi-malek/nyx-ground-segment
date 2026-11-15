@@ -2,10 +2,11 @@ import json
 import random
 import statistics
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 
-from gs.simulator.frames import NOMINALS, make_frame, next_seq
+from gs.simulator.frames import NOMINALS, build_frame, make_frame, next_seq
 from tests.support.sim import run_ticks_with_fake_clock
 
 T = datetime(2026, 11, 14, 10, tzinfo=UTC)
@@ -21,6 +22,12 @@ def test_frame_shape() -> None:
     assert set(d) == {"vehicle", "seq", "t_onboard", "mode", "last_cmd_id", *NOMINALS}
     got = (d["seq"], d["t_onboard"], d["mode"], d["last_cmd_id"])
     assert got == (7, "2026-11-14T10:00:00.000000Z", "TEST", None)
+
+
+def test_last_cmd_id_is_carried() -> None:
+    cid = UUID("11111111-1111-4111-8111-111111111111")
+    assert json.loads(build_frame("NYX-TA1", 1, T, {}, cid))["last_cmd_id"] == str(cid)
+    assert json.loads(build_frame("NYX-TA1", 1, T, {}))["last_cmd_id"] is None
 
 
 def test_same_seed_same_values() -> None:

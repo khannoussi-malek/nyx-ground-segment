@@ -71,7 +71,8 @@ services:
     <<: *app
     command: ["gs-sim"]
     environment: {REDIS_URL: "redis://sim:${REDIS_SIM_PW}@redis:6379/0", SIM_VEHICLES: "NYX-TA1,NYX-TA2",
-                  SIM_SEED: "1", BIND_HOST: "0.0.0.0", HEALTH_PORT: "8081"}
+                  SIM_SEED: "1", BIND_HOST: "0.0.0.0", HEALTH_PORT: "8081", MISSION_DB: /mission}
+    volumes: ["./mission:/mission:ro"]
     ports: ["127.0.0.1:${SIM_HOST_PORT:-8081}:8081"]
     depends_on: {redis: {condition: service_healthy}}
     healthcheck:

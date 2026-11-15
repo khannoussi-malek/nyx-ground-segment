@@ -1,11 +1,35 @@
 from gs.common.interfaces.base import U32, Mode, StrictModel, UtcTime, VehicleId
 from gs.common.interfaces.dlq import DlqReason, DlqRecord
 from gs.common.interfaces.frame import FrameHeader, build_frame_model
-from gs.common.interfaces.sse import Hb, Hello, Snapshot, Tm
+from gs.common.interfaces.sse import Alarm, Cmd, Ground, Hb, Hello, Link, Snapshot, Tm
+from gs.common.interfaces.streams import Tc, TcAck
+from gs.common.interfaces.ui_event import Resync, UiEvent
 
-INTERFACE_MODELS = (FrameHeader, DlqRecord, Hello, Snapshot, Tm, Hb)
+INTERFACE_MODELS = (
+    FrameHeader,
+    DlqRecord,
+    Hello,
+    Snapshot,
+    Tm,
+    Hb,
+    Tc,
+    TcAck,
+    UiEvent,
+    Alarm,
+    Cmd,
+    Link,
+    Ground,
+)
 
 __all__ = [
+    "Alarm",
+    "Cmd",
+    "Ground",
+    "Link",
+    "Resync",
+    "Tc",
+    "TcAck",
+    "UiEvent",
     "INTERFACE_MODELS",
     "U32",
     "DlqReason",

@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from gs.api.app import create_app
 from gs.api.settings import Settings
 from gs.common.config import require, require_int
+from gs.common.logs import setup_logging
 
 
 class GracefulServer(uvicorn.Server):
@@ -23,11 +24,12 @@ class GracefulServer(uvicorn.Server):
 
 def build_server(app: FastAPI, host: str, port: int) -> GracefulServer:
     return GracefulServer(
-        uvicorn.Config(app, host=host, port=port, timeout_graceful_shutdown=1, log_level="info")
+        uvicorn.Config(app, host=host, port=port, timeout_graceful_shutdown=1, log_config=None)
     )
 
 
 def main() -> None:
+    setup_logging("gs-api")
     server = build_server(
         create_app(Settings.from_env()), require("BIND_HOST"), require_int("API_PORT")
     )

@@ -51,17 +51,26 @@ def watchdog_timeout(
 
 
 def ingest_status(
-    seen: Mapping[str, float], owned: Collection[str], now: float, used_memory: int | None
+    seen: Mapping[str, float],
+    owned: Collection[str],
+    now: float,
+    used_memory: int | None,
+    counters: Mapping[str, int],
 ) -> tuple[State, dict[str, object]]:
+    """down: an owned loop is stale; degraded: Redis unknown or a stream failed its schema
+    since start (D-ING-27); tracker errors are reported, not judged (D-CMD-05)."""
     ages = {v: round(now - seen[v], 1) if v in seen else None for v in sorted(owned)}
+    mismatch = counters.get("interface_mismatch", 0)
     checks: dict[str, object] = {
         "owned": sorted(owned),
         "loop_age_s": ages,
         "redis_used_memory": used_memory,
+        "cmd_tracker_errors": counters.get("cmd_tracker_errors", 0),
+        "interface_mismatch": mismatch,
     }
     if any(a is None or a >= STALE_S for a in ages.values()):
         return "down", checks
-    return ("degraded" if used_memory is None else "ok"), checks
+    return ("degraded" if used_memory is None or mismatch > 0 else "ok"), checks
 
 
 async def _consumer_idle(ctx: Ctx, vehicle: str, consumer: str) -> int | None:

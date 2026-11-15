@@ -25,7 +25,7 @@ from tests.support.ingest import ensure_set, worker
 from tests.support.mission import MISSION_DIR
 from tests.support.missionfiles import edit, mission_copy
 from tests.support.pg import admin_dsn, alarm_events_for, app_dsn, events_for, stored
-from tests.support.redisx import dlq_entries, drained, pending, xadd_raw
+from tests.support.redisx import dlq_entries, drained, pending, produce_values, xadd_raw
 
 TEMP = "cabin_temp_c"
 MISSION = load_dir(MISSION_DIR)
@@ -52,10 +52,6 @@ def put(v: str, base: datetime, frames: Sequence[Frame]) -> None:
         xadd_raw(v, build_frame(v, seq, base + timedelta(seconds=t), vals))
 
 
-def produce_values(v: str, base: datetime, temps: Sequence[float], start_seq: int = 0) -> None:
-    put(v, base, frames_of(temps, start_seq))
-
-
 def alarm_row(v: str) -> dict[str, Any]:
     with psycopg.connect(app_dsn("gs"), row_factory=dict_row) as c:
         (row,) = c.execute("select * from alarms where vehicle=%s", (v,)).fetchall()
@@ -78,7 +74,7 @@ async def drain(v: str, consumer: str = "ingest-test", mission_dir: Path = MISSI
 
 async def test_red_temp_raises_with_file_hash() -> None:  # ALM-01/06/08 row content
     v, base = vid(), now() - timedelta(minutes=1)
-    produce_values(v, base, [22.0] * 5 + [31.0] * 5)
+    produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5}, base=base)
     async with worker([v]):
         await until(lambda: len(alarm_events_for(v)) == 1, 5)
     (row,) = alarm_events_for(v)
@@ -96,7 +92,7 @@ async def test_red_temp_raises_with_file_hash() -> None:  # ALM-01/06/08 row con
 
 async def test_redelivery_raises_nothing_twice(tmp_path: Path) -> None:  # D-ING-17, ING-07
     v, base = vid(), now() - timedelta(minutes=1)
-    produce_values(v, base, [22.0] * 5 + [31.0] * 5)
+    produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5}, base=base)
     hooks = Hooks(crash_at="after_commit_before_publish", marker_dir=tmp_path, exit=crash)
     with pytest.raises(Crash):  # committed, never acked
         async with worker([v], hooks=hooks) as w:
@@ -108,9 +104,9 @@ async def test_redelivery_raises_nothing_twice(tmp_path: Path) -> None:  # D-ING
 
 async def test_alarm_state_survives_restart() -> None:  # snapshot: no second RAISE, then RTN
     v, base = vid(), now() - timedelta(minutes=1)
-    produce_values(v, base, [22.0] * 5 + [31.0] * 5)
+    produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5}, base=base)
     await drain(v)
-    produce_values(v, base, [31.0, 22.0, 22.0, 22.0], start_seq=10)
+    produce_values(v, {TEMP: [31.0, 22.0, 22.0, 22.0]}, base=base, start_seq=10)
     await drain(v)
     rows = alarm_events_for(v)
     assert [(r["kind"], r["trigger_seq"], r["severity"]) for r in rows] == [
@@ -163,22 +159,22 @@ async def test_takeover_continues_engine_exactly() -> None:  # D-ALM-10/11 end t
 
 async def test_version_mismatch_rebuilds_from_alarms() -> None:  # D-ALM-11, A-E1-5
     v, base = vid(), now() - timedelta(minutes=1)
-    produce_values(v, base, [22.0] * 5 + [31.0] * 5)
+    produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5}, base=base)
     await drain(v)
     admin("update engine_state set schema_version = -1 where vehicle=%s", v)
-    produce_values(v, base, [31.0] * 5, start_seq=10)
+    produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
     await drain(v)
     (reset,) = events_for(v, "ENGINE_STATE_RESET")
     assert reset["details"]["found_version"] == -1
     assert kinds(v) == ["RAISE"]  # still red: no RTN, no second alert
-    produce_values(v, base, [22.0] * 3, start_seq=15)
+    produce_values(v, {TEMP: [22.0] * 3}, base=base, start_seq=15)
     await drain(v)
     assert kinds(v) == ["RAISE", "RTN"]
 
 
 async def test_late_frame_not_alarmed() -> None:  # LATE: stored, never classified
     v, base = vid(), now() - timedelta(minutes=1)
-    produce_values(v, base, [22.0] * 10)
+    produce_values(v, {TEMP: [22.0] * 10}, base=base)
     await drain(v)
     late = [(seq, seq / 10 + 0.05, vals) for seq, _, vals in frames_of([31.0] * 3, start_seq=3)]
     put(v, base, late)
@@ -188,13 +184,13 @@ async def test_late_frame_not_alarmed() -> None:  # LATE: stored, never classifi
 
 async def test_snapshot_of_older_set_switches_to_current(tmp_path: Path) -> None:  # G18
     v, base = vid(), now() - timedelta(minutes=1)
-    produce_values(v, base, [22.0] * 5 + [31.0] * 5)
+    produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5}, base=base)
     await drain(v)
     m = mission_copy(tmp_path)
     shipped = next(ln for ln in (m / "limits.yaml").read_text().splitlines() if TEMP in ln)
     edit(m / "limits.yaml", shipped, f"  {TEMP}: {{checks: []}}")  # the alarm's param unchecked
     new = load_dir(m)
-    produce_values(v, base, [31.0], start_seq=10)
+    produce_values(v, {TEMP: [31.0]}, base=base, start_seq=10)
     async with worker([v], mission_dir=m):  # loaded with the old set, switched at frame 10
         await until(lambda: len(alarm_events_for(v)) == 2, 5)
     raise_, rtn = alarm_events_for(v)
@@ -214,7 +210,7 @@ BOGUS = "b" * 64
 @pytest.mark.parametrize("corrupt", ["engine", "link", "set"])
 async def test_unloadable_snapshot_never_crash_loops(corrupt: str) -> None:  # G18
     v, base = vid(), now() - timedelta(minutes=1)
-    produce_values(v, base, [22.0] * 5 + [31.0] * 5)
+    produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5}, base=base)
     await drain(v)
     if corrupt in ("engine", "link"):  # current version, a snapshot that doesn't load → rebuild
         bad = "{}" if corrupt == "engine" else '"x"'  # ValueError / TypeError
@@ -227,7 +223,7 @@ async def test_unloadable_snapshot_never_crash_loops(corrupt: str) -> None:  # G
             BOGUS,
         )
         admin("update engine_state set set_sha256 = %s where vehicle=%s", BOGUS, v)
-    produce_values(v, base, [31.0] * 5, start_seq=10)
+    produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
     async with worker([v]) as w:
         await until(lambda: drained(v), 5)
         assert not w.done()
@@ -244,7 +240,7 @@ async def test_unloadable_snapshot_never_crash_loops(corrupt: str) -> None:  # G
 
 async def test_reset_while_silent_commits_once() -> None:  # D-ALM-11: no frame after the reset
     v, base = vid(), now() - timedelta(minutes=1)
-    produce_values(v, base, [22.0] * 10)
+    produce_values(v, {TEMP: [22.0] * 10}, base=base)
     await drain(v)
     admin("update engine_state set schema_version = -1 where vehicle=%s", v)
     for _ in range(2):  # the second start finds the rewritten snapshot: no second reset
@@ -267,20 +263,20 @@ async def test_stray_open_alarm_without_snapshot_is_kept(tmp_path: Path) -> None
         trs += out
     async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as c:
         await write_transitions(c, cset.set_sha256, trs)
-    produce_values(v, base, [31.0] * 5, start_seq=10)
+    produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
     await drain(v)  # rebuilt from the row: still RED, so no second alarm (alarms_one_open)
     assert stored(v) == 5 and dlq_entries(v) == [] and kinds(v) == ["RAISE"]
 
 
 async def test_seq_state_without_snapshot_survives_silence() -> None:
     v, base = vid(), now() - timedelta(minutes=1)
-    produce_values(v, base, [22.0] * 5)
+    produce_values(v, {TEMP: [22.0] * 5}, base=base)
     await drain(v)
     admin("delete from engine_state where vehicle=%s", v)  # e.g. a row from before Gate 3a
     async with worker([v]) as w:  # no frame: the silence path writes LOS
         await until(lambda: bool(events_for(v, "LOS")), 5)
         assert not w.done()
-    produce_values(v, base, [22.0] * 3, start_seq=5)
+    produce_values(v, {TEMP: [22.0] * 3}, base=base, start_seq=5)
     await drain(v)
     applied = [e["details"]["first_seq"] for e in events_for(v, "LIMITS_APPLIED")]
     assert applied == [0, 5]  # the set is applied again at the first frame after

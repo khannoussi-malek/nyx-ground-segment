@@ -6,22 +6,26 @@ import signal
 import sys
 import time
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import psycopg
 import redis.asyncio
+import redis.exceptions
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
+from redis.maint_notifications import MaintNotificationsConfig
 
 from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import serve_health
 from gs.common.hooks import Hooks
+from gs.common.logs import setup_logging
+from gs.common.uievents import publish_ui
 from gs.ingest.errors import OperationalDbError
-from gs.ingest.events import insert_events
+from gs.ingest.events import GroundEvent, insert_events, to_link
 from gs.ingest.liveness import ingest_status, refresh_memory, run_ticks
-from gs.ingest.mission import MissionWatcher, start_set
+from gs.ingest.mission import MissionWatcher, OnEvents, start_set
 from gs.ingest.owner import parse_homes
 from gs.ingest.validate import FieldStats
 from gs.ingest.worker import SOCKET_TIMEOUT_S, Ctx, run_vehicle
@@ -57,17 +61,41 @@ class IngestSettings:
         )
 
 
+def publish_events(r: redis.asyncio.Redis) -> OnEvents:
+    """A rejected mission-db set reaches the console's event strip as `link` (D-UI-19). A Redis
+    error is logged, never raised into the watcher: the event row is already written and every
+    snapshot carries it."""
+
+    async def publish(events: Sequence[GroundEvent]) -> None:
+        try:
+            await publish_ui(r, [to_link(e) for e in events])
+        except redis.exceptions.RedisError as e:
+            log.warning("rejected set not published (%s: %s)", type(e).__name__, e)
+
+    return publish
+
+
 async def run(s: IngestSettings, stop: asyncio.Event) -> None:
     async with await psycopg.AsyncConnection.connect(s.database_url, autocommit=True) as conn:
         # stores the set (engine_state.set_sha256 references it) or falls back (D-ALM-12)
         mdb, rejected = await start_set(conn, Path(s.mission_db))
-        await insert_events(conn, rejected)
-    watcher = MissionWatcher(Path(s.mission_db), s.database_url, s.consumer_name, mdb)
+        won = await insert_events(conn, rejected)  # autocommit: committed here
     # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
     # no client-side retry: every connection error must reach run_vehicle's backoff loop, which
     # re-reads our PEL and never re-sends a non-idempotent XADD behind our back (D-ING-03/08)
+    # maintenance notifications off: a pooled connection the server closed is reconnected at
+    # checkout instead of failing the pass into the backoff loop (P-pf47, see the api)
     r = redis.asyncio.Redis.from_url(
-        s.redis_url, socket_timeout=SOCKET_TIMEOUT_S, retry=Retry(NoBackoff(), 0)
+        s.redis_url,
+        socket_timeout=SOCKET_TIMEOUT_S,
+        retry=Retry(NoBackoff(), 0),
+        maint_notifications_config=MaintNotificationsConfig(enabled=False),
+    )
+    publish = publish_events(r)
+    if won:  # only when our insert won, like the watcher (P-pf9): a restart does not repeat it
+        await publish(rejected)
+    watcher = MissionWatcher(
+        Path(s.mission_db), s.database_url, s.consumer_name, mdb, on_events=publish
     )
     seen: dict[str, float] = {}  # a standby task (lock not granted) is not a stale loop
     ctx = Ctx(
@@ -87,7 +115,7 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
     server = await serve_health(
         s.bind_host,
         s.health_port,
-        lambda: ingest_status(seen, ctx.owned, time.monotonic(), ctx.used_memory[0]),
+        lambda: ingest_status(seen, ctx.owned, time.monotonic(), ctx.used_memory[0], ctx.counters),
     )
     try:
         async with asyncio.TaskGroup() as tg:  # any task error cancels the rest and exits 1
@@ -113,7 +141,7 @@ log = logging.getLogger(__name__)
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    setup_logging("gs-ingest")
     try:
         asyncio.run(_main())
     except* OperationalDbError as eg:  # D-ING-24: exit; locks free, restart re-reads our PEL

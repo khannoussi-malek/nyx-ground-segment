@@ -1,6 +1,308 @@
 {
   "components": {
     "schemas": {
+      "AckAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "applied",
+              "superseded",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "request_id",
+          "status"
+        ],
+        "title": "AckAccepted",
+        "type": "object"
+      },
+      "AckRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "title": "Note",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "seen_key": {
+            "anyOf": [
+              {
+                "maxLength": 200,
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seen Key"
+          }
+        },
+        "required": [
+          "request_id",
+          "note"
+        ],
+        "title": "AckRequest",
+        "type": "object"
+      },
+      "AckRequestView": {
+        "additionalProperties": false,
+        "properties": {
+          "by_user": {
+            "title": "By User",
+            "type": "string"
+          },
+          "request_id": {
+            "format": "uuid",
+            "title": "Request Id",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "pending",
+              "applied",
+              "superseded",
+              "rejected"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "status_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status Reason"
+          }
+        },
+        "required": [
+          "request_id",
+          "by_user",
+          "status",
+          "status_reason"
+        ],
+        "title": "AckRequestView",
+        "type": "object"
+      },
+      "Alarm": {
+        "additionalProperties": false,
+        "properties": {
+          "alarm": {
+            "$ref": "#/components/schemas/AlarmView"
+          },
+          "kind": {
+            "const": "alarm",
+            "default": "alarm",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alarm"
+        ],
+        "title": "Alarm",
+        "type": "object"
+      },
+      "AlarmTransition": {
+        "additionalProperties": false,
+        "properties": {
+          "alarm_id": {
+            "format": "uuid",
+            "title": "Alarm Id",
+            "type": "string"
+          },
+          "param": {
+            "title": "Param",
+            "type": "string"
+          },
+          "transition": {
+            "$ref": "#/components/schemas/TransitionView"
+          }
+        },
+        "required": [
+          "alarm_id",
+          "param",
+          "transition"
+        ],
+        "title": "AlarmTransition",
+        "type": "object"
+      },
+      "AlarmView": {
+        "additionalProperties": false,
+        "properties": {
+          "ack_request": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AckRequestView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "alarm_id": {
+            "format": "uuid",
+            "title": "Alarm Id",
+            "type": "string"
+          },
+          "closed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Closed At"
+          },
+          "last": {
+            "$ref": "#/components/schemas/TransitionView"
+          },
+          "level": {
+            "title": "Level",
+            "type": "string"
+          },
+          "limits_sha256": {
+            "title": "Limits Sha256",
+            "type": "string"
+          },
+          "opened_at": {
+            "format": "date-time",
+            "title": "Opened At",
+            "type": "string"
+          },
+          "param": {
+            "title": "Param",
+            "type": "string"
+          },
+          "set_sha256": {
+            "title": "Set Sha256",
+            "type": "string"
+          },
+          "severity": {
+            "enum": [
+              "YELLOW",
+              "RED"
+            ],
+            "title": "Severity",
+            "type": "string"
+          },
+          "state": {
+            "enum": [
+              "UNACK",
+              "ACKED",
+              "RTN_UNACK",
+              "CLEARED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "trigger_check": {
+            "title": "Trigger Check",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "alarm_id",
+          "vehicle",
+          "param",
+          "state",
+          "severity",
+          "level",
+          "value",
+          "trigger_check",
+          "limits_sha256",
+          "set_sha256",
+          "opened_at",
+          "closed_at",
+          "last",
+          "ack_request"
+        ],
+        "title": "AlarmView",
+        "type": "object"
+      },
+      "Bucket": {
+        "additionalProperties": false,
+        "properties": {
+          "first": {
+            "title": "First",
+            "type": "number"
+          },
+          "hi": {
+            "title": "Hi",
+            "type": "number"
+          },
+          "last": {
+            "title": "Last",
+            "type": "number"
+          },
+          "lo": {
+            "title": "Lo",
+            "type": "number"
+          },
+          "mean": {
+            "title": "Mean",
+            "type": "number"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          }
+        },
+        "required": [
+          "t",
+          "lo",
+          "hi",
+          "mean",
+          "first",
+          "last",
+          "n"
+        ],
+        "title": "Bucket",
+        "type": "object"
+      },
       "CheckConfig": {
         "additionalProperties": false,
         "properties": {
@@ -25,6 +327,25 @@
           "type"
         ],
         "title": "CheckConfig",
+        "type": "object"
+      },
+      "Cmd": {
+        "additionalProperties": false,
+        "properties": {
+          "command": {
+            "$ref": "#/components/schemas/CommandView"
+          },
+          "kind": {
+            "const": "cmd",
+            "default": "cmd",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "title": "Cmd",
         "type": "object"
       },
       "Command": {
@@ -73,30 +394,20 @@
             "type": "boolean"
           },
           "receive_timeout_s": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0.0,
-                "maximum": 5.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Receive Timeout S"
+            "default": 5.0,
+            "description": "unset: the file's `defaults` value",
+            "exclusiveMinimum": 0.0,
+            "maximum": 5.0,
+            "title": "Receive Timeout S",
+            "type": "number"
           },
           "verify_timeout_s": {
-            "anyOf": [
-              {
-                "exclusiveMinimum": 0.0,
-                "maximum": 15.0,
-                "type": "number"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Verify Timeout S"
+            "default": 15.0,
+            "description": "unset: the file's `defaults` value",
+            "exclusiveMinimum": 0.0,
+            "maximum": 15.0,
+            "title": "Verify Timeout S",
+            "type": "number"
           }
         },
         "required": [
@@ -104,6 +415,380 @@
           "hazardous"
         ],
         "title": "Command",
+        "type": "object"
+      },
+      "CommandAccepted": {
+        "additionalProperties": false,
+        "properties": {
+          "cmd_id": {
+            "format": "uuid",
+            "title": "Cmd Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cmd_id"
+        ],
+        "title": "CommandAccepted",
+        "type": "object"
+      },
+      "CommandConflict": {
+        "additionalProperties": false,
+        "description": "Every 409 of POST /api/commands (ruling R-s); the fields its `error` needs are set.",
+        "properties": {
+          "by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "By"
+          },
+          "cmd_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cmd Id"
+          },
+          "confirm_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Token"
+          },
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "expires_in_s": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expires In S"
+          },
+          "hazard": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Hazard"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          },
+          "seconds_ago": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seconds Ago"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "CommandConflict",
+        "type": "object"
+      },
+      "CommandRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "title": "Args",
+            "type": "object"
+          },
+          "confirm_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Confirm Token"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle",
+          "name",
+          "args"
+        ],
+        "title": "CommandRequest",
+        "type": "object"
+      },
+      "CommandView": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "title": "Args",
+            "type": "object"
+          },
+          "cmd_id": {
+            "format": "uuid",
+            "title": "Cmd Id",
+            "type": "string"
+          },
+          "failed_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failed At"
+          },
+          "failure_reason": {
+            "anyOf": [
+              {
+                "enum": [
+                  "SEND_ERROR",
+                  "REJECTED",
+                  "NOT_RECEIVED",
+                  "NOT_VERIFIED",
+                  "ACK_INVALID"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Reason"
+          },
+          "hazardous": {
+            "title": "Hazardous",
+            "type": "boolean"
+          },
+          "issued_by": {
+            "title": "Issued By",
+            "type": "string"
+          },
+          "late_ack_accepted": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Late Ack Accepted"
+          },
+          "late_ack_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Late Ack At"
+          },
+          "late_verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Late Verified At"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "outcome": {
+            "anyOf": [
+              {
+                "enum": [
+                  "NOT_SENT",
+                  "NOT_EXECUTED",
+                  "UNKNOWN",
+                  "RECEIVED_LATE",
+                  "EXECUTED_LATE"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Outcome"
+          },
+          "queued_at": {
+            "format": "date-time",
+            "title": "Queued At",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "received_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Received At"
+          },
+          "sent_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Sent At"
+          },
+          "state": {
+            "enum": [
+              "QUEUED",
+              "SENT",
+              "RECEIVED",
+              "VERIFIED",
+              "FAILED"
+            ],
+            "title": "State",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          },
+          "verified_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verified At"
+          }
+        },
+        "required": [
+          "cmd_id",
+          "vehicle",
+          "name",
+          "args",
+          "hazardous",
+          "reason",
+          "issued_by",
+          "state",
+          "failure_reason",
+          "queued_at",
+          "sent_at",
+          "received_at",
+          "verified_at",
+          "failed_at",
+          "late_verified_at",
+          "late_ack_at",
+          "late_ack_accepted",
+          "outcome"
+        ],
+        "title": "CommandView",
         "type": "object"
       },
       "DlqRecord": {
@@ -213,6 +898,59 @@
         "title": "ErrorBody",
         "type": "object"
       },
+      "EventView": {
+        "additionalProperties": false,
+        "properties": {
+          "details": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Details",
+            "type": "object"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "t_onboard": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "T Onboard"
+          },
+          "vehicle": {
+            "anyOf": [
+              {
+                "pattern": "^[A-Z0-9-]{1,32}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vehicle"
+          }
+        },
+        "required": [
+          "key",
+          "vehicle",
+          "kind",
+          "t_onboard",
+          "details"
+        ],
+        "title": "EventView",
+        "type": "object"
+      },
       "FrameHeader": {
         "additionalProperties": true,
         "properties": {
@@ -265,6 +1003,30 @@
         "title": "FrameHeader",
         "type": "object"
       },
+      "Ground": {
+        "additionalProperties": false,
+        "properties": {
+          "broker": {
+            "enum": [
+              "down",
+              "up"
+            ],
+            "title": "Broker",
+            "type": "string"
+          },
+          "kind": {
+            "const": "ground",
+            "default": "ground",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "broker"
+        ],
+        "title": "Ground",
+        "type": "object"
+      },
       "Hb": {
         "additionalProperties": false,
         "properties": {
@@ -273,6 +1035,13 @@
             "default": "hb",
             "title": "Kind",
             "type": "string"
+          },
+          "processing": {
+            "additionalProperties": {
+              "type": "boolean"
+            },
+            "title": "Processing",
+            "type": "object"
           },
           "server_ms": {
             "title": "Server Ms",
@@ -298,6 +1067,7 @@
           "status": {
             "enum": [
               "ok",
+              "degraded",
               "down"
             ],
             "title": "Status",
@@ -331,6 +1101,7 @@
         "title": "Hello",
         "type": "object"
       },
+      "JsonValue": {},
       "LimitCheck": {
         "additionalProperties": false,
         "properties": {
@@ -457,6 +1228,25 @@
         "title": "LimitView",
         "type": "object"
       },
+      "Link": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/EventView"
+          },
+          "kind": {
+            "const": "link",
+            "default": "link",
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "event"
+        ],
+        "title": "Link",
+        "type": "object"
+      },
       "LoginRequest": {
         "additionalProperties": false,
         "properties": {
@@ -581,6 +1371,61 @@
         "title": "NumArg",
         "type": "object"
       },
+      "ParamStats": {
+        "additionalProperties": false,
+        "properties": {
+          "avg": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Avg"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unit",
+          "min",
+          "max",
+          "avg",
+          "n"
+        ],
+        "title": "ParamStats",
+        "type": "object"
+      },
       "ParameterEntry": {
         "additionalProperties": false,
         "properties": {
@@ -604,6 +1449,68 @@
           "type"
         ],
         "title": "ParameterEntry",
+        "type": "object"
+      },
+      "ReportConflict": {
+        "additionalProperties": false,
+        "properties": {
+          "error": {
+            "title": "Error",
+            "type": "string"
+          },
+          "expected": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expected"
+          },
+          "frames": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Frames"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "error",
+          "message"
+        ],
+        "title": "ReportConflict",
+        "type": "object"
+      },
+      "Resync": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "resync",
+            "default": "resync",
+            "title": "Kind",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle"
+        ],
+        "title": "Resync",
         "type": "object"
       },
       "RocCheck": {
@@ -664,9 +1571,199 @@
         "title": "RocCheck",
         "type": "object"
       },
+      "SessionReport": {
+        "additionalProperties": false,
+        "properties": {
+          "alarms": {
+            "items": {
+              "$ref": "#/components/schemas/AlarmTransition"
+            },
+            "title": "Alarms",
+            "type": "array"
+          },
+          "commands": {
+            "items": {
+              "$ref": "#/components/schemas/CommandView"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "duration_s": {
+            "title": "Duration S",
+            "type": "number"
+          },
+          "expected": {
+            "title": "Expected",
+            "type": "integer"
+          },
+          "frames": {
+            "title": "Frames",
+            "type": "integer"
+          },
+          "frozen_at": {
+            "format": "date-time",
+            "title": "Frozen At",
+            "type": "string"
+          },
+          "link_events": {
+            "items": {
+              "$ref": "#/components/schemas/EventView"
+            },
+            "title": "Link Events",
+            "type": "array"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "parameters": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/ParamStats"
+            },
+            "title": "Parameters",
+            "type": "object"
+          },
+          "session": {
+            "$ref": "#/components/schemas/SessionView"
+          }
+        },
+        "required": [
+          "session",
+          "complete",
+          "note",
+          "frozen_at",
+          "duration_s",
+          "frames",
+          "expected",
+          "parameters",
+          "link_events",
+          "alarms",
+          "commands"
+        ],
+        "title": "SessionReport",
+        "type": "object"
+      },
+      "SessionStart": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 200,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle",
+          "name"
+        ],
+        "title": "SessionStart",
+        "type": "object"
+      },
+      "SessionView": {
+        "additionalProperties": false,
+        "properties": {
+          "conductor": {
+            "title": "Conductor",
+            "type": "string"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "ended_by": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended By"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "vehicle",
+          "name",
+          "conductor",
+          "started_at",
+          "ended_at",
+          "ended_by"
+        ],
+        "title": "SessionView",
+        "type": "object"
+      },
       "Snapshot": {
         "additionalProperties": false,
         "properties": {
+          "alarms": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/AlarmView"
+            },
+            "title": "Alarms",
+            "type": "array"
+          },
+          "commands": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/CommandView"
+            },
+            "title": "Commands",
+            "type": "array"
+          },
+          "events": {
+            "default": [],
+            "items": {
+              "$ref": "#/components/schemas/EventView"
+            },
+            "title": "Events",
+            "type": "array"
+          },
           "kind": {
             "const": "snapshot",
             "default": "snapshot",
@@ -687,6 +1784,113 @@
         "title": "Snapshot",
         "type": "object"
       },
+      "Tc": {
+        "additionalProperties": false,
+        "properties": {
+          "args": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                }
+              ]
+            },
+            "title": "Args",
+            "type": "object"
+          },
+          "cmd_id": {
+            "format": "uuid",
+            "title": "Cmd Id",
+            "type": "string"
+          },
+          "issued_at": {
+            "format": "date-time",
+            "title": "Issued At",
+            "type": "string"
+          },
+          "issued_by": {
+            "minLength": 1,
+            "title": "Issued By",
+            "type": "string"
+          },
+          "name": {
+            "pattern": "^[a-z][a-z0-9_]{0,62}$",
+            "title": "Name",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "required": [
+          "cmd_id",
+          "name",
+          "args",
+          "issued_by",
+          "issued_at",
+          "reason"
+        ],
+        "title": "Tc",
+        "type": "object"
+      },
+      "TcAck": {
+        "additionalProperties": false,
+        "properties": {
+          "accepted": {
+            "title": "Accepted",
+            "type": "boolean"
+          },
+          "cmd_id": {
+            "format": "uuid",
+            "title": "Cmd Id",
+            "type": "string"
+          },
+          "code": {
+            "pattern": "^[A-Z][A-Z0-9_]{0,31}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          },
+          "t_onboard": {
+            "format": "date-time",
+            "title": "T Onboard",
+            "type": "string"
+          }
+        },
+        "required": [
+          "cmd_id",
+          "accepted",
+          "code",
+          "reason",
+          "t_onboard"
+        ],
+        "title": "TcAck",
+        "type": "object"
+      },
       "Tm": {
         "additionalProperties": false,
         "properties": {
@@ -701,6 +1905,11 @@
             ],
             "default": null,
             "title": "Age Ms"
+          },
+          "frozen": {
+            "default": false,
+            "title": "Frozen",
+            "type": "boolean"
           },
           "kind": {
             "const": "tm",
@@ -772,6 +1981,127 @@
         "title": "Tm",
         "type": "object"
       },
+      "TransitionView": {
+        "additionalProperties": false,
+        "properties": {
+          "alert": {
+            "title": "Alert",
+            "type": "boolean"
+          },
+          "by_user": {
+            "title": "By User",
+            "type": "string"
+          },
+          "check_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Check Kind"
+          },
+          "key": {
+            "title": "Key",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "RAISE",
+              "ESCALATE",
+              "DEESCALATE",
+              "RTN",
+              "ACK",
+              "CLEAR"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "level": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Level"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "key",
+          "kind",
+          "t",
+          "alert",
+          "by_user",
+          "note",
+          "check_kind",
+          "level",
+          "value"
+        ],
+        "title": "TransitionView",
+        "type": "object"
+      },
+      "UiEvent": {
+        "discriminator": {
+          "mapping": {
+            "alarm": "#/components/schemas/Alarm",
+            "cmd": "#/components/schemas/Cmd",
+            "link": "#/components/schemas/Link",
+            "resync": "#/components/schemas/Resync",
+            "tm": "#/components/schemas/Tm"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/Tm"
+          },
+          {
+            "$ref": "#/components/schemas/Alarm"
+          },
+          {
+            "$ref": "#/components/schemas/Cmd"
+          },
+          {
+            "$ref": "#/components/schemas/Link"
+          },
+          {
+            "$ref": "#/components/schemas/Resync"
+          }
+        ],
+        "title": "UiEvent"
+      },
       "Vehicles": {
         "additionalProperties": false,
         "properties": {
@@ -806,6 +2136,403 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/alarms": {
+      "get": {
+        "operationId": "list_alarms_api_alarms_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "vehicle",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Z0-9-]{1,32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Vehicle"
+            }
+          },
+          {
+            "in": "query",
+            "name": "severity",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "YELLOW",
+                    "RED"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Severity"
+            }
+          },
+          {
+            "in": "query",
+            "name": "state",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "enum": [
+                    "UNACK",
+                    "ACKED",
+                    "RTN_UNACK",
+                    "CLEARED"
+                  ],
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "State"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/AlarmView"
+                  },
+                  "title": "Response List Alarms Api Alarms Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "List Alarms"
+      }
+    },
+    "/api/alarms/{alarm_id}/ack": {
+      "post": {
+        "operationId": "post_ack_api_alarms__alarm_id__ack_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "alarm_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Alarm Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AckRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AckAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Post Ack"
+      }
+    },
+    "/api/commands": {
+      "get": {
+        "operationId": "list_commands_api_commands_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "vehicle",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "pattern": "^[A-Z0-9-]{1,32}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Vehicle"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/CommandView"
+                  },
+                  "title": "Response List Commands Api Commands Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "List Commands"
+      },
+      "post": {
+        "operationId": "post_command_api_commands_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandAccepted"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandConflict"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Post Command"
+      }
+    },
     "/api/events": {
       "get": {
         "operationId": "events_api_events_get",
@@ -857,6 +2584,16 @@
           "204": {
             "description": "Successful Response"
           },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
           "401": {
             "content": {
               "application/json": {
@@ -886,6 +2623,16 @@
               }
             },
             "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too Many Requests"
           },
           "503": {
             "content": {
@@ -1016,6 +2763,530 @@
           }
         },
         "summary": "Mission Db"
+      }
+    },
+    "/api/mission-db/frame-schema": {
+      "get": {
+        "operationId": "frame_schema_api_mission_db_frame_schema_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "title": "Response Frame Schema Api Mission Db Frame Schema Get",
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Frame Schema"
+      }
+    },
+    "/api/sessions": {
+      "get": {
+        "operationId": "list_sessions_api_sessions_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/SessionView"
+                  },
+                  "title": "Response List Sessions Api Sessions Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "List Sessions"
+      },
+      "post": {
+        "operationId": "start_session_api_sessions_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SessionStart"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Start Session"
+      }
+    },
+    "/api/sessions/{session_id}/report": {
+      "get": {
+        "operationId": "get_report_api_sessions__session_id__report_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportConflict"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Report"
+      }
+    },
+    "/api/sessions/{session_id}/report.csv": {
+      "get": {
+        "operationId": "get_report_csv_api_sessions__session_id__report_csv_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/csv": {}
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportConflict"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Report Csv"
+      }
+    },
+    "/api/sessions/{session_id}/stop": {
+      "post": {
+        "operationId": "stop_session_api_sessions__session_id__stop_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionView"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Stop Session"
+      }
+    },
+    "/api/telemetry/{vehicle}/{param}": {
+      "get": {
+        "operationId": "get_buckets_api_telemetry__vehicle___param__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "vehicle",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Z0-9-]{1,32}$",
+              "title": "Vehicle",
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "param",
+            "required": true,
+            "schema": {
+              "title": "Param",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "from",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "title": "From",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "required": true,
+            "schema": {
+              "format": "date-time",
+              "title": "To",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "width",
+            "required": false,
+            "schema": {
+              "default": 1500,
+              "title": "Width",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/Bucket"
+                  },
+                  "title": "Response Get Buckets Api Telemetry  Vehicle   Param  Get",
+                  "type": "array"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Buckets"
       }
     },
     "/api/vehicles": {

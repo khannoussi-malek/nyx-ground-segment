@@ -1,119 +1,126 @@
-"""FastAPI app: every route lives on ROUTER with its full path (Task 15/16 add to it)."""
+"""FastAPI app: every route lives on ROUTER with its full path (module routers included)."""
 
 import asyncio
 import logging
-import secrets
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from http import HTTPStatus
-from typing import Annotated, Any, Literal
+from typing import Any, Literal
 
+import psycopg
 import redis.asyncio
-from fastapi import APIRouter, Depends, FastAPI, Request, Response
+from fastapi import APIRouter, FastAPI, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from psycopg_pool import AsyncConnectionPool
-from pydantic import BaseModel, ConfigDict
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
+from redis.maint_notifications import MaintNotificationsConfig
 from starlette.exceptions import HTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
-from gs.api import events
-from gs.api.auth import (
-    SESSION_TTL_S,
-    ApiError,
-    current_user,
-    load_users,
-    sess_key,
-    verify_password,
-)
+from gs.api import alarms, auth, commands, deps, events, sessions, telemetry
+from gs.api.auth import SESSION_TTL_S, load_users
+from gs.api.bodies import ErrorBody, Health
+from gs.api.deps import ApiError, User, errors
+from gs.api.hub import Hub, format_sse
 from gs.api.openapi import build_openapi
 from gs.api.settings import Settings
+from gs.common.audit import audit
+from gs.common.interfaces import build_frame_model
 from gs.common.interfaces.missiondb import MissionDbView, Vehicles
-from gs.common.missiondb import load_dir
+from gs.common.missiondb import MissionDb, MissionDbError, load_dir
+from gs.ingest.events import GroundEvent, insert_events, to_link
+from gs.ingest.mission import MissionWatcher, start_set
 
 CLIENT_HEADER = "X-GS-Client"
 SOCKET_TIMEOUT_S = 5
 CHECK_TIMEOUT_S = 2
+DB_CONNECT_S = 5  # the start-set connection; then the load_dir fallback
+JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"  # pydantic v2 emits 2020-12
 ROUTER = APIRouter()
 log = logging.getLogger(__name__)
-User = Annotated[str, Depends(current_user)]
 
 
-class _Body(BaseModel):
-    model_config = ConfigDict(strict=True, frozen=True, extra="forbid")
+def _error(
+    status: int, error: str, message: str, headers: Mapping[str, str] | None = None
+) -> JSONResponse:
+    body = ErrorBody(error=error, message=message).model_dump()
+    return JSONResponse(body, status_code=status, headers=headers)
 
 
-class LoginRequest(_Body):
-    user: str
-    password: str
-
-
-class Me(_Body):
-    user: str
-
-
-class ErrorBody(_Body):
-    error: str
-    message: str
-
-
-class Health(_Body):
-    status: Literal["ok", "down"]
-    checks: dict[str, str]
-
-
-def _errors(*codes: int) -> dict[int | str, dict[str, object]]:
-    """OpenAPI: error statuses carry ErrorBody (422 replaces HTTPValidationError)."""
-    return {c: {"model": ErrorBody} for c in codes}
-
-
-def _error(status: int, error: str, message: str) -> JSONResponse:
-    return JSONResponse(ErrorBody(error=error, message=message).model_dump(), status_code=status)
-
-
-@ROUTER.post("/api/login", status_code=204, responses=_errors(401, 403, 422, 503))
-async def login(body: LoginRequest, request: Request) -> Response:
-    stored = request.app.state.users.get(body.user)
-    # ponytail: no dummy hash for unknown users; three fixed users make the timing leak moot
-    ok = stored is not None and await asyncio.to_thread(verify_password, body.password, stored)
-    if not ok:
-        raise ApiError(HTTPStatus.UNAUTHORIZED, "LOGIN_FAILED", "wrong user or password")
-    sid = secrets.token_urlsafe(32)
-    await request.app.state.redis.set(sess_key(sid), body.user, ex=SESSION_TTL_S)
-    old = request.session.get("sid")
-    if isinstance(old, str):  # re-login must not leave the previous session alive
-        await request.app.state.redis.delete(sess_key(old))
-    request.session.clear()
-    request.session["sid"] = sid
-    return Response(status_code=204)
-
-
-@ROUTER.post("/api/logout", status_code=204, responses=_errors(401, 403, 503))
-async def logout(request: Request, _user: User) -> Response:
-    await request.app.state.redis.delete(sess_key(request.session["sid"]))
-    request.session.clear()
-    return Response(status_code=204)
-
-
-@ROUTER.get("/api/me", responses=_errors(401, 503))
-async def me(user: User) -> Me:
-    return Me(user=user)
-
-
-@ROUTER.get("/api/vehicles", responses=_errors(401, 503))
+@ROUTER.get("/api/vehicles", responses=errors(401, 503))
 async def vehicles(request: Request, _user: User) -> Vehicles:
     return Vehicles(
-        vehicles=list(request.app.state.vehicles), parameters=request.app.state.mission.parameters
+        vehicles=list(deps.vehicles(request)), parameters=deps.mission(request).parameters
     )
 
 
-# ponytail: the set loaded at api start; follows a reload once the api watches mission/ too
-@ROUTER.get("/api/mission-db", responses=_errors(401, 503))
+@ROUTER.get("/api/mission-db", responses=errors(401, 503))
 async def mission_db(request: Request, _user: User) -> MissionDbView:
-    return MissionDbView.of(request.app.state.mission)
+    return MissionDbView.of(deps.mission(request))
+
+
+@ROUTER.get("/api/mission-db/frame-schema", responses=errors(401, 503))
+async def frame_schema(request: Request, user: User) -> dict[str, Any]:  # D-EXT-19
+    schema = build_frame_model(deps.mission(request).param_names).model_json_schema()
+    return {"$schema": JSON_SCHEMA_DIALECT, **schema}
+
+
+def _hazardous(mdb: MissionDb) -> frozenset[str]:
+    return frozenset(n for n, c in mdb.commands.items() if c.hazardous)
+
+
+class HazardGuard:
+    """The API's reload never drops a command's hazardous flag (D-CMD-09, G31): the confirm
+    step stays until the API restarts with the new file; ingest applies the same set. It
+    remembers every name that was ever hazardous since start, so removing a command and
+    re-adding it without the flag is refused too (P-pf44). `old` is the active set, so the
+    names grow only with applied sets."""
+
+    def __init__(self, start: MissionDb) -> None:
+        self._ever = _hazardous(start)
+
+    def __call__(self, old: MissionDb, new: MissionDb) -> None:
+        self._ever = self._ever | _hazardous(old)
+        names = sorted(n for n, c in new.commands.items() if n in self._ever and not c.hazardous)
+        if names:
+            raise MissionDbError(
+                "commands.yaml",
+                "mission db not updated in the API until API restart"
+                f" (hazardous downgrade: {', '.join(names)})",
+            )
+
+
+async def _reloaded(conn: psycopg.AsyncConnection, old: MissionDb, new: MissionDb) -> None:
+    """LIMITS_RELOADED with every command whose hazardous flag changed (D-EXT-02, EX-25)."""
+    was = {n: c.hazardous for n, c in old.commands.items()}
+    changed = sorted(n for n, c in new.commands.items() if was.get(n, c.hazardous) != c.hazardous)
+    details = {
+        "set_sha256": new.set_sha256,
+        "limits_sha256": new.limits_sha256,
+        "commands_sha256": new.commands_sha256,
+        "parameters_sha256": new.parameters_sha256,
+        "hazardous_changed": changed,
+        "previous_set_sha256": old.set_sha256,
+    }
+    await audit(conn, "system", "LIMITS_RELOADED", None, details)
+
+
+async def _start_set(settings: Settings) -> MissionDb:
+    """The set at start, stored like ingest does; the files as they are when the database is
+    unreachable (the watcher stores the set on its first tick, P-pf5)."""
+    try:
+        async with await psycopg.AsyncConnection.connect(
+            settings.database_url, autocommit=True, connect_timeout=DB_CONNECT_S
+        ) as conn:
+            mdb, rejected = await start_set(conn, settings.mission_db)
+            await insert_events(conn, rejected)
+            return mdb
+    except psycopg.OperationalError as e:
+        log.warning("mission db at start without the database (%s); using the files", e)
+        return load_dir(settings.mission_db)
 
 
 async def _check_redis(request: Request) -> None:
@@ -136,7 +143,15 @@ async def healthz(request: Request) -> Response:
             log.warning("healthz %s check failed: %s: %s", name, type(e).__name__, e)
             checks[name] = "down"
     up = all(v == "ok" for v in checks.values())
-    body = Health(status="ok" if up else "down", checks=checks)
+    status: Literal["ok", "degraded", "down"] = "ok" if up else "down"
+    hub = request.app.state.hub
+    if up and hub.degraded:  # a ui:events entry was rejected (D-ING-27)
+        status, checks["ui_events"] = "degraded", "degraded"
+    elif up and not hub.up():  # the reader failed or hangs: no deltas reach any console
+        status, checks["ui_events"] = "degraded", "stalled"
+    if up and request.app.state.watcher.refused:  # P-pf46: ingest runs the newer set
+        status, checks["mission_db"] = "degraded", "pending API restart"
+    body = Health(status=status, checks=checks)
     return JSONResponse(body.model_dump(), status_code=200 if up else 503)
 
 
@@ -145,8 +160,10 @@ ROUTER.add_api_route(
     events.events,
     methods=["GET"],
     response_class=StreamingResponse,
-    responses={200: {"content": {"text/event-stream": {}}}, **_errors(401, 503)},
+    responses={200: {"content": {"text/event-stream": {}}}, **errors(401, 503)},
 )
+for _r in (auth.router, commands.router, alarms.router, sessions.router, telemetry.router):
+    ROUTER.include_router(_r)
 
 
 def _openapi(app: FastAPI) -> Callable[[], dict[str, Any]]:
@@ -160,25 +177,47 @@ def create_app(settings: Settings) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         app.state.users = load_users(settings.users_file)
-        app.state.mission = load_dir(settings.mission_db)
+        mdb = await _start_set(settings)
         app.state.vehicles = settings.vehicles
         # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
-        # no client-side retry: connection errors reach our own handling (R28)
+        # no client-side retry: connection errors reach our own handling (R28). Maintenance
+        # notifications off: while on (8.1's default) the pool skips its checkout check, so a
+        # connection the server closed (a Redis restart) failed the next request (P-pf47)
         app.state.redis = redis.asyncio.Redis.from_url(
             settings.redis_url,
             socket_timeout=SOCKET_TIMEOUT_S,
             retry=Retry(NoBackoff(), 0),
             decode_responses=True,
+            maint_notifications_config=MaintNotificationsConfig(enabled=False),
         )
-        pool = AsyncConnectionPool(settings.database_url, min_size=1, max_size=4, open=False)
+        pool = AsyncConnectionPool(settings.database_url, min_size=1, max_size=8, open=False)
         await pool.open(wait=False)
         app.state.pool = pool
+        hub = Hub(app.state.redis, pool, settings.vehicles, lambda: watcher.current.param_names)
+
+        # the API can't XADD ui:events; the watcher passes only rejections whose row it inserted
+        async def to_clients(evs: Sequence[GroundEvent]) -> None:
+            for e in evs:
+                hub.broadcast(format_sse("link", to_link(e)))
+
+        watcher = MissionWatcher(
+            settings.mission_db, settings.database_url, "api", mdb, on_apply=_reloaded,
+            on_events=to_clients, check=HazardGuard(mdb), by="api",
+        )  # fmt: skip
+        app.state.hub, app.state.watcher = hub, watcher
+        tasks = [
+            asyncio.create_task(hub.run(app.state.shutdown)),  # the one ui:events reader
+            asyncio.create_task(watcher.run(app.state.shutdown)),
+        ]
         try:
             yield
         finally:
             app.state.shutdown.set()
-            await pool.close()
-            await app.state.redis.aclose()
+            try:
+                await asyncio.gather(*tasks)
+            finally:  # a task error at shutdown must not leak the pool or the client
+                await pool.close()
+                await app.state.redis.aclose()
 
     app = FastAPI(lifespan=lifespan)
     app.state.shutdown = asyncio.Event()  # set by GracefulServer.handle_exit and on lifespan exit
@@ -210,11 +249,14 @@ def create_app(settings: Settings) -> FastAPI:
 
     @app.exception_handler(ApiError)
     async def _api_error(_: Request, e: ApiError) -> JSONResponse:
+        if e.body is not None:
+            return JSONResponse(e.body.model_dump(mode="json"), status_code=e.status)
         return _error(e.status, e.error, e.message)
 
     @app.exception_handler(HTTPException)
     async def _http_error(_: Request, e: HTTPException) -> JSONResponse:
-        return _error(e.status_code, HTTPStatus(e.status_code).name, str(e.detail))
+        # keep e.headers: a 405 must carry Allow (RFC 9110 15.5.6, R19)
+        return _error(e.status_code, HTTPStatus(e.status_code).name, str(e.detail), e.headers)
 
     @app.exception_handler(RequestValidationError)
     async def _invalid(_: Request, e: RequestValidationError) -> JSONResponse:

@@ -1,7 +1,10 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { MissionDb } from "./api";
+import { vehicleCondition } from "./banners";
 import { ageAt } from "./format";
 import { paramViews } from "./params";
+import type { Probe } from "./probe";
+import { paramState } from "./states";
 import type { Store } from "./store";
 import { VehicleCard } from "./VehicleCard";
 
@@ -16,30 +19,43 @@ function useTick(ms: number): void {
   }, [ms]);
 }
 
-function Vehicle({ store, v, mission }: { store: Store; v: string; mission: MissionDb | null }) {
+function Vehicle({ store, v, mission, clock, probe }: { store: Store; v: string; mission: MissionDb | null; clock: () => number; probe: Probe | undefined }) {
   const tm = useSyncExternalStore(store.subscribe, () => store.vehicle(v), () => store.vehicle(v));
+  const link = useSyncExternalStore(store.subscribe, store.link, store.link);
+  useSyncExternalStore(store.subscribe, store.alarms, store.alarms); // re-render on alarm changes
+  const wired = useSyncExternalStore(store.subscribe, store.hasSnapshot, store.hasSnapshot);
   useTick(AGE_TICK_MS);
   if (!tm) return null;
-  // states (ParamView.state, statesWired) are wired on day 3 from SSE (G20)
-  const params = paramViews(tm.values, mission);
+  const ageMs = ageAt(tm.age_ms, store.receivedAt(v), clock());
+  const condition = vehicleCondition(store, v, clock());
+  // FROZEN is counted from the rows; only the vehicle-level conditions replace the summary
+  const banner = condition === "FROZEN" || condition === "STALE" ? undefined : (condition ?? undefined);
+  // no row state before the first snapshot: the gauge fill and the summary wait for the engine (G26)
+  const params = paramViews(tm.values, mission).map((p) =>
+    wired ? { ...p, state: paramState(p.value, ageMs, tm.frozen, store.openAlarm(v, p.id)) } : p,
+  );
   return (
     <VehicleCard
       vehicle={v}
       mode={tm.mode}
       seq={tm.seq}
       tOnboard={tm.t_onboard}
-      ageMs={ageAt(tm.age_ms, store.receivedAt(v), performance.now())}
+      ageMs={ageMs}
       params={params}
+      banner={banner}
+      statesWired={wired}
+      onCommit={probe && (() => probe.painted(v, tm.seq))}
     />
   );
 }
 
-export function LiveTable({ store, mission }: { store: Store; mission: MissionDb | null }) {
+/** `clock` must be the store's clock: receipt stamps and the age clock share one time base. */
+export function LiveTable({ store, mission, clock = () => performance.now(), probe }: { store: Store; mission: MissionDb | null; clock?: () => number; probe?: Probe }) {
   const vehicles = useSyncExternalStore(store.subscribe, store.vehicles, store.vehicles);
   return (
     <>
       {vehicles.map((v) => (
-        <Vehicle key={v} store={store} v={v} mission={mission} />
+        <Vehicle key={v} store={store} v={v} mission={mission} clock={clock} probe={probe} />
       ))}
     </>
   );

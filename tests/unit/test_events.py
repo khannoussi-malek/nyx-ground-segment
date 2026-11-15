@@ -68,3 +68,11 @@ def test_gapless() -> None:
 
 def test_event_details_times_leave_as_iso_z() -> None:
     assert json.loads(details_json({"t": E, "n": [{"u": E}]})) == {"t": EP, "n": [{"u": EP}]}
+
+
+def test_new_keys() -> None:
+    from gs.ingest.events import late_key, mismatch_key
+
+    u = UUID(int=7)
+    assert late_key(u) == f"LATE_VERIFICATION/{u}"
+    assert mismatch_key("tcack", "0123456789ab") == "INTERFACE_MISMATCH/tcack/0123456789ab"

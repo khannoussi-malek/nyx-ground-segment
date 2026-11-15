@@ -6,8 +6,11 @@ import random
 import subprocess
 import sys
 import time
+from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID
 
 import redis
 import redis.asyncio
@@ -15,9 +18,11 @@ from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 from redis.retry import Retry as SyncRetry
 
-from gs.simulator.frames import make_frame
+from gs.simulator.frames import build_frame, make_frame
 from gs.simulator.main import SimSettings, run
-from tests.support.env import REPO, dotenv, vid
+from gs.simulator.nominals import NOMINALS
+from tests.support.env import REPO, dotenv, now, vid
+from tests.support.mission import MISSION_DIR
 
 HOST = "127.0.0.1"
 
@@ -74,7 +79,7 @@ async def run_sim(vehicles: list[str], seconds: float, user: str = "sim") -> Non
     """Run the simulator in-process against the compose redis for `seconds`."""
     env = dotenv()
     url = f"redis://{user}:{env[f'REDIS_{user.upper()}_PW']}@{HOST}:{env['REDIS_HOST_PORT']}/0"
-    settings = SimSettings(url, tuple(vehicles), "1", HOST, 0)
+    settings = SimSettings(url, tuple(vehicles), "1", HOST, 0, MISSION_DIR)
     stop = asyncio.Event()
     task = asyncio.create_task(run(settings, stop))
     await asyncio.sleep(seconds)
@@ -102,6 +107,66 @@ def frame(v: str, seq: int, base: datetime | None = None) -> str:
     """One valid simulator frame; t_onboard is `base` (default a minute ago) + 100 ms*seq."""
     t = (base or time_base()) + timedelta(milliseconds=100 * seq)
     return make_frame(v, seq, t, random.Random(seq))
+
+
+NOMINAL = {p: nom for p, (nom, _) in NOMINALS.items()}
+Values = Callable[[float], Mapping[str, float]]
+
+
+def produce_values(
+    v: str,
+    values: Mapping[str, Sequence[float]],
+    last_cmd_id: UUID | None = None,
+    base: datetime | None = None,
+    start_seq: int = 0,
+) -> None:
+    """XADD one frame per index of the `values` series (equal lengths): every other parameter
+    at its nominal, 100 ms apart from `base` (default a minute ago), `last_cmd_id` on each."""
+    lengths = {len(x) for x in values.values()}
+    assert len(lengths) == 1 and 0 not in lengths, (
+        f"series must be non-empty and equal length: {lengths}"
+    )
+    (n,) = lengths
+    base = base or time_base()
+    for i in range(n):
+        seq = start_seq + i
+        vals = NOMINAL | {p: x[i] for p, x in values.items()}
+        xadd_raw(
+            v, build_frame(v, seq, base + timedelta(milliseconds=100 * seq), vals, last_cmd_id)
+        )
+
+
+@asynccontextmanager
+async def stream_values(v: str, values: Values) -> AsyncIterator[None]:
+    """Live 10 Hz frames from now on: t_onboard = start + 100 ms x seq, every parameter at its
+    nominal, overridden by `values(seconds since start)`."""
+    stop, t0, w0 = asyncio.Event(), now(), time.monotonic()
+
+    async def run_frames() -> None:
+        seq = 0
+        while not stop.is_set():
+            t = seq / 10
+            xadd_raw(v, build_frame(v, seq, t0 + timedelta(seconds=t), NOMINAL | dict(values(t))))
+            seq += 1
+            await asyncio.sleep(max(0.0, w0 + seq / 10 - time.monotonic()))
+
+    task = asyncio.create_task(run_frames())
+    try:
+        yield
+    finally:
+        stop.set()
+        await task
+
+
+def xadd_data(stream: str, data: str, user: str = "admin") -> str:
+    """XADD {"data": data} to `stream` as ACL user `user`; returns the entry id."""
+    return str(client(user).xadd(stream, {"data": data}))
+
+
+def alarm_msgs(v: str) -> list[dict[str, Any]]:
+    """Every ui:events alarm message for vehicle v, parsed."""
+    msgs = [json.loads(f["data"]) for _, f in stream_entries("ui:events")]
+    return [m for m in msgs if m.get("kind") == "alarm" and m["alarm"]["vehicle"] == v]
 
 
 def xadd_raw(v: str, raw: str | bytes) -> str:
@@ -139,9 +204,11 @@ def read_without_ack(v: str, consumer: str) -> list[tuple[str, dict[bytes, bytes
 
 
 def ui_tm(v: str) -> list[str]:
-    """Raw `data` of every ui:events entry for vehicle v."""
+    """Raw `data` of every ui:events tm entry for vehicle v (resync also has a top-level
+    vehicle, P-pf31)."""
     entries: Any = client("admin").xrange("ui:events")
-    return [f["data"] for _, f in entries if json.loads(f["data"]).get("vehicle") == v]
+    msgs = [(f["data"], json.loads(f["data"])) for _, f in entries]
+    return [d for d, m in msgs if m.get("kind") == "tm" and m.get("vehicle") == v]
 
 
 def ui_tm_count(v: str) -> int:
@@ -184,3 +251,25 @@ def redis_time_offset(r: redis.Redis) -> float:
     sec, usec = r.time()
     t1 = time.time()
     return sec + usec / 1e6 - (t0 + t1) / 2
+
+
+def stream_entries(stream: str) -> list[tuple[str, dict[str, str]]]:
+    """Every entry of `stream`, read back through admin."""
+    entries: Any = client("admin").xrange(stream)
+    return list(entries)
+
+
+def load_schema(name: str) -> dict[str, Any]:
+    """interfaces/schemas/<name>.schema.json, e.g. load_schema("ui-event")."""
+    path = REPO / "interfaces" / "schemas" / f"{name}.schema.json"
+    schema: dict[str, Any] = json.loads(path.read_text(encoding="utf-8"))
+    return schema
+
+
+def validate_ui_event(msg: str | Mapping[str, Any]) -> None:
+    """Raise if a ui:events payload (raw JSON or parsed) does not match the ui-event schema."""
+    from jsonschema import Draft202012Validator
+
+    Draft202012Validator(load_schema("ui-event")).validate(
+        json.loads(msg) if isinstance(msg, str) else msg
+    )

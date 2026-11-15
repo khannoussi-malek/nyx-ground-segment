@@ -2,8 +2,7 @@
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Callable
-from contextlib import asynccontextmanager
+from collections.abc import Callable
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -20,34 +19,12 @@ from tests.support.ingest import worker
 from tests.support.mission import MISSION_DIR
 from tests.support.missionfiles import edit, mission_copy, set_formula, sha256_file
 from tests.support.pg import app_dsn, owner_dsn, rows, throwaway_db
-from tests.support.redisx import drained, xadd_raw
+from tests.support.redisx import drained, stream_values, xadd_raw
 
 SHIPPED = load_dir(MISSION_DIR)
 NOMINAL = {p: nom for p, (nom, _) in NOMINALS.items()}
 ROC_LINE = next(ln for ln in (MISSION_DIR / "limits.yaml").read_text().splitlines() if "roc" in ln)
 Values = Callable[[float], dict[str, float]]
-
-
-@asynccontextmanager
-async def stream_values(v: str, values: Values) -> AsyncIterator[None]:
-    """Live 10 Hz frames from now on: t_onboard = start + 100 ms × seq, every parameter at its
-    nominal, overridden by `values(seconds since start)`."""
-    stop, t0, w0 = asyncio.Event(), now(), time.monotonic()
-
-    async def run() -> None:
-        seq = 0
-        while not stop.is_set():
-            t = seq / 10
-            xadd_raw(v, build_frame(v, seq, t0 + timedelta(seconds=t), NOMINAL | values(t)))
-            seq += 1
-            await asyncio.sleep(max(0.0, w0 + seq / 10 - time.monotonic()))
-
-    task = asyncio.create_task(run())
-    try:
-        yield
-    finally:
-        stop.set()
-        await task
 
 
 def applied(v: str, set_sha256: str, db: str = "gs") -> list[dict[str, Any]]:
@@ -108,10 +85,12 @@ async def test_set_applied_after_two_equal_polls(tmp_path: Path) -> None:  # EX-
     m, v = mission_copy(tmp_path), vid()
     async with worker([v], mission_dir=m), stream_values(v, temp([22.0])):
         await until(lambda: bool(applied(v, SHIPPED.set_sha256)), 5)
-        edit(m / "limits.yaml", "yellow_high: 27.0", "yellow_high: 26.5")  # A'
+        # A': a value no other run stored (atp02's e2e edit stores 26.5 in the shared database)
+        a1 = f"yellow_high: 26.{time.time_ns() % 10**6:06d}"
+        edit(m / "limits.yaml", "yellow_high: 27.0", a1)
         first = set_formula(m)
         await asyncio.sleep(0.3)
-        edit(m / "limits.yaml", "yellow_high: 26.5", "yellow_high: 26.0")  # A'' (polls are 1 s)
+        edit(m / "limits.yaml", a1, "yellow_high: 26.0")  # A'' (polls are 1 s)
         await until(lambda: bool(applied(v, set_formula(m))), 5)
     assert applied_sets(v) == [SHIPPED.set_sha256, set_formula(m)]
     assert rows("select 1 from limits_versions where set_sha256=%s", first) == []

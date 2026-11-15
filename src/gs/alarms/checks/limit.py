@@ -102,7 +102,7 @@ class Limit:
         for lvl, lo, hi in self.bands:
             d = self.d if lvl <= current else 0.0
             if lo is not None and v <= lo + d:
-                return Reading(lvl, "LOW")
+                return Reading(lvl, "LOW", v)
             if hi is not None and v >= hi - d:
-                return Reading(lvl, "HIGH")
-        return Reading(Level.NOMINAL, None)
+                return Reading(lvl, "HIGH", v)
+        return Reading(Level.NOMINAL, None, v)

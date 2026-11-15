@@ -1,7 +1,7 @@
 """Postgres helpers: DSNs for the compose db, initdb-style migration apply, throwaway databases."""
 
 import secrets
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -84,12 +84,14 @@ def stored_row(vehicle: str, seq: int) -> dict[str, object]:
 
 
 def events_for(
-    vehicle: str, kind: str | None = None, since: datetime | None = None
+    vehicle: str | None, kind: str | None = None, since: datetime | None = None
 ) -> list[dict[str, Any]]:
-    """events rows of a vehicle in insertion order; `since` filters on created_at."""
+    """events rows of a vehicle (None: ground events) in insertion order; `since` filters on
+    created_at."""
     with psycopg.connect(app_dsn("gs"), row_factory=dict_row) as c:
         return c.execute(
-            "select * from events where vehicle=%s and (%s::text is null or kind=%s)"
+            "select * from events where vehicle is not distinct from %s"
+            " and (%s::text is null or kind=%s)"
             " and (%s::timestamptz is null or created_at >= %s) order by id",
             (vehicle, kind, kind, since, since),
         ).fetchall()
@@ -155,3 +157,45 @@ def rows(sql: str, *args: object, db: str = "gs") -> list[dict[str, Any]]:
     """An app-role query on `db`, rows as dicts."""
     with psycopg.connect(app_dsn(db), row_factory=dict_row) as c:
         return c.execute(sql, args).fetchall()
+
+
+def audit_rows(
+    action: str | None = None, actor: str | None = None, since: datetime | None = None
+) -> list[dict[str, Any]]:
+    """audit_log rows in insertion order, optionally by action, actor and `at >= since`."""
+    return rows(
+        "select * from audit_log where (%s::text is null or action=%s)"
+        " and (%s::text is null or actor=%s) and (%s::timestamptz is null or at >= %s) order by id",
+        action, action, actor, actor, since, since,
+    )  # fmt: skip
+
+
+def commands_for(vehicle: str) -> list[dict[str, Any]]:
+    return rows("select * from commands where vehicle=%s order by queued_at", vehicle)
+
+
+def ack_requests_for(vehicle: str) -> list[dict[str, Any]]:
+    return rows("select * from alarm_ack_request where vehicle=%s order by requested_at", vehicle)
+
+
+def open_alarm(vehicle: str, param: str) -> dict[str, Any] | None:
+    """The not-CLEARED alarm of (vehicle, param); the partial unique index allows at most one."""
+    found = rows(
+        "select * from alarms where vehicle=%s and param=%s and state <> 'CLEARED'", vehicle, param
+    )
+    return found[0] if found else None
+
+
+def insert_rows(vehicle: str, rows_: Sequence[Mapping[str, Any]]) -> None:
+    """Telemetry rows as gs_app; each mapping needs t_onboard and seq, other columns (mode
+    defaults to TEST) are the parameter columns."""
+    with psycopg.connect(app_dsn("gs")) as c:
+        for row in rows_:
+            cols = {"vehicle": vehicle, "mode": "TEST"} | dict(row)
+            c.execute(
+                sql.SQL("insert into telemetry ({}) values ({})").format(
+                    sql.SQL(", ").join(map(sql.Identifier, cols)),
+                    sql.SQL(", ").join(sql.Placeholder() * len(cols)),
+                ),
+                list(cols.values()),
+            )

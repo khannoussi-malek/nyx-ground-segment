@@ -86,3 +86,12 @@ def test_served_openapi_is_the_built_document(tmp_path: Path) -> None:
         )
     )
     assert app.openapi() == build_openapi(ROUTER.routes)
+
+
+def test_ack_request_carries_seen_key() -> None:  # P-pf43, owner-approved contract change
+    spec = json.loads((REPO / "interfaces/openapi.json").read_text())
+    body = spec["components"]["schemas"]["AckRequest"]
+    assert "seen_key" in body["properties"] and "seen_key" not in body["required"]
+    (text, _null) = body["properties"]["seen_key"]["anyOf"]
+    assert (text["minLength"], text["maxLength"]) == (1, 200)
+    assert "seen_key?: string | null;" in (REPO / "ui/src/api/schema.d.ts").read_text()

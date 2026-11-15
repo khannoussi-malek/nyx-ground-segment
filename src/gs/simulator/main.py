@@ -1,11 +1,12 @@
 """gs-sim: two-vehicle 10 Hz telemetry simulator writing tm:<vehicle> streams."""
 
 import asyncio
-import logging
 import random
 import signal
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 
 import redis.asyncio
 from redis.asyncio.retry import Retry
@@ -13,7 +14,10 @@ from redis.backoff import NoBackoff
 
 from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import State, serve_health
+from gs.common.logs import setup_logging
+from gs.common.missiondb import load_dir
 from gs.simulator.buffer import FrameBuffer, send_loop
+from gs.simulator.commands import CommandBox, tc_loop
 from gs.simulator.faults import FaultBoard, fault_routes
 from gs.simulator.frames import tick_loop
 
@@ -28,6 +32,7 @@ class SimSettings:
     seed: str
     bind_host: str
     health_port: int
+    mission_db: Path
 
     @classmethod
     def from_env(cls) -> SimSettings:
@@ -37,6 +42,7 @@ class SimSettings:
             seed=require("SIM_SEED"),
             bind_host=require("BIND_HOST"),
             health_port=require_int("HEALTH_PORT"),
+            mission_db=Path(require("MISSION_DB")),
         )
 
 
@@ -46,13 +52,21 @@ async def xadd_tm(r: redis.asyncio.Redis, stream: str, data: str, maxlen: int = 
     )
 
 
-def sim_status(buf: FrameBuffer) -> tuple[State, dict[str, object]]:
-    state: State = "degraded" if len(buf) >= DEGRADED_BACKLOG or buf.overflow else "ok"
-    return state, {"buffered": len(buf), "overflow": buf.overflow}
+def sim_status(
+    buf: FrameBuffer, boxes: Iterable[CommandBox] = ()
+) -> tuple[State, dict[str, object]]:
+    """Degraded on backlog, overflow, or any schema-rejected tc entry until restart (D-ING-27)."""
+    schema_errors = sum(b.schema_errors for b in boxes)
+    bad = len(buf) >= DEGRADED_BACKLOG or buf.overflow or schema_errors
+    state: State = "degraded" if bad else "ok"
+    return state, {"buffered": len(buf), "overflow": buf.overflow, "schema_errors": schema_errors}
 
 
 async def run(s: SimSettings, stop: asyncio.Event) -> None:
     buf = FrameBuffer()
+    # loaded once: a bound changed in commands.yaml reaches the simulator at its next restart
+    commands = load_dir(s.mission_db).commands
+    boxes = {v: CommandBox(commands) for v in s.vehicles}
     # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
     r = redis.asyncio.Redis.from_url(
         s.redis_url,
@@ -64,13 +78,15 @@ async def run(s: SimSettings, stop: asyncio.Event) -> None:
 
     board = FaultBoard()
     routes = fault_routes(board, s.vehicles, time.monotonic)
-    server = await serve_health(s.bind_host, s.health_port, lambda: sim_status(buf), routes)
+    server = await serve_health(
+        s.bind_host, s.health_port, lambda: sim_status(buf, boxes.values()), routes
+    )
     try:
         async with asyncio.TaskGroup() as tg:
             for v in s.vehicles:
-                tg.create_task(
-                    tick_loop(v, buf, random.Random(f"{s.seed}:{v}"), stop, faults=board)
-                )
+                rng = random.Random(f"{s.seed}:{v}")
+                tg.create_task(tick_loop(v, buf, rng, stop, faults=board, box=boxes[v]))
+                tg.create_task(tc_loop(r, v, boxes[v], stop))
             tg.create_task(send_loop(buf, lambda st, d: xadd_tm(r, st, d), stop))
     finally:
         server.close()
@@ -87,5 +103,5 @@ async def _main() -> None:
 
 
 def main() -> None:
-    logging.basicConfig(level=logging.INFO)
+    setup_logging("gs-sim")
     asyncio.run(_main())

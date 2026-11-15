@@ -1,9 +1,17 @@
 export const REOPEN_MS = 1000;
+/** A reopen that failed before it opened (the api is still down) retries this soon (UI-07). */
+export const RETRY_MS = 250;
+export const KINDS = ["hello", "snapshot", "tm", "alarm", "cmd", "link", "ground", "hb"] as const;
+export type Kind = (typeof KINDS)[number];
 
-/** EventSource with a client watchdog (D-UI-03): on error close and reopen after 1 s, one pending at a time. */
+/**
+ * EventSource with a client watchdog (D-UI-03): on error close and reopen after 1 s, one pending at a time.
+ * A source that never opened retries after RETRY_MS: waiting a full second per refused attempt put up
+ * to 1 s between the api listening again and the console reconnecting (UI-07).
+ */
 export function connectEvents(
   url: string,
-  onEvent: (kind: "snapshot" | "tm", data: unknown) => void,
+  onEvent: (kind: Kind, data: unknown) => void,
   onError: () => void,
   deps = {
     EventSource: globalThis.EventSource,
@@ -21,7 +29,11 @@ export function connectEvents(
     if (stopped) return;
     const src = new deps.EventSource(url);
     es = src;
-    for (const kind of ["snapshot", "tm"] as const) {
+    let opened = false;
+    src.addEventListener("open", () => {
+      opened = true;
+    });
+    for (const kind of KINDS) {
       src.addEventListener(kind, (e) => {
         let data: unknown;
         try {
@@ -35,7 +47,7 @@ export function connectEvents(
     }
     src.addEventListener("error", () => {
       src.close();
-      timer ??= setTimeout(open, REOPEN_MS);
+      timer ??= setTimeout(open, opened ? REOPEN_MS : RETRY_MS);
       onError();
     });
   };

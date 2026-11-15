@@ -4,7 +4,14 @@ import psycopg
 import pytest
 
 from tests.support.env import REPO, sh
-from tests.support.pg import admin_dsn, app_dsn, apply_migrations, owner_dsn, throwaway_db
+from tests.support.pg import (
+    admin_dsn,
+    app_dsn,
+    apply_migrations,
+    column_types,
+    owner_dsn,
+    throwaway_db,
+)
 
 EXPECTED = {
     "telemetry", "seq_state", "limits_versions", "engine_state", "events", "test_session",
@@ -82,3 +89,24 @@ def test_compose_db_roles_use_env_passwords() -> (
 
 def test_roles_script_is_executable() -> None:
     assert (Path(REPO) / "migrations" / "00-roles.sh").stat().st_mode & 0o111
+
+
+def test_ack_invalid_and_alarm_value_columns() -> None:
+    with throwaway_db() as db, psycopg.connect(owner_dsn(db)) as c:
+        assert column_types(c, "alarm_events")["value"] == "double precision"
+        c.execute(
+            "insert into commands (cmd_id, vehicle, name, args, args_hash, hazardous, issued_by,"
+            " state, failure_reason, queued_at) values (gen_random_uuid(), 'V', 'n', '{}', 'h',"
+            " false, 'u', 'FAILED', 'ACK_INVALID', now())"
+        )
+
+
+def test_view_lookup_indexes() -> None:  # P-pf21: alarm_views' lateral lookups per alarm
+    with throwaway_db() as db, psycopg.connect(owner_dsn(db)) as c:
+        rows = c.execute(
+            "select tablename, indexdef from pg_indexes where tablename in"
+            " ('alarm_events', 'alarm_ack_request')"
+        ).fetchall()
+    defs = {(t, d.split(" USING ")[1]) for t, d in rows}
+    assert ("alarm_events", "btree (alarm_id, id)") in defs
+    assert ("alarm_ack_request", "btree (alarm_id, requested_at)") in defs

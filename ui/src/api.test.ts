@@ -105,15 +105,15 @@ test("sendCommand: HAZARDOUS_CONFIRMATION_REQUIRED is a confirm step, not an err
 
 test("sendCommand: refusals keep the server's words; a duplicate carries who and when", async () => {
   stub(409, { error: "DUPLICATE_COMMAND", message: "dup", by: "fc2", seconds_ago: 1, cmd_id: "c0" });
-  expect(await sendCommand(REQ)).toEqual({ kind: "rejected", error: "DUPLICATE_COMMAND", message: "dup", by: "fc2", secondsAgo: 1 });
+  expect(await sendCommand(REQ)).toEqual({ kind: "rejected", error: "DUPLICATE_COMMAND", message: "dup", ambiguous: false, by: "fc2", secondsAgo: 1 });
   stub(422, { error: "INVALID_ARGS", message: "duration_s: 11 is outside [1.0, 10.0]" });
-  expect(await sendCommand(REQ)).toEqual({ kind: "rejected", error: "INVALID_ARGS", message: "duration_s: 11 is outside [1.0, 10.0]" });
+  expect(await sendCommand(REQ)).toEqual({ kind: "rejected", error: "INVALID_ARGS", message: "duration_s: 11 is outside [1.0, 10.0]", ambiguous: false });
   stub(409, { error: "HAZARDOUS_CONFIRMATION_REQUIRED", message: "no token in the body" }); // malformed: not a confirm
   expect(await sendCommand(REQ)).toMatchObject({ kind: "rejected" });
   stub(502);
-  expect(await sendCommand(REQ)).toEqual({ kind: "rejected", error: "HTTP_502", message: "Command failed (502)" });
+  expect(await sendCommand(REQ)).toEqual({ kind: "rejected", error: "HTTP_502", message: "Command failed (502)", ambiguous: true });
   vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
-  expect(await sendCommand(REQ)).toMatchObject({ kind: "rejected", error: "NETWORK" });
+  expect(await sendCommand(REQ)).toMatchObject({ kind: "rejected", error: "NETWORK", ambiguous: true });
 });
 
 test("listCommands: GET with the vehicle filter, throws on an error status", async () => {
@@ -136,4 +136,17 @@ test("fetchBuckets: from, to and the pixel width in the query; throws on an erro
   );
   stub(400);
   await expect(fetchBuckets("v", "p", "a", "b", 1)).rejects.toThrow("400");
+});
+
+test("sendCommand: only a network failure or a 5xx is ambiguous; a 4xx refusal is a clear no (P-pf26)", async () => {
+  stub(503, { error: "BROKER_DOWN", message: "Redis error" });
+  expect(await sendCommand(REQ)).toMatchObject({ error: "BROKER_DOWN", ambiguous: true });
+  stub(500, { error: "INTERNAL", message: "x" });
+  expect(await sendCommand(REQ)).toMatchObject({ ambiguous: true });
+  stub(422, { error: "INVALID_ARGS", message: "x" });
+  expect(await sendCommand(REQ)).toMatchObject({ ambiguous: false });
+  stub(409, { error: "CONFIRMATION_INVALID", message: "x" });
+  expect(await sendCommand(REQ)).toMatchObject({ ambiguous: false });
+  vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>", { status: 202 }))); // an unreadable 202 body: unknown outcome
+  expect(await sendCommand(REQ)).toMatchObject({ error: "NETWORK", ambiguous: true });
 });

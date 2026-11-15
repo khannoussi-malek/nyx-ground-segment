@@ -43,7 +43,14 @@ test("confirm needs the exact vehicle id and a 10-char reason", () => {
 });
 
 test("a duplicate names who and how long ago; other refusals keep the server's message", () => {
-  expect(rejectedText({ kind: "rejected", error: "DUPLICATE_COMMAND", message: "dup", by: "fc2", secondsAgo: 1 })).toBe("fc2 sent the same command 1 s ago");
-  expect(rejectedText({ kind: "rejected", error: "DUPLICATE_COMMAND", message: "dup" })).toBe("dup");
-  expect(rejectedText({ kind: "rejected", error: "INVALID_ARGS", message: "duration_s: 11 is outside [1.0, 10.0]" })).toBe("duration_s: 11 is outside [1.0, 10.0]");
+  expect(rejectedText({ kind: "rejected", error: "DUPLICATE_COMMAND", message: "dup", ambiguous: false, by: "fc2", secondsAgo: 1 })).toBe("fc2 sent the same command 1 s ago");
+  expect(rejectedText({ kind: "rejected", error: "DUPLICATE_COMMAND", message: "dup", ambiguous: false })).toBe("dup");
+  expect(rejectedText({ kind: "rejected", error: "INVALID_ARGS", message: "duration_s: 11 is outside [1.0, 10.0]", ambiguous: false })).toBe("duration_s: 11 is outside [1.0, 10.0]");
+});
+
+test("seconds_ago is rounded; an ambiguous failure never suggests a resend (P-pf26)", () => {
+  expect(rejectedText({ kind: "rejected", error: "DUPLICATE_COMMAND", message: "d", ambiguous: false, by: "fc2", secondsAgo: 1.4999 })).toBe("fc2 sent the same command 1 s ago");
+  const r = rejectedText({ kind: "rejected", error: "BROKER_DOWN", message: "Redis error: try again", ambiguous: true });
+  expect(r).toBe("May have been sent – check the command list before sending again");
+  expect(r).not.toMatch(/again\b.*(send|retry)|safe to/i);
 });

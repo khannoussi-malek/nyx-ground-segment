@@ -26,6 +26,7 @@ afterEach(() => {
 const MDB = {
   commands: {
     isolate_valve: { description: "Close the cabin isolation valve", hazardous: false, args: { valve: { type: "enum", values: ["A", "B"], required: true } }, receive_timeout_s: 5, verify_timeout_s: 15 },
+    set_rate: { description: "Set the rate", hazardous: false, args: { n: { type: "int", min: 1, max: 5, required: true } }, receive_timeout_s: 5, verify_timeout_s: 15 },
     vent_cabin: { description: "Open the cabin vent valve", hazardous: true, hazard: "Irreversible loss of cabin atmosphere", args: { duration_s: { type: "float", min: 1, max: 10, unit: "s", required: true } }, receive_timeout_s: 5, verify_timeout_s: 15 },
   },
   parameters: {},
@@ -40,7 +41,7 @@ function mount() {
   return store;
 }
 
-type Reply = { status: number; body: unknown };
+type Reply = { status: number; body: unknown } | "network";
 /** POST /api/commands answered in order; GET /api/commands answered with `list`. */
 function stubApi(posts: Reply[], list: unknown[] = []) {
   const queue = [...posts];
@@ -48,6 +49,7 @@ function stubApi(posts: Reply[], list: unknown[] = []) {
     if (init?.method === "POST") {
       const r = queue.shift();
       if (!r) throw new Error("unexpected POST");
+      if (r === "network") throw new TypeError("offline");
       return new Response(JSON.stringify(r.body), { status: r.status });
     }
     return new Response(JSON.stringify(list), { status: 200 });
@@ -86,6 +88,7 @@ test("typed argument inputs come from the mission db: enum select, number input 
 
 test("Send stays disabled until every required argument has a value", () => {
   mount();
+  set(panelSelect("Vehicle"), "NYX-TA1");
   expect(send().disabled).toBe(true);
   set(panelSelect("Command"), "isolate_valve");
   expect(send().disabled).toBe(true);
@@ -93,7 +96,7 @@ test("Send stays disabled until every required argument has a value", () => {
   expect(send().disabled).toBe(false);
 });
 
-test("a plain command: posted with the chosen vehicle, then the list is fetched so QUEUED shows at once", async () => {
+test("a plain command (vehicle chosen explicitly): posted with the chosen vehicle, then the list is fetched so QUEUED shows at once", async () => {
   const store = mount();
   const row = commandView({ cmd_id: "c9", name: "isolate_valve", args: { valve: "A" }, vehicle: "NYX-TA2" });
   const f = stubApi([{ status: 202, body: { cmd_id: "c9" } }], [row]);
@@ -111,6 +114,7 @@ test("a plain command: posted with the chosen vehicle, then the list is fetched 
 test("a failing list refresh is logged, not fatal", async () => {
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   mount();
+  set(panelSelect("Vehicle"), "NYX-TA1");
   vi.stubGlobal("fetch", vi.fn(async (_u: string, init?: { method?: string }) =>
     init?.method === "POST" ? new Response(JSON.stringify({ cmd_id: "c" }), { status: 202 }) : new Response(null, { status: 503 })));
   set(panelSelect("Command"), "isolate_valve");
@@ -123,6 +127,7 @@ test("a failing list refresh is logged, not fatal", async () => {
 
 test("INVALID_ARGS and DUPLICATE_COMMAND show inline", async () => {
   mount();
+  set(panelSelect("Vehicle"), "NYX-TA1");
   stubApi([
     { status: 422, body: { error: "INVALID_ARGS", message: "duration_s: 11 is outside [1.0, 10.0]" } },
     { status: 409, body: { error: "DUPLICATE_COMMAND", message: "dup", by: "fc2", seconds_ago: 1, cmd_id: "c0" } },
@@ -181,6 +186,7 @@ test("confirm posts the same body with the token and the reason, then closes and
 test("the reason typed in the panel is carried into the dialog", async () => {
   const store = mount();
   stubApi([{ status: 409, body: { error: "HAZARDOUS_CONFIRMATION_REQUIRED", message: "m", hazard: "h", confirm_token: "t", expires_in_s: 60 } }]);
+  set(panelSelect("Vehicle"), "NYX-TA1");
   set(panelSelect("Command"), "vent_cabin");
   set(panelSelect("duration_s"), "3");
   set(panelSelect("Reason"), "planned vent test");
@@ -249,4 +255,147 @@ test("without the mission db the panel waits instead of offering commands", () =
   act(() => root.render(<CommandPanel store={createStore()} mission={null} />));
   expect(host.textContent).toContain("Loading the mission database");
   expect(host.querySelector("form")).toBeNull();
+});
+
+const AMBIGUOUS = "May have been sent – check the command list before sending again";
+const listGets = (f: ReturnType<typeof stubApi>) => f.mock.calls.filter((c) => (c[1] as { method?: string } | undefined)?.method !== "POST").length;
+
+test("a plain send that fails ambiguously says it may have been sent, refreshes the list, never offers a resend (P-pf26)", async () => {
+  mount();
+  for (const reply of ["network", { status: 503, body: { error: "BROKER_DOWN", message: "Redis error: try again" } }, { status: 500, body: { error: "X", message: "boom" } }] as Reply[]) {
+    const f = stubApi([reply]);
+    set(panelSelect("Vehicle"), "NYX-TA1");
+    set(panelSelect("Command"), "isolate_valve");
+    set(panelSelect("valve"), "A");
+    await act(async () => send().click());
+    expect(alert()).toBe(AMBIGUOUS);
+    expect(listGets(f)).toBe(1);
+  }
+});
+
+test("a confirm that fails ambiguously kills the dialog, refreshes the list, and the expiry timer never overwrites the message", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  const { f } = await hazardous(["network"]);
+  set(dialogField("Reason"), "venting now");
+  set(dialogField("Type"), "NYX-TA2");
+  await act(async () => dlg("Confirm").click());
+  expect(host.querySelector("dialog [role=alert]")!.textContent).toBe(AMBIGUOUS);
+  expect(dlg("Confirm").disabled).toBe(true);
+  expect(listGets(f)).toBe(1); // the panel's refresh
+  act(() => void vi.advanceTimersByTime(60_000)); // the token's lifetime ends
+  expect(host.querySelector("dialog [role=alert]")!.textContent).toBe(AMBIGUOUS);
+  act(() => dlg("Cancel").click());
+  expect(host.querySelector('.commands > [role="alert"]')!.textContent).toBe(AMBIGUOUS); // still said after the dialog is gone
+});
+
+test("a confirm answered 503 BROKER_DOWN is ambiguous too", async () => {
+  await hazardous([{ status: 503, body: { error: "BROKER_DOWN", message: "Redis error" } }]);
+  set(dialogField("Reason"), "venting now");
+  set(dialogField("Type"), "NYX-TA2");
+  await act(async () => dlg("Confirm").click());
+  expect(host.querySelector("dialog [role=alert]")!.textContent).toBe(AMBIGUOUS);
+});
+
+test("the vehicle is an explicit choice: blank until chosen, a new vehicle never becomes the target, a vanished one clears it (P-pf26)", () => {
+  const store = mount();
+  expect(panelSelect("Vehicle").value).toBe("");
+  set(panelSelect("Command"), "isolate_valve");
+  set(panelSelect("valve"), "A");
+  expect(send().disabled).toBe(true); // everything but the vehicle is set
+  set(panelSelect("Vehicle"), "NYX-TA1");
+  expect(send().disabled).toBe(false);
+  const tm = (vehicle: string) => ({ kind: "tm", vehicle, seq: 1, t_onboard: "2026-11-14T10:00:00.000000Z", mode: "TEST", last_cmd_id: null, values: {}, age_ms: 1, frozen: false });
+  act(() => ingest(store, "tm", tm("NYX-TA0")));
+  expect(panelSelect("Vehicle").value).toBe("NYX-TA1");
+  act(() => ingest(store, "snapshot", { kind: "snapshot", vehicles: { "NYX-TA2": tm("NYX-TA2") }, alarms: [], commands: [], events: [] }));
+  expect(panelSelect("Vehicle").value).toBe("");
+  expect(send().disabled).toBe(true);
+});
+
+/** POST answered by hand, so the request can be held in flight. */
+function heldPost() {
+  let release!: (r: Response) => void;
+  const f = vi.fn((_u: string, init?: { method?: string }) =>
+    init?.method === "POST" ? new Promise<Response>((res) => (release = res)) : Promise.resolve(new Response("[]", { status: 200 })));
+  vi.stubGlobal("fetch", f);
+  return { f, release: (r: Response) => release(r) };
+}
+
+test("while the confirm is in flight Cancel is disabled and Esc is ignored; the answer is not lost", async () => {
+  mount();
+  stubApi([{ status: 409, body: { error: "HAZARDOUS_CONFIRMATION_REQUIRED", message: "m", hazard: "h", confirm_token: "t", expires_in_s: 60 } }]);
+  set(panelSelect("Vehicle"), "NYX-TA2");
+  set(panelSelect("Command"), "vent_cabin");
+  set(panelSelect("duration_s"), "3");
+  await act(async () => send().click());
+  const held = heldPost();
+  set(dialogField("Reason"), "venting now");
+  set(dialogField("Type"), "NYX-TA2");
+  await act(async () => void dlg("Confirm").click());
+  expect(dlg("Cancel").disabled).toBe(true);
+  const esc = new Event("cancel", { cancelable: true });
+  act(() => void host.querySelector("dialog")!.dispatchEvent(esc));
+  expect(esc.defaultPrevented).toBe(true);
+  expect(host.querySelector("dialog")).not.toBeNull();
+  await act(async () => held.release(new Response(JSON.stringify({ cmd_id: "c" }), { status: 202 })));
+  expect(host.querySelector("dialog")).toBeNull();
+  expect(host.querySelector('[role="status"]')!.textContent).toBe("Command queued for NYX-TA2");
+});
+
+test("closing the confirm dialog returns the focus to the Send button", async () => {
+  await hazardous();
+  act(() => dlg("Cancel").click());
+  expect(document.activeElement).toBe(send());
+});
+
+test("two submits in one task send once", async () => {
+  mount();
+  const held = heldPost();
+  set(panelSelect("Vehicle"), "NYX-TA1");
+  set(panelSelect("Command"), "isolate_valve");
+  set(panelSelect("valve"), "A");
+  const form = host.querySelector("form")!;
+  await act(async () => {
+    form.requestSubmit();
+    form.requestSubmit();
+  });
+  expect(held.f.mock.calls.filter((c) => (c[1] as { method?: string } | undefined)?.method === "POST")).toHaveLength(1);
+  await act(async () => held.release(new Response(JSON.stringify({ cmd_id: "c" }), { status: 202 })));
+});
+
+test("two confirms in one task send once", async () => {
+  mount();
+  stubApi([{ status: 409, body: { error: "HAZARDOUS_CONFIRMATION_REQUIRED", message: "m", hazard: "h", confirm_token: "t", expires_in_s: 60 } }]);
+  set(panelSelect("Vehicle"), "NYX-TA2");
+  set(panelSelect("Command"), "vent_cabin");
+  set(panelSelect("duration_s"), "3");
+  await act(async () => send().click());
+  const held = heldPost();
+  set(dialogField("Reason"), "venting now");
+  set(dialogField("Type"), "NYX-TA2");
+  const form = host.querySelector("dialog form")!;
+  await act(async () => {
+    (form as HTMLFormElement).requestSubmit();
+    (form as HTMLFormElement).requestSubmit();
+  });
+  expect(held.f.mock.calls.filter((c) => (c[1] as { method?: string } | undefined)?.method === "POST")).toHaveLength(1);
+  await act(async () => held.release(new Response(JSON.stringify({ cmd_id: "c" }), { status: 202 })));
+});
+
+test("an integer argument steps by 1, a float by any", () => {
+  mount();
+  set(panelSelect("Command"), "set_rate");
+  expect(panelSelect("n").step).toBe("1");
+  set(panelSelect("Command"), "vent_cabin");
+  expect(panelSelect("duration_s").step).toBe("any");
+});
+
+test("a submit that bypasses the disabled button still needs the typed vehicle id and a reason", async () => {
+  const { f } = await hazardous();
+  const form = host.querySelector("dialog form") as HTMLFormElement;
+  await act(async () => form.requestSubmit()); // nothing typed
+  set(dialogField("Type"), "NYX-TA1");
+  set(dialogField("Reason"), "venting now");
+  await act(async () => form.requestSubmit()); // wrong vehicle
+  expect(posted(f)).toHaveLength(1); // only the first request, no confirm
 });

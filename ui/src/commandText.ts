@@ -35,9 +35,12 @@ export function outcomeText(c: CommandView, m: MissionDb | null = null): string 
   }
 }
 
-/** The line shown for a refused command. */
+export const AMBIGUOUS_TEXT = "May have been sent \u2013 check the command list before sending again";
+
+/** The line shown for a refused command. An ambiguous failure never suggests a resend (P-pf26). */
 export function rejectedText(r: Extract<SendResult, { kind: "rejected" }>): string {
+  if (r.ambiguous) return AMBIGUOUS_TEXT;
   return r.error === "DUPLICATE_COMMAND" && r.by !== undefined && r.secondsAgo !== undefined
-    ? `${r.by} sent the same command ${r.secondsAgo} s ago`
+    ? `${r.by} sent the same command ${Math.round(r.secondsAgo)} s ago`
     : r.message;
 }

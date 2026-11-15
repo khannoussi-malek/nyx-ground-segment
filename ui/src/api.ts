@@ -70,9 +70,11 @@ type CommandConflict = components["schemas"]["CommandConflict"];
 export type SendResult =
   | { kind: "accepted"; cmdId: string }
   | { kind: "confirm"; token: string; hazard: string; expiresInS: number }
-  | { kind: "rejected"; error: string; message: string; by?: string; secondsAgo?: number };
+  | { kind: "rejected"; error: string; message: string; ambiguous: boolean; by?: string; secondsAgo?: number };
 
-const rejected = (error: string, message: string): SendResult => ({ kind: "rejected", error, message });
+/** `ambiguous`: a network failure or any 5xx. The command MAY have been accepted (a timed-out XADD leaves it SENT,
+ *  P-pf12), so the answer is never "send it again": check the command list first (P-pf26). */
+const rejected = (error: string, message: string, ambiguous = false): SendResult => ({ kind: "rejected", error, message, ambiguous });
 
 /** Send a command. A hazardous one answers 409 HAZARDOUS_CONFIRMATION_REQUIRED with a token: that is `confirm`, not an
  *  error; resend the same request with `confirm_token` and `reason`. Every other refusal keeps the server's words. */
@@ -92,11 +94,12 @@ export async function sendCommand(req: CommandRequest): Promise<SendResult> {
       kind: "rejected",
       error: b?.error ?? `HTTP_${r.status}`,
       message: b?.message ?? `Command failed (${r.status})`,
+      ambiguous: r.status >= 500,
       ...(b?.by != null && { by: b.by }),
       ...(b?.seconds_ago != null && { secondsAgo: b.seconds_ago }),
     };
   } catch {
-    return rejected("NETWORK", "Could not reach the ground segment");
+    return rejected("NETWORK", "Could not reach the ground segment", true);
   }
 }
 

@@ -1,12 +1,12 @@
-import { useState, useSyncExternalStore } from "react";
+import { useRef, useState, useSyncExternalStore } from "react";
 import { listCommands, sendCommand, type CommandRequest, type MissionDb } from "./api";
-import { rejectedText } from "./commandText";
+import { AMBIGUOUS_TEXT, rejectedText } from "./commandText";
 import { ConfirmDialog } from "./ConfirmDialog";
 import type { Store } from "./store";
 import { Timeline } from "./Timeline";
 
 type Spec = MissionDb["commands"][string];
-type Pending = { req: CommandRequest; hazard: string; token: string; expiresInS: number };
+type Pending = { req: CommandRequest; hazard: string; token: string; expiresInS: number; opener: HTMLElement | null };
 const SHOWN = 20;
 
 function ArgInput({ name, spec, value, onChange }: {
@@ -25,7 +25,7 @@ function ArgInput({ name, spec, value, onChange }: {
         </select>
       ) : (
         <>
-          <input type="number" min={spec.min} max={spec.max} step="any" value={value} onChange={(e) => onChange(e.target.value)} />
+          <input type="number" min={spec.min} max={spec.max} step={spec.type === "int" ? 1 : "any"} value={value} onChange={(e) => onChange(e.target.value)} />
           {spec.unit && <span className="unit">{spec.unit}</span>}
         </>
       )}
@@ -45,7 +45,10 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
-  const target = vehicle || vehicles[0] || "";
+  const sendButton = useRef<HTMLButtonElement>(null);
+  const inFlight = useRef(false); // two clicks in one task must not send twice
+  // the target is always an explicit choice: a vehicle that appears later never becomes it, one that vanishes clears it
+  const target = vehicles.includes(vehicle) ? vehicle : "";
   const spec: Spec | undefined = mission && name && Object.hasOwn(mission.commands, name) ? mission.commands[name] : undefined;
 
   const build = (): CommandRequest | null => {
@@ -76,15 +79,20 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
     void refresh(v);
   };
   async function send() {
-    if (!req) return;
+    if (!req || inFlight.current) return;
+    inFlight.current = true;
     setBusy(true);
     setError("");
     setNote("");
     const r = await sendCommand(req);
+    inFlight.current = false;
     setBusy(false);
     if (r.kind === "accepted") accepted(req.vehicle);
-    else if (r.kind === "confirm") setPending({ req, hazard: r.hazard, token: r.token, expiresInS: r.expiresInS });
-    else setError(rejectedText(r));
+    else if (r.kind === "confirm") setPending({ req, hazard: r.hazard, token: r.token, expiresInS: r.expiresInS, opener: sendButton.current });
+    else {
+      setError(rejectedText(r));
+      if (r.ambiguous) void refresh(req.vehicle); // it may be in the list already
+    }
   }
 
   if (!mission) return <section className="commands" aria-label="Commands"><h2>Commands</h2><p className="empty">Loading the mission database…</p></section>;
@@ -95,6 +103,7 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
         <label>
           Vehicle
           <select value={target} onChange={(e) => setVehicle(e.target.value)}>
+            <option value="">—</option>
             {vehicles.map((v) => <option key={v} value={v}>{v}</option>)}
           </select>
         </label>
@@ -112,7 +121,7 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
           Reason
           <input value={reason} onChange={(e) => setReason(e.target.value)} />
         </label>
-        <button type="submit" disabled={busy || req === null}>Send</button>
+        <button ref={sendButton} type="submit" disabled={busy || req === null}>Send</button>
       </form>
       {spec && <p className="desc">{spec.description}{spec.hazardous && <strong> – hazardous: {spec.hazard}</strong>}</p>}
       {error && <p role="alert">{error}</p>}
@@ -131,6 +140,11 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
         <ConfirmDialog
           {...pending}
           initialReason={reason}
+          opener={pending.opener}
+          onAmbiguous={() => {
+            setError(AMBIGUOUS_TEXT);
+            void refresh(pending.req.vehicle);
+          }}
           onCancel={() => setPending(null)}
           onSent={() => {
             accepted(pending.req.vehicle);

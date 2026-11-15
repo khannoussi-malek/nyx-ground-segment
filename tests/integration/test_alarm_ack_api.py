@@ -2,6 +2,7 @@
 
 import uuid
 from collections.abc import Iterator
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -125,6 +126,13 @@ async def test_second_ack_superseded() -> None:  # two operators
 @pytest.fixture
 def boom_trigger() -> Iterator[str]:
     """BEFORE INSERT trigger on alarm_events: SQLSTATE 22023 for note 'BOOM' of one vehicle."""
+    with boom("22023") as v:
+        yield v
+
+
+@contextmanager
+def boom(errcode: str) -> Iterator[str]:
+    """A fresh vehicle whose alarm_events INSERT with note 'BOOM' raises SQLSTATE `errcode`."""
     v = vid()
     name = "boom_" + v.lower().replace("-", "_")
     fn, trg = sql.Identifier(name), sql.Identifier(name + "_trg")
@@ -133,9 +141,9 @@ def boom_trigger() -> Iterator[str]:
             sql.SQL(
                 "CREATE FUNCTION {}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
                 " IF NEW.vehicle = {} AND NEW.note = 'BOOM' THEN"
-                " RAISE EXCEPTION 'test boom' USING ERRCODE = '22023'; END IF;"
+                " RAISE EXCEPTION 'test boom' USING ERRCODE = {}; END IF;"
                 " RETURN NEW; END $$"
-            ).format(fn, sql.Literal(v))
+            ).format(fn, sql.Literal(v), sql.Literal(errcode))
         )
         c.execute(
             sql.SQL(
@@ -164,6 +172,24 @@ async def test_bad_ack_request_never_blocks_frames(boom_trigger: str) -> None:  
     audits = {r["details"]["request_id"]: r["details"] for r in applied_audits({bad, good})}
     assert audits[bad]["result"] == "rejected" and "test boom" in audits[bad]["reason"]
     assert audits[good]["result"] == "applied"
+
+
+async def test_plpgsql_raise_rejects_and_ingest_keeps_running() -> None:  # P-pf40
+    with boom("P0001") as v:  # a trigger's plain RAISE EXCEPTION
+        base = now() - timedelta(minutes=1)
+        aid = await red_alarm(v, base)
+        bad, good = request(v, aid, note="BOOM"), request(v, aid)
+        produce_values(v, NOMINAL5, base=base, start_seq=10)
+        async with worker([v]) as w:
+            await until(
+                lambda: drained(v) and "pending" not in {s for s, _ in status(v).values()}, 5
+            )
+            assert not w.done()  # no exit, no restart loop
+        st = status(v)
+        assert st[good] == ("applied", None) and st[bad][0] == "rejected"
+        assert (st[bad][1] or "").startswith("P0001: test boom") and stored(v) == 15
+        audits = {r["details"]["request_id"]: r["details"] for r in applied_audits({bad, good})}
+        assert audits[bad]["result"] == "rejected" and audits[good]["result"] == "applied"
 
 
 async def test_ack_applies_during_los() -> None:  # Review Focus 2: no frame to start a batch

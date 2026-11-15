@@ -16,10 +16,12 @@ from gs.alarms import engine
 from gs.alarms.contract import Transition
 from gs.alarms.engine import EngineState
 from gs.common.audit import audit
-from gs.ingest.errors import pg_error_class
 from gs.ingest.seq import SeqState
 
 Result = Literal["applied", "superseded"]
+# P-pf40: 22 data, 23 integrity, P0 PL/pgSQL RAISE (a trigger) reject one request; a request
+# that can never apply must not exit ingest into a restart loop. Every other class propagates.
+REJECT_CLASSES = ("22", "23", "P0")
 NOT_OPEN = "alarm no longer open"  # ruling R-w
 ALREADY_ACKED = "already acked"
 
@@ -123,14 +125,14 @@ async def apply_acks(
     after: SeqState | None,
 ) -> EngineState:
     """Apply `reqs` in order inside the caller's frame transaction. A request whose write fails
-    with a data error is `rejected` (text of the error, audited) and the engine keeps its
-    pre-ACK state; an operational error propagates like any other in the frame path."""
+    with a REJECT_CLASSES error is `rejected` (text of the error, audited) and the engine keeps
+    its pre-ACK state; any other error propagates (operational, D-ING-24)."""
     for req in reqs:
         new, tr, result, reason = apply_ack(state, req, vehicle, datetime.now(UTC))
         try:
             await write_ack(conn, vehicle, req, result, reason, tr, after)
         except psycopg.Error as e:
-            if pg_error_class(e.sqlstate) == "operational":
+            if (e.sqlstate or "")[:2] not in REJECT_CLASSES:
                 raise
             await _settle(conn, vehicle, req, "rejected", f"{e.sqlstate}: {e}")
             continue

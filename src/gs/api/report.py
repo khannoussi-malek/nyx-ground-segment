@@ -5,12 +5,14 @@ import csv
 import io
 import json
 from datetime import datetime, timedelta
+from typing import Literal
 
 import psycopg
 from psycopg import sql
 
 from gs.api.bodies import AlarmTransition, ParamStats, ReportConflict, SessionReport, SessionView
 from gs.api.dbguard import utc
+from gs.common.audit import audit
 from gs.common.interfaces.sse import TransitionView
 from gs.common.missiondb import MissionDb
 from gs.common.time import iso_z
@@ -134,6 +136,13 @@ async def _stored(conn: psycopg.AsyncConnection, session_id: int) -> SessionRepo
     return SessionReport.model_validate_json(row[0]) if row else None  # P-pf15
 
 
+async def _complete(conn: psycopg.AsyncConnection, s: SessionView) -> bool:
+    """The watermark rule (D-DB-06): the vehicle's data has reached the end of the session."""
+    cur = await conn.execute("SELECT last_t FROM seq_state WHERE vehicle = %s", (s.vehicle,))
+    mark = await cur.fetchone()
+    return mark is not None and mark[0] >= _end(s)
+
+
 async def frozen_report(
     conn: psycopg.AsyncConnection, session_id: int, mdb: MissionDb, now: datetime
 ) -> SessionReport | ReportConflict | None:
@@ -147,9 +156,7 @@ async def frozen_report(
         return None
     if s.ended_at is None:
         return ReportConflict(error="SESSION_RUNNING", message="session is still running")
-    cur = await conn.execute("SELECT last_t FROM seq_state WHERE vehicle = %s", (s.vehicle,))
-    mark = await cur.fetchone()
-    complete = mark is not None and mark[0] >= s.ended_at
+    complete = await _complete(conn, s)
     if not complete and now < s.ended_at + timedelta(seconds=FREEZE_AFTER_S):
         frames = await _frames(conn, s)
         expected = round(
@@ -166,6 +173,48 @@ async def frozen_report(
         (session_id, built.model_dump_json(), report_csv(built)),
     )
     return await _stored(conn, session_id)
+
+
+async def refreeze(
+    conn: psycopg.AsyncConnection, session_id: int, mdb: MissionDb, user: str, now: datetime
+) -> SessionReport | ReportConflict | Literal["gone"] | None:
+    """D-DB-10, T4-m: rebuild an incomplete stored report (None: no such session). Never creates
+    the first freeze; refuses a complete one, and one whose archived hours were hot-deleted (the
+    rows it would count are gone). Runs in the caller's transaction; the row lock serialises
+    concurrent refreezes."""
+    cur = await conn.execute(
+        "SELECT report::text FROM session_report WHERE session_id = %s FOR UPDATE", (session_id,)
+    )
+    row = await cur.fetchone()
+    if row is None:
+        if await _load(conn, session_id) is None:
+            return None
+        return ReportConflict(error="REPORT_PENDING", message="the report was never frozen")
+    if SessionReport.model_validate_json(row[0]).complete:
+        return ReportConflict(error="REPORT_COMPLETE", message="the report is already complete")
+    s = await _load(conn, session_id)
+    assert s is not None  # session_report.session_id references test_session
+    cur = await conn.execute(
+        "SELECT 1 FROM archive_object WHERE vehicle = %s AND hot_deleted_at IS NOT NULL"
+        " AND hour < %s AND hour + interval '1 hour' > %s LIMIT 1",
+        (s.vehicle, _end(s), s.started_at),
+    )
+    if await cur.fetchone() is not None:
+        return "gone"
+    built = await build_report(conn, s, mdb, await _complete(conn, s), now)
+    await conn.execute(
+        "UPDATE session_report SET report = %s, csv = %s, created_at = clock_timestamp()"
+        " WHERE session_id = %s",
+        (built.model_dump_json(), report_csv(built), session_id),
+    )
+    await audit(
+        conn, user, "REPORT_REFROZEN",
+        details={
+            "session_id": session_id, "frames": built.frames, "expected": built.expected,
+            "complete": built.complete,
+        },
+    )  # fmt: skip
+    return built
 
 
 async def stored_csv(conn: psycopg.AsyncConnection, session_id: int) -> str:

@@ -416,3 +416,146 @@ async def test_text_postgres_rejects_is_422(
     r = await c.post("/api/sessions", content=body, headers={"Content-Type": "application/json"})
     assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR"), r.text
     assert all(s["vehicle"] != a for s in (await c.get("/api/sessions")).json())
+
+
+# ---- Task 16: refreeze (D-DB-10, T4-m) ---------------------------------------------------------
+async def _frozen_incomplete(c: httpx.AsyncClient, v: str, monkeypatch: pytest.MonkeyPatch) -> int:
+    monkeypatch.setattr(report, "FREEZE_AFTER_S", -1_000_000)
+    sid = _session(v)
+    _frames(v, 50)
+    _watermark(v, T0 + 5 * SEC)
+    first = (await c.get(f"/api/sessions/{sid}/report")).json()
+    assert (first["complete"], first["frames"]) == (False, 50)
+    return sid
+
+
+async def test_refreeze_incomplete_report(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    before = (await c.get(f"/api/sessions/{sid}/report")).json()
+    _frames(v, 100, extra_seq=1000)  # late rows (same times, new seq)
+    _sql("UPDATE seq_state SET last_t = %s WHERE vehicle = %s", T0 + 10 * SEC, v)
+    r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    assert r.status_code == 200, r.text
+    new = r.json()
+    assert (new["complete"], new["note"], new["frames"]) == (True, None, 150)
+    assert new["frozen_at"] > before["frozen_at"]
+    assert (await c.get(f"/api/sessions/{sid}/report")).json() == new  # stored row replaced
+    stored = (
+        psycopg.connect(app_dsn("gs"))
+        .execute("SELECT csv, created_at FROM session_report WHERE session_id = %s", (sid,))
+        .fetchone()
+    )
+    assert stored and "complete" in stored[0] and ",150," in stored[0]
+    (row,) = audit_rows("REPORT_REFROZEN", "fc1")[-1:]
+    assert row["details"] == {"session_id": sid, "frames": 150, "expected": 100, "complete": True}
+
+
+async def test_refreeze_still_incomplete_stays_incomplete(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    _frames(v, 20, extra_seq=1000)
+    r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    assert (r.status_code, r.json()["complete"], r.json()["frames"]) == (200, False, 70)
+
+
+async def test_refreeze_complete_409(rep: tuple[httpx.AsyncClient, str]) -> None:
+    c, v = rep
+    sid = _session(v)
+    _frames(v, 100)
+    _watermark(v, T0 + 10 * SEC)
+    first = (await c.get(f"/api/sessions/{sid}/report")).json()
+    assert first["complete"] is True
+    r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    assert (r.status_code, r.json()["error"]) == (409, "REPORT_COMPLETE")
+    assert (await c.get(f"/api/sessions/{sid}/report")).json() == first
+
+
+async def test_refreeze_never_frozen_409_pending(rep: tuple[httpx.AsyncClient, str]) -> None:
+    c, v = rep
+    sid = _session(v)
+    _frames(v, 50)
+    _watermark(v, T0 + 5 * SEC)  # real FREEZE_AFTER_S: not frozen yet
+    r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    assert (r.status_code, r.json()["error"]) == (409, "REPORT_PENDING")
+    none = psycopg.connect(app_dsn("gs")).execute(
+        "SELECT 1 FROM session_report WHERE session_id = %s", (sid,)
+    )
+    assert none.fetchone() is None  # a refreeze never creates the first freeze
+    running = _session(vid(), ended=False)
+    assert (await c.post(f"/api/sessions/{running}/report/refreeze")).status_code == 409
+
+
+async def test_refreeze_unknown_session_404(rep: tuple[httpx.AsyncClient, str]) -> None:
+    c, _ = rep
+    r = await c.post("/api/sessions/2000000000/report/refreeze")
+    assert (r.status_code, r.json()["error"]) == (404, "NOT_FOUND")
+
+
+async def test_refreeze_after_hot_delete_410(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    before = (await c.get(f"/api/sessions/{sid}/report")).json()
+    hour = T0.replace(minute=0, second=0)
+    _sql(
+        "INSERT INTO archive_object (vehicle, hour, sha256, rows, verified_at, hot_deleted_at,"
+        " t_min, t_max) VALUES (%s, %s, 'x', 1, now(), now(), %s, %s)",
+        v, hour, T0, T0,
+    )  # fmt: skip
+    r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    assert (r.status_code, r.json()["error"]) == (410, "HOT_DATA_GONE")
+    assert (await c.get(f"/api/sessions/{sid}/report")).json() == before
+    # an archived hour that is still hot, or one outside the window, does not block
+    _sql("UPDATE archive_object SET hot_deleted_at = NULL WHERE vehicle = %s", v)
+    assert (await c.post(f"/api/sessions/{sid}/report/refreeze")).status_code == 200
+
+
+async def test_refreeze_ignores_hot_deleted_hours_outside_the_window(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    hour = T0.replace(minute=0, second=0) - timedelta(hours=3)
+    _sql(
+        "INSERT INTO archive_object (vehicle, hour, sha256, rows, verified_at, hot_deleted_at,"
+        " t_min, t_max) VALUES (%s, %s, 'x', 1, now(), now(), %s, %s)",
+        v, hour, hour, hour,
+    )  # fmt: skip
+    assert (await c.post(f"/api/sessions/{sid}/report/refreeze")).status_code == 200
+
+
+async def test_refreeze_needs_console_header_and_session(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    url = f"/api/sessions/{sid}/report/refreeze"
+    no_header = await c.post(url, headers={"X-GS-Client": ""})
+    assert (no_header.status_code, no_header.json()["error"]) == (403, "CLIENT_HEADER_REQUIRED")
+    app = c._transport.app  # type: ignore[attr-defined]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://api", headers=H
+    ) as anon:
+        assert (await anon.post(url)).status_code == 401
+
+
+async def test_refreeze_database_down_is_503(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    app = c._transport.app  # type: ignore[attr-defined]
+    bad = AsyncConnectionPool("postgresql://x@127.0.0.1:1/x", min_size=1, open=False)
+    await bad.open(wait=False)
+    app.state.pool = bad
+    try:
+        r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    finally:
+        await bad.close()
+    assert (r.status_code, r.json()["error"]) == (503, "UNAVAILABLE")

@@ -6,7 +6,6 @@ pause, dropout and a Redis outage treat acks and frames the same way.
 """
 
 import asyncio
-import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
@@ -18,7 +17,7 @@ import redis.asyncio
 import redis.exceptions
 from pydantic import ValidationError
 
-from gs.commanding.args import check_args
+from gs.commanding.args import check_args, readable_cmd_id
 from gs.common.interfaces.streams import ACK_INVALID_ARGS, ACK_OK, ACK_SCHEMA, Tc, TcAck
 from gs.common.missiondb import Command
 from gs.simulator.nominals import NOMINALS
@@ -37,11 +36,7 @@ def parse_tc(raw: str) -> Tc | tuple[UUID | None, str]:
         return Tc.model_validate_json(raw)
     except ValidationError as e:
         msg = "; ".join(f"{'.'.join(map(str, x['loc'])) or 'tc'}: {x['msg']}" for x in e.errors())
-    try:
-        cmd_id: UUID | None = UUID(json.loads(raw)["cmd_id"])
-    except ValueError, KeyError, TypeError, AttributeError, RecursionError:  # not a UUID string
-        cmd_id = None
-    return cmd_id, msg
+    return readable_cmd_id(raw), msg
 
 
 @dataclass(frozen=True)

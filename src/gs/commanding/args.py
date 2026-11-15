@@ -3,9 +3,20 @@
 Both sides read the same `mission/commands.yaml` bounds (D-ENG-17, D-EXT-07).
 """
 
+import json
 from collections.abc import Mapping
+from uuid import UUID
 
 from gs.common.missiondb import Command, EnumArg
+
+
+def readable_cmd_id(raw: str) -> UUID | None:
+    """The `cmd_id` of a stream entry that failed its model, when it is still a UUID string
+    (D-ING-27: the tc rejection answers it, the tcack rejection fails that command)."""
+    try:
+        return UUID(json.loads(raw)["cmd_id"])
+    except ValueError, KeyError, TypeError, AttributeError, RecursionError:  # not a UUID string
+        return None
 
 
 def check_args(cmd: Command | None, args: Mapping[str, object]) -> str | None:

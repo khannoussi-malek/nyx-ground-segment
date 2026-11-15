@@ -6,10 +6,10 @@ import dataclasses
 import errno
 import json
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import httpx
 import psycopg
@@ -23,10 +23,13 @@ from redis._parsers.base import BaseParser
 import gs.api.commands as commands_mod
 from gs.api.app import create_app
 from gs.api.commands import PreSendError, args_hash, lock_key, mark_sent, not_sent, release_lock
-from tests.support.env import vid
+from gs.ingest.events import late_key
+from tests.support.env import until, vid
 from tests.support.http import CLIENT_HEADERS, FC1_PW, FC2_PW, api_settings, login
-from tests.support.pg import app_dsn, audit_rows, commands_for
+from tests.support.ingest import worker
+from tests.support.pg import app_dsn, audit_rows, commands_for, events_for
 from tests.support.redisx import HOST, aclient, client, load_schema, stream_entries
+from tests.support.sim import post_fault, running_sim
 
 ARGS = {"duration_s": 5}
 HAZARD = "Irreversible loss of cabin atmosphere"
@@ -509,3 +512,108 @@ async def test_list_commands_filters(api: Api) -> None:
     anon = httpx.AsyncClient(transport=httpx.ASGITransport(app=api.app), base_url="http://api")
     async with anon:
         assert (await anon.get("/api/commands")).status_code == 401
+
+
+# ---- ATP-03 backend: API + in-process simulator + ingest worker on one vehicle (Task 7)
+@dataclasses.dataclass
+class Live:
+    api: Api
+    sim_port: int
+
+    def row(self, cmd_id: str) -> dict[str, Any]:
+        [r] = [r for r in commands_for(self.api.v) if str(r["cmd_id"]) == cmd_id]
+        return r
+
+    async def until_state(self, cmd_id: str, state: str, timeout: float) -> dict[str, Any]:
+        await until(lambda: self.row(cmd_id)["state"] == state, timeout)
+        return self.row(cmd_id)
+
+    async def fault(self, name: str, **params: object) -> None:
+        status = await asyncio.to_thread(post_fault, self.api.v, name, self.sim_port, **params)
+        assert status == 204
+
+    async def outcome(self, cmd_id: str) -> str | None:
+        got = (await self.api.fc1.get("/api/commands", params={"vehicle": self.api.v})).json()
+        [view] = [c for c in got if c["cmd_id"] == cmd_id]
+        return view["outcome"]  # type: ignore[no-any-return]
+
+    def actions(self, cmd_id: str) -> list[str]:
+        mine = [a for a in self.api.audits() if a["details"].get("cmd_id") == cmd_id]
+        return [a["action"] for a in mine]
+
+
+@pytest.fixture
+async def live(api: Api) -> AsyncIterator[Live]:
+    async with running_sim(api.v) as port, worker([api.v]):
+        await until(lambda: bool(stream_entries(f"tm:{api.v}")), 5)
+        yield Live(api, port)
+
+
+async def send_iso(live: Live) -> str:
+    r = await live.api.fc1.post("/api/commands", json=live.api.iso())
+    assert r.status_code == 202, r.text
+    return str(r.json()["cmd_id"])
+
+
+async def test_isolate_valve_verified(live: Live) -> None:
+    cmd_id = await send_iso(live)
+    r = await live.until_state(cmd_id, "VERIFIED", 1.0)
+    assert r["queued_at"] <= r["sent_at"]
+    assert r["received_at"] is not None and r["verified_at"] is not None
+    assert r["received_at"] <= r["verified_at"]  # vehicle clock: tcack, then the echo frame
+    assert r["sent_at"] - timedelta(seconds=1) <= r["received_at"]  # same host clock, loosely
+    assert live.actions(cmd_id) == ["CMD_REQUESTED", "CMD_STATE", "CMD_STATE", "CMD_STATE"]
+
+
+async def test_not_received_5s(live: Live) -> None:  # ATP-03: pause 6
+    await live.fault("pause", duration_s=6)
+    cmd_id = await send_iso(live)
+    r = await live.until_state(cmd_id, "FAILED", 8)
+    assert r["failure_reason"] == "NOT_RECEIVED"
+    assert 5.0 <= (r["failed_at"] - r["sent_at"]).total_seconds() <= 6.5
+    await until(lambda: live.row(cmd_id)["late_verified_at"] is not None, 5)
+    r = live.row(cmd_id)
+    assert r["late_ack_accepted"] is True
+    assert [e["key"] for e in events_for(live.api.v, "LATE_VERIFICATION")] == [
+        late_key(UUID(cmd_id))
+    ]
+    assert await live.outcome(cmd_id) == "EXECUTED_LATE"
+    acts = live.actions(cmd_id)
+    assert "CMD_LATE_ACK" in acts and "CMD_LATE_VERIFICATION" in acts
+
+
+async def test_not_verified_15s(live: Live) -> None:  # ATP-03: hold_exec 16
+    await live.fault("hold_exec", duration_s=16)
+    cmd_id = await send_iso(live)
+    await live.until_state(cmd_id, "RECEIVED", 2)
+    r = await live.until_state(cmd_id, "FAILED", 18)
+    assert r["failure_reason"] == "NOT_VERIFIED"
+    assert 15.0 <= (r["failed_at"] - r["sent_at"]).total_seconds() <= 16.5
+    await until(lambda: live.row(cmd_id)["late_verified_at"] is not None, 4)
+    assert await live.outcome(cmd_id) == "EXECUTED_LATE"
+    assert len(events_for(live.api.v, "LATE_VERIFICATION")) == 1
+
+
+async def test_queued_never_sent_fails_not_received(live: Live) -> None:
+    cmd_id = uuid4()
+    with psycopg.connect(app_dsn("gs"), autocommit=True) as c:
+        c.execute(
+            "INSERT INTO commands (cmd_id, vehicle, name, args, args_hash, hazardous, issued_by,"
+            " state, queued_at) VALUES (%s, %s, 'isolate_valve', '{}', 'h', false, 'fc1',"
+            " 'QUEUED', clock_timestamp())",
+            (cmd_id, live.api.v),
+        )  # the API died between QUEUED and SENT (D-CMD-11)
+    r = await live.until_state(str(cmd_id), "FAILED", 7)
+    assert r["failure_reason"] == "NOT_RECEIVED" and r["sent_at"] is None
+    assert 5.0 <= (r["failed_at"] - r["queued_at"]).total_seconds() <= 6.5
+    assert await live.outcome(str(cmd_id)) == "UNKNOWN"
+
+
+async def test_command_during_dropout(live: Live) -> None:  # OPS-3, R2-26
+    await live.fault("dropout", duration_s=10)
+    cmd_id = await send_iso(live)
+    r = await live.until_state(cmd_id, "FAILED", 7)
+    assert r["failure_reason"] == "NOT_RECEIVED"
+    await until(lambda: live.row(cmd_id)["late_verified_at"] is not None, 8)  # after AOS
+    assert live.row(cmd_id)["late_ack_at"] is None  # the tcack was lost with the link
+    assert await live.outcome(cmd_id) == "EXECUTED_LATE"

@@ -76,3 +76,11 @@ def test_new_keys() -> None:
     u = UUID(int=7)
     assert late_key(u) == f"LATE_VERIFICATION/{u}"
     assert mismatch_key("tcack", "0123456789ab") == "INTERFACE_MISMATCH/tcack/0123456789ab"
+
+
+def test_archive_corrupt_is_an_event_kind() -> None:
+    from typing import get_args
+
+    from gs.ingest.events import EventKind
+
+    assert "ARCHIVE_CORRUPT" in get_args(EventKind)

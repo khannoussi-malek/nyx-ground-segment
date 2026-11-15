@@ -94,6 +94,8 @@ def _dummy_hash() -> str:
 async def _attempt(request: Request, body: LoginRequest, actor: str) -> ApiError | None:
     """Check, verify and audit under a per-actor advisory lock so concurrent attempts cannot
     overshoot the limit; the audit row commits before any refusal is raised."""
+    # ponytail: one user's burst can pin the 4-connection pool for up to DB_TIMEOUT_S (accepted
+    # for a 3-user local station)
     async with request.app.state.pool.connection(timeout=DB_TIMEOUT_S) as conn, conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"login:{actor}",))
         if await failed_logins(conn, actor) >= LOGIN_LIMIT:

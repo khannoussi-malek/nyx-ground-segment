@@ -7,6 +7,7 @@ import psycopg
 from fastapi import APIRouter, Request, Response
 
 from gs.api.bodies import ReportConflict, SessionReport, SessionStart, SessionView
+from gs.api.dbguard import connect, db_503
 from gs.api.deps import ApiError, User, errors, vehicles
 from gs.common.audit import audit
 
@@ -22,65 +23,71 @@ def _todo(what: str) -> ApiError:
 
 
 _COLS = "id, vehicle, name, conductor, started_at, ended_at, ended_by"
-
-
-@router.post("/api/sessions", status_code=201, responses=errors(400, 401, 403, 409, 422, 503))
-async def start_session(body: SessionStart, request: Request, user: User) -> SessionView:
-    if body.vehicle not in vehicles(request):
-        raise ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "INVALID_ARGS", "vehicle not configured")
-    try:
-        async with request.app.state.pool.connection() as conn, conn.transaction():
-            cur = await conn.execute(
-                f"INSERT INTO test_session (vehicle, name, conductor) VALUES (%s, %s, %s)"  # noqa: S608
-                f" RETURNING {_COLS}",
-                (body.vehicle, body.name, user),
-            )
-            row = await cur.fetchone()
-            assert row is not None
-            await audit(
-                conn, user, "SESSION_START", details={"session_id": row[0], "vehicle": body.vehicle}
-            )
-    except psycopg.errors.UniqueViolation as e:  # test_session_one_active (D-DB-07)
-        raise ApiError(
-            HTTPStatus.CONFLICT, "SESSION_ACTIVE", f"{body.vehicle} already has an active session"
-        ) from e
-    return _view(row)
-
-
-@router.post("/api/sessions/{session_id}/stop", responses=errors(401, 403, 404, 409, 422, 503))
-async def stop_session(session_id: int, request: Request, user: User) -> SessionView:
-    async with request.app.state.pool.connection() as conn, conn.transaction():
-        cur = await conn.execute(
-            "UPDATE test_session SET ended_at = clock_timestamp(), ended_by = %s"
-            f" WHERE id = %s AND ended_at IS NULL RETURNING {_COLS}",  # noqa: S608
-            (user, session_id),
-        )
-        row = await cur.fetchone()
-        if row is None:
-            seen = await (
-                await conn.execute("SELECT 1 FROM test_session WHERE id = %s", (session_id,))
-            ).fetchone()
-            if seen is None:
-                raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"no session {session_id}")
-            raise ApiError(HTTPStatus.CONFLICT, "SESSION_STOPPED", "session already stopped")
-        await audit(conn, user, "SESSION_STOP", details={"session_id": session_id})
-    return _view(row)
-
-
-@router.get("/api/sessions", responses=errors(401, 503))
-async def list_sessions(request: Request, user: User) -> list[SessionView]:
-    async with request.app.state.pool.connection() as conn:
-        cur = await conn.execute(
-            f"SELECT {_COLS} FROM test_session ORDER BY started_at DESC, id DESC"  # noqa: S608
-        )
-        return [_view(r) for r in await cur.fetchall()]
+_FIELDS = _COLS.split(", ")
 
 
 def _view(row: tuple[Any, ...]) -> SessionView:
     return SessionView(**dict(zip(_FIELDS, row, strict=True)))
 
 
-_FIELDS = _COLS.split(", ")
+@router.post("/api/sessions", status_code=201, responses=errors(400, 401, 403, 409, 422, 503))
+async def start_session(body: SessionStart, request: Request, user: User) -> SessionView:
+    if body.vehicle not in vehicles(request):
+        raise ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "INVALID_ARGS", "vehicle not configured")
+    with db_503(request):
+        try:
+            async with connect(request) as conn, conn.transaction():
+                cur = await conn.execute(
+                    "INSERT INTO test_session (vehicle, name, conductor) VALUES (%s, %s, %s)"
+                    f" RETURNING {_COLS}",  # noqa: S608
+                    (body.vehicle, body.name, user),
+                )
+                row = await cur.fetchone()
+                assert row is not None
+                await audit(
+                    conn,
+                    user,
+                    "SESSION_START",
+                    details={"session_id": row[0], "vehicle": body.vehicle},
+                )
+        except psycopg.errors.UniqueViolation as e:  # test_session_one_active (D-DB-07)
+            raise ApiError(
+                HTTPStatus.CONFLICT,
+                "SESSION_ACTIVE",
+                f"{body.vehicle} already has an active session",
+            ) from e
+    return _view(row)
+
+
+@router.post("/api/sessions/{session_id}/stop", responses=errors(401, 403, 404, 409, 422, 503))
+async def stop_session(session_id: int, request: Request, user: User) -> SessionView:
+    with db_503(request):
+        async with connect(request) as conn, conn.transaction():
+            cur = await conn.execute(
+                "UPDATE test_session SET ended_at = clock_timestamp(), ended_by = %s"
+                f" WHERE id = %s AND ended_at IS NULL RETURNING {_COLS}",  # noqa: S608
+                (user, session_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                seen = await (
+                    await conn.execute("SELECT 1 FROM test_session WHERE id = %s", (session_id,))
+                ).fetchone()
+                if seen is None:
+                    raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"no session {session_id}")
+                raise ApiError(HTTPStatus.CONFLICT, "SESSION_STOPPED", "session already stopped")
+            await audit(conn, user, "SESSION_STOP", details={"session_id": session_id})
+    return _view(row)
+
+
+@router.get("/api/sessions", responses=errors(401, 503))
+async def list_sessions(request: Request, user: User) -> list[SessionView]:
+    with db_503(request):
+        async with connect(request) as conn:
+            cur = await conn.execute(
+                f"SELECT {_COLS} FROM test_session ORDER BY started_at DESC, id DESC"  # noqa: S608
+            )
+            return [_view(r) for r in await cur.fetchall()]
 
 
 @router.get("/api/sessions/{session_id}/report", responses=REPORT_ERRORS)

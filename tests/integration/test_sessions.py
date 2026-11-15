@@ -4,7 +4,9 @@ from pathlib import Path
 
 import httpx
 import pytest
+from psycopg_pool import AsyncConnectionPool
 
+from gs.api import dbguard
 from gs.api.app import create_app
 from tests.support.env import vid
 from tests.support.http import CLIENT_HEADERS as H
@@ -80,5 +82,31 @@ async def test_list_newest_first(sess: tuple[httpx.AsyncClient, str, str]) -> No
     c, a, b = sess
     first = (await _start(c, a)).json()["id"]
     second = (await _start(c, b)).json()["id"]
-    ids = [s["id"] for s in (await c.get("/api/sessions")).json()]
+    listed = (await c.get("/api/sessions")).json()
+    ids = [s["id"] for s in listed]
     assert ids.index(second) < ids.index(first)
+    started = [s["started_at"] for s in listed]
+    assert started == sorted(started, reverse=True)
+
+
+@pytest.mark.parametrize("route", ["start", "stop", "list"])
+async def test_database_down_is_503(
+    sess: tuple[httpx.AsyncClient, str, str], monkeypatch: pytest.MonkeyPatch, route: str
+) -> None:
+    c, a, _ = sess
+    sid = (await _start(c, a)).json()["id"]
+    monkeypatch.setattr(dbguard, "DB_TIMEOUT_S", 0.3)
+    app = c._transport.app  # type: ignore[attr-defined]
+    bad = AsyncConnectionPool("postgresql://x@127.0.0.1:1/x", min_size=1, open=False)
+    await bad.open(wait=False)
+    app.state.pool = bad
+    try:
+        r = await {
+            "start": lambda: c.post("/api/sessions", json={"vehicle": a, "name": "n"}),
+            "stop": lambda: c.post(f"/api/sessions/{sid}/stop"),
+            "list": lambda: c.get("/api/sessions"),
+        }[route]()
+    finally:
+        await bad.close()
+    assert (r.status_code, r.json()["error"]) == (503, "UNAVAILABLE")
+    assert r.json()["message"] == "database unreachable"

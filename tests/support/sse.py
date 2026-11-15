@@ -1,6 +1,7 @@
 """SSE test helpers: a live-server stream reader, a seeded telemetry row, a ui:events publisher."""
 
 import asyncio
+import contextlib
 import json
 import time
 from collections.abc import AsyncIterator
@@ -14,7 +15,9 @@ import jsonschema
 import psycopg
 
 from gs.common.interfaces import Tm
-from tests.support.env import REPO
+from tests.support.compose import api_url
+from tests.support.env import REPO, dotenv, wait_until
+from tests.support.http import CLIENT_HEADERS
 from tests.support.mission import MISSION_DIR
 from tests.support.pg import app_dsn
 from tests.support.redisx import client
@@ -104,3 +107,69 @@ def publish_tm(vehicle: str, seq: int) -> None:
 
 def now() -> float:
     return time.monotonic()
+
+
+@dataclass(frozen=True)
+class LiveStack:
+    """The compose API as an `sse()` target: base url and a logged-in session cookie."""
+
+    url: str
+    cookie: str
+
+
+def live_stack(user: str = "fc1") -> LiveStack:
+    """Logs in, retrying a 503 for up to 60 s: an earlier system test may have just restarted
+    Redis, and each pooled API connection from before the restart fails once (retry off, R28)
+    even after /healthz is green again (HEADS-UP in the Task 27 report)."""
+    got: list[httpx.Response] = []
+
+    def logged_in() -> bool:
+        try:
+            r = httpx.post(
+                f"{api_url()}/api/login",
+                json={"user": user, "password": dotenv()[f"DEMO_PW_{user.upper()}"]},
+                headers=CLIENT_HEADERS,
+                timeout=5,
+            )
+        except httpx.HTTPError:
+            return False
+        got.append(r)
+        assert r.status_code in (204, 503), r.text
+        return r.status_code == 204
+
+    wait_until(logged_in, 60)
+    return LiveStack(api_url(), got[-1].cookies["session"])
+
+
+@asynccontextmanager
+async def collecting(live: Any) -> AsyncIterator[Stream]:
+    """`sse(live)` read by a background task into `stream.seen`, so blocking test steps (compose
+    stop/start in a thread) never leave the API with a slow client."""
+    async with sse(live) as stream:
+
+        async def drain() -> None:
+            with contextlib.suppress(EOFError):
+                while True:
+                    await stream._next()
+
+        task = asyncio.create_task(drain())
+        try:
+            yield stream
+        finally:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+
+
+async def wait_seen(
+    stream: Stream, pred: Any, timeout: float, start: int = 0
+) -> tuple[str, dict[str, Any]]:
+    """The first (kind, data) at index >= start of stream.seen with pred(kind, data) true."""
+    async with asyncio.timeout(timeout):
+        i = start
+        while True:
+            while i < len(stream.seen):
+                if pred(*stream.seen[i]):
+                    return stream.seen[i]
+                i += 1
+            await asyncio.sleep(0.05)

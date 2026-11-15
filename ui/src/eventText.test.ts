@@ -87,3 +87,13 @@ test("late verification and interface mismatch prefer their documented details, 
   const mismatch = eventView("INTERFACE_MISMATCH/tcack/ab12cd34ef56", { kind: "INTERFACE_MISMATCH", details: { stream: "tcack", consumer: "ingest-1", detail: "missing field cmd_id" } });
   expect(eventText(mismatch, [])).toBe("interface mismatch on tcack (consumer ingest-1): missing field cmd_id");
 });
+
+test("SEQ_JUMP and GAP from seq 0 say the start of the sequence, never seq -1; an unknown start stays unknown", () => {
+  expect(eventText(ev("SEQ_JUMP", { lost: 5, lost_by_time: 4, from_seq: 0 }), [])).toBe("NYX-TA1 SEQ JUMP – sequence jumped by 5 at the start of the sequence, 4 expected by time");
+  expect(eventText(ev("GAP", { lost: 5 }), [])).toBe("NYX-TA1 GAP – 5 frames lost after seq ?");
+});
+
+test("LATE_VERIFICATION prefers details.cmd_id over the key", () => {
+  const late = eventView("LATE_VERIFICATION/from-key", { kind: "LATE_VERIFICATION", vehicle: "NYX-TA1", details: { cmd_id: "from-details", name: "hold_exec" } });
+  expect(eventText(late, [])).toBe("NYX-TA1 late verification of hold_exec from-details");
+});

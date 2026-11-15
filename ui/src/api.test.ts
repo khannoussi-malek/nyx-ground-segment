@@ -93,6 +93,7 @@ test("sendCommand: 202 accepted with the command id", async () => {
     credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-GS-Client": "console" },
     body: JSON.stringify(REQ),
+    signal: expect.any(AbortSignal),
   });
 });
 
@@ -193,4 +194,23 @@ test("listSessions, getReport (ready, pending, running) and the CSV url", async 
   stub(404);
   await expect(getReport(1)).rejects.toThrow("404");
   expect(reportCsvUrl(7)).toBe("/api/sessions/7/report.csv");
+});
+
+test("sendCommand: 408 is ambiguous; a hung request is aborted after 10 s and is ambiguous too", async () => {
+  stub(408, { error: "TIMEOUT", message: "x" });
+  expect(await sendCommand(REQ)).toMatchObject({ ambiguous: true });
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    vi.stubGlobal("fetch", vi.fn((_u: string, init: { signal: AbortSignal }) => new Promise((_res, rej) => init.signal.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError"))))));
+    const p = sendCommand(REQ);
+    await vi.advanceTimersByTimeAsync(9_999);
+    let done = false;
+    void p.then(() => (done = true));
+    await Promise.resolve();
+    expect(done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(await p).toMatchObject({ kind: "rejected", error: "NETWORK", ambiguous: true });
+  } finally {
+    vi.useRealTimers();
+  }
 });

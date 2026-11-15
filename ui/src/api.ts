@@ -78,13 +78,19 @@ const rejected = (error: string, message: string, ambiguous = false): SendResult
 
 /** Send a command. A hazardous one answers 409 HAZARDOUS_CONFIRMATION_REQUIRED with a token: that is `confirm`, not an
  *  error; resend the same request with `confirm_token` and `reason`. Every other refusal keeps the server's words. */
+export const SEND_TIMEOUT_MS = 10_000;
+
 export async function sendCommand(req: CommandRequest): Promise<SendResult> {
+  // a hung request must not leave the operator waiting: the abort is an ambiguous failure like any network error
+  const abort = new AbortController();
+  const timer = setTimeout(() => abort.abort(), SEND_TIMEOUT_MS);
   try {
     const r = await fetch("/api/commands", {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", ...CLIENT },
       body: JSON.stringify(req),
+      signal: abort.signal,
     });
     if (r.status === 202) return { kind: "accepted", cmdId: ((await r.json()) as CommandAccepted).cmd_id };
     const b = (await r.json().catch(() => null)) as Partial<CommandConflict> | null;
@@ -94,12 +100,14 @@ export async function sendCommand(req: CommandRequest): Promise<SendResult> {
       kind: "rejected",
       error: b?.error ?? `HTTP_${r.status}`,
       message: b?.message ?? `Command failed (${r.status})`,
-      ambiguous: r.status >= 500,
+      ambiguous: r.status >= 500 || r.status === 408,
       ...(b?.by != null && { by: b.by }),
       ...(b?.seconds_ago != null && { secondsAgo: b.seconds_ago }),
     };
   } catch {
     return rejected("NETWORK", "Could not reach the ground segment", true);
+  } finally {
+    clearTimeout(timer);
   }
 }
 

@@ -15,7 +15,6 @@ export function ConfirmDialog({ req, hazard, token, expiresInS, initialReason, o
   opener: HTMLElement | null; // gets the focus back when the dialog closes
   onSent: () => void;
   onAmbiguous: () => void; // the confirm may have gone through: the panel refreshes its list
-
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -26,16 +25,19 @@ export function ConfirmDialog({ req, hazard, token, expiresInS, initialReason, o
   const [busy, setBusy] = useState(false);
   const inFlight = useRef(false); // two clicks in one task must not send twice
   const ambiguous = useRef(false); // once the outcome is unknown nothing may say "send again"
+  const closing = useRef(false); // our own close() on unmount is not a native close
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) d.showModal();
     // one-shot: the server enforces the expiry, this only tells the operator before they type into a dead dialog
     const t = setTimeout(() => {
       setDead(true);
-      if (!ambiguous.current) setError("Confirmation expired \u2013 cancel and send the command again");
+      // while the confirm is in flight or its outcome unknown, "send again" would be the wrong advice
+      if (!ambiguous.current && !inFlight.current) setError("Confirmation expired \u2013 cancel and send the command again");
     }, expiresInS * 1000);
     return () => {
       clearTimeout(t);
+      closing.current = true;
       d?.close();
       opener?.focus();
     };
@@ -65,7 +67,8 @@ export function ConfirmDialog({ req, hazard, token, expiresInS, initialReason, o
   }
   const args = Object.entries(req.args).map(([k, v]) => `${k} = ${v}`).join(", ");
   return (
-    <dialog ref={ref} className="confirm" aria-labelledby="confirm-title" onCancel={(e) => (busy ? e.preventDefault() : onCancel())}>
+    <dialog ref={ref} className="confirm" aria-labelledby="confirm-title" onCancel={(e) => (busy ? e.preventDefault() : onCancel())}
+      onClose={() => !closing.current && onCancel()}>
       <form onSubmit={(e) => { e.preventDefault(); void confirm(); }}>
         <h2 id="confirm-title">Hazardous command</h2>
         <p>

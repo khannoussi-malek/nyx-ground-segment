@@ -1,4 +1,4 @@
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { listCommands, sendCommand, type CommandRequest, type MissionDb } from "./api";
 import { AMBIGUOUS_TEXT, rejectedText } from "./commandText";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -49,6 +49,10 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
   const inFlight = useRef(false); // two clicks in one task must not send twice
   // the target is always an explicit choice: a vehicle that appears later never becomes it, one that vanishes clears it
   const target = vehicles.includes(vehicle) ? vehicle : "";
+  // a vehicle that vanishes clears the choice for good: it cannot come back as the target on its own
+  useEffect(() => {
+    if (vehicle && !vehicles.includes(vehicle)) setVehicle("");
+  }, [vehicle, vehicles]);
   const spec: Spec | undefined = mission && name && Object.hasOwn(mission.commands, name) ? mission.commands[name] : undefined;
 
   const build = (): CommandRequest | null => {
@@ -138,6 +142,7 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
       </ul>
       {pending && (
         <ConfirmDialog
+          key={pending.token}
           {...pending}
           initialReason={reason}
           opener={pending.opener}

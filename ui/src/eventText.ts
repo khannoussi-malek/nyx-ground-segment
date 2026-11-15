@@ -11,6 +11,9 @@ const num = (e: EventView, k: string): number | null => {
 };
 const sha = (e: EventView, k: string): string => (text(e, k) ?? "?").slice(0, 8);
 const clock = (t: string | null): string => (t ? utcClock(t) : "?");
+/** "after seq N" for the frame before the first lost one; seq 0 has none, an unknown start stays unknown. */
+const afterSeq = (from: number | null): string =>
+  from === null ? "after seq ?" : from > 0 ? `after seq ${from - 1}` : "at the start of the sequence";
 const frames = (n: number | null): string =>
   n === null ? "unknown number of frames lost" : `${n} ${n === 1 ? "frame" : "frames"} lost`;
 
@@ -25,12 +28,10 @@ export function eventText(e: EventView, all: readonly EventView[]): string {
       const span = los ? `${clock(los.t_onboard)}–${clock(e.t_onboard)}` : `until ${clock(e.t_onboard)}`;
       return `${v} AOS – ${frames(num(e, "lost_frames"))} ${span}`;
     }
-    case "GAP": {
-      const from = num(e, "from_seq");
-      return `${v} GAP – ${frames(num(e, "lost"))} ${from !== null && from > 0 ? `after seq ${from - 1}` : "at the start of the sequence"}`;
-    }
+    case "GAP":
+      return `${v} GAP – ${frames(num(e, "lost"))} ${afterSeq(num(e, "from_seq"))}`;
     case "SEQ_JUMP":
-      return `${v} SEQ JUMP – sequence jumped by ${num(e, "lost") ?? "?"} after seq ${num(e, "from_seq") === null ? "?" : (num(e, "from_seq") ?? 1) - 1}, ${num(e, "lost_by_time") ?? "?"} expected by time`;
+      return `${v} SEQ JUMP – sequence jumped by ${num(e, "lost") ?? "?"} ${afterSeq(num(e, "from_seq"))}, ${num(e, "lost_by_time") ?? "?"} expected by time`;
     case "SEQ_RESET":
       return `${v} SEQ RESET – gap of unknown size`;
     case "SEQ_ANOMALY":

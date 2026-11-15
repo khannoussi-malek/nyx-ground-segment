@@ -399,3 +399,121 @@ test("a submit that bypasses the disabled button still needs the typed vehicle i
   await act(async () => form.requestSubmit()); // wrong vehicle
   expect(posted(f)).toHaveLength(1); // only the first request, no confirm
 });
+
+/** POST /api/commands that never answers unless it is aborted; the first POST (the confirm request) answers at once. */
+function hangingConfirm(expiresInS = 60) {
+  let posts = 0;
+  const f = vi.fn((_u: string, init?: { method?: string; signal?: AbortSignal }) => {
+    if (init?.method !== "POST") return Promise.resolve(new Response("[]", { status: 200 }));
+    posts += 1;
+    if (posts === 1)
+      return Promise.resolve(new Response(JSON.stringify({ error: "HAZARDOUS_CONFIRMATION_REQUIRED", message: "m", hazard: "h", confirm_token: "t", expires_in_s: expiresInS }), { status: 409 }));
+    return new Promise<Response>((_res, rej) => init!.signal!.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError"))));
+  });
+  vi.stubGlobal("fetch", f);
+  return f;
+}
+async function openDialog() {
+  set(panelSelect("Vehicle"), "NYX-TA2");
+  set(panelSelect("Command"), "vent_cabin");
+  set(panelSelect("duration_s"), "3");
+  await act(async () => send().click());
+}
+
+test("the expiry timer firing while a confirm is in flight never says 'send the command again'", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  mount();
+  hangingConfirm();
+  await openDialog();
+  set(dialogField("Reason"), "venting now");
+  set(dialogField("Type"), "NYX-TA2");
+  await act(async () => void dlg("Confirm").click());
+  await act(async () => void vi.advanceTimersByTimeAsync(9_000)); // the token's 60 s end is not reached yet
+  expect(host.querySelector("dialog [role=alert]")).toBeNull();
+  await act(async () => void vi.advanceTimersByTimeAsync(50_000)); // 59 s: still inside the 10 s send window? no: the request timed out at 10 s
+  expect(host.querySelector("dialog [role=alert]")!.textContent).toBe(AMBIGUOUS); // the timeout made it ambiguous, the expiry text never appeared
+});
+
+test("the expiry fires first while the request is still hanging: no 'send again' text, then the ambiguous text", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  mount();
+  hangingConfirm(5); // a token valid for 5 s only: the expiry comes before the 10 s send timeout
+  await openDialog();
+  set(dialogField("Reason"), "venting now");
+  set(dialogField("Type"), "NYX-TA2");
+  await act(async () => void dlg("Confirm").click());
+  await act(async () => void vi.advanceTimersByTimeAsync(5_000));
+  expect(host.querySelector("dialog [role=alert]")).toBeNull(); // in flight: nothing said yet
+  expect(dlg("Cancel").disabled).toBe(true);
+  await act(async () => void vi.advanceTimersByTimeAsync(5_000)); // the send times out
+  expect(host.querySelector("dialog [role=alert]")!.textContent).toBe(AMBIGUOUS);
+  expect(dlg("Cancel").disabled).toBe(false); // the operator can leave
+  expect(dlg("Confirm").disabled).toBe(true);
+});
+
+test("a plain send that hangs is ambiguous after the timeout and refreshes the list", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  mount();
+  const f = vi.fn((_u: string, init?: { method?: string; signal?: AbortSignal }) =>
+    init?.method === "POST"
+      ? new Promise<Response>((_res, rej) => init.signal!.addEventListener("abort", () => rej(new DOMException("aborted", "AbortError"))))
+      : Promise.resolve(new Response("[]", { status: 200 })));
+  vi.stubGlobal("fetch", f);
+  set(panelSelect("Vehicle"), "NYX-TA1");
+  set(panelSelect("Command"), "isolate_valve");
+  set(panelSelect("valve"), "A");
+  await act(async () => void send().click());
+  expect(send().disabled).toBe(true);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(10_000);
+  });
+  expect(alert()).toBe(AMBIGUOUS);
+  expect(send().disabled).toBe(false);
+  expect(f.mock.calls.filter((c) => (c[1] as { method?: string } | undefined)?.method !== "POST")).toHaveLength(1);
+});
+
+test("a vehicle that vanishes clears the choice for good: when it reappears Send stays disabled until it is picked again", () => {
+  const store = mount();
+  set(panelSelect("Vehicle"), "NYX-TA1");
+  set(panelSelect("Command"), "isolate_valve");
+  set(panelSelect("valve"), "A");
+  expect(send().disabled).toBe(false);
+  const tm = (vehicle: string) => ({ kind: "tm", vehicle, seq: 1, t_onboard: "2026-11-14T10:00:00.000000Z", mode: "TEST", last_cmd_id: null, values: {}, age_ms: 1, frozen: false });
+  const snap = (...vs: string[]) => ({ kind: "snapshot", vehicles: Object.fromEntries(vs.map((v) => [v, tm(v)])), alarms: [], commands: [], events: [] });
+  act(() => ingest(store, "snapshot", snap("NYX-TA2")));
+  expect(panelSelect("Vehicle").value).toBe("");
+  act(() => ingest(store, "snapshot", snap("NYX-TA1", "NYX-TA2")));
+  expect(panelSelect("Vehicle").value).toBe(""); // not silently back
+  expect(send().disabled).toBe(true);
+  set(panelSelect("Vehicle"), "NYX-TA1");
+  expect(send().disabled).toBe(false);
+});
+
+test("a natively closed confirm dialog leaves no dead instance: the next hazardous send gets a fresh one", async () => {
+  mount();
+  stubApi([
+    { status: 409, body: { error: "HAZARDOUS_CONFIRMATION_REQUIRED", message: "m", hazard: "h", confirm_token: "tok1", expires_in_s: 60 } },
+    { status: 409, body: { error: "HAZARDOUS_CONFIRMATION_REQUIRED", message: "m", hazard: "h", confirm_token: "tok2", expires_in_s: 60 } },
+  ]);
+  await openDialog();
+  set(dialogField("Reason"), "venting now");
+  set(dialogField("Type"), "NYX-TA2");
+  act(() => void (host.querySelector("dialog") as HTMLDialogElement).close()); // closed by the browser, not by our buttons
+  expect(host.querySelector("dialog")).toBeNull();
+  await act(async () => send().click());
+  const d = host.querySelector("dialog") as HTMLDialogElement;
+  expect(d.open).toBe(true);
+  expect(dialogField("Type").value).toBe(""); // nothing typed in the old one carried over
+  expect(dlg("Confirm").disabled).toBe(true);
+});
+
+test("a scripted submit after an ambiguous failure sends no second POST", async () => {
+  const { f } = await hazardous(["network"]);
+  set(dialogField("Reason"), "venting now");
+  set(dialogField("Type"), "NYX-TA2");
+  await act(async () => dlg("Confirm").click());
+  expect(posted(f)).toHaveLength(2); // the request and the failed confirm
+  const form = host.querySelector("dialog form") as HTMLFormElement;
+  await act(async () => form.requestSubmit());
+  expect(posted(f)).toHaveLength(2);
+});

@@ -52,12 +52,26 @@ async def list_alarms(
         )
 
 
-async def _stored_status(conn: psycopg.AsyncConnection, request_id: UUID) -> str | None:
+async def _stored(
+    conn: psycopg.AsyncConnection, rid: UUID, alarm_id: UUID, user: str, note: str
+) -> AckAccepted | None:
+    """The stored request `rid`, if any; 422 REQUEST_ID_REUSED when it is another ACK (other
+    alarm, user or note): answering with its status would show ACK PENDING on an alarm nobody
+    acknowledged (review of Task 10)."""
     cur = await conn.execute(
-        "SELECT status FROM alarm_ack_request WHERE request_id = %s", (request_id,)
+        "SELECT alarm_id, by_user, note, status FROM alarm_ack_request WHERE request_id = %s",
+        (rid,),
     )
     row = await cur.fetchone()
-    return None if row is None else str(row[0])
+    if row is None:
+        return None
+    if tuple(row[:3]) != (alarm_id, user, note):
+        raise ApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY,
+            "REQUEST_ID_REUSED",
+            f"request_id {rid} belongs to another ACK request",
+        )
+    return AckAccepted.model_validate({"request_id": rid, "status": row[3]})
 
 
 @router.post(
@@ -72,8 +86,8 @@ async def post_ack(alarm_id: UUID, body: AckRequest, request: Request, user: Use
         raise ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "NOTE_REQUIRED", "an ACK needs a note")
     rid = body.request_id
     async with _db(request) as conn, conn.transaction():
-        if (stored := await _stored_status(conn, rid)) is not None:
-            return AckAccepted.model_validate({"request_id": rid, "status": stored})
+        if (stored := await _stored(conn, rid, alarm_id, user, body.note)) is not None:
+            return stored
         cur = await conn.execute(
             "SELECT vehicle, state FROM alarms WHERE alarm_id = %s", (alarm_id,)
         )
@@ -88,8 +102,10 @@ async def post_ack(alarm_id: UUID, body: AckRequest, request: Request, user: Use
             " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (request_id) DO NOTHING",
             (rid, alarm_id, vehicle, user, body.note),
         )
-        if cur.rowcount:  # a concurrent twin may have won the insert
+        if cur.rowcount:
             details = {"vehicle": vehicle, "alarm_id": alarm_id, "request_id": rid}
             await audit(conn, user, "ALARM_ACK", body.note, details)
-        status = await _stored_status(conn, rid)
-    return AckAccepted.model_validate({"request_id": rid, "status": status})
+        # a concurrent twin may have won the insert: it must be this same request too
+        stored = await _stored(conn, rid, alarm_id, user, body.note)
+    assert stored is not None  # inserted or found, in this transaction
+    return stored

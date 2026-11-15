@@ -12,7 +12,7 @@ import pytest
 from gs.api import alarms
 from gs.api.app import create_app
 from tests.support.env import dotenv, now, until, vid
-from tests.support.http import CLIENT_HEADERS, api_settings, authed, get_json
+from tests.support.http import CLIENT_HEADERS, FC2_PW, api_settings, authed, get_json
 from tests.support.ingest import worker
 from tests.support.pg import app_dsn, audit_rows, open_alarm, rows
 from tests.support.redisx import drained, produce_values
@@ -149,3 +149,35 @@ async def test_database_down_is_503(users_file: Path, monkeypatch: pytest.Monkey
     async with authed(down) as c:
         for r in (await c.get("/api/alarms"), await ack(c, str(uuid.uuid4()))):
             assert (r.status_code, r.json()["error"]) == (503, "UNAVAILABLE")
+
+
+async def test_request_id_reused_for_another_ack_is_422(app: Any) -> None:  # review of T10
+    a, b = vid(), vid()
+    aid, bid = await alarm_of(a, 31.0), await alarm_of(b, 31.0)
+    rid = str(uuid.uuid4())
+    async with authed(app) as c:
+        assert (await ack(c, aid, rid=rid)).status_code == 202
+        other_alarm = await ack(c, bid, rid=rid)
+        other_note = await ack(c, aid, note="a different note", rid=rid)
+        async with authed(app, "fc2", FC2_PW) as c2:
+            other_user = await ack(c2, aid, rid=rid)
+    for r in (other_alarm, other_note, other_user):
+        assert (r.status_code, r.json()["error"]) == (422, "REQUEST_ID_REUSED")
+    assert rows("select alarm_id from alarm_ack_request where request_id=%s", rid) == [
+        {"alarm_id": uuid.UUID(aid)}
+    ]
+    assert len(ack_audits(rid)) == 1  # no row and no audit for the refused ones
+
+
+async def test_repeat_after_cleared_returns_stored_status(app: Any) -> None:
+    v = vid()
+    aid = await alarm_of(v, 31.0)
+    rid = str(uuid.uuid4())
+    async with authed(app) as c:
+        assert (await ack(c, aid, rid=rid)).status_code == 202
+        produce_values(v, {TEMP: [22.0] * 5}, start_seq=10, base=now() - timedelta(minutes=1))
+        async with worker([v]):  # applies the ACK, then the nominal frames clear the alarm
+            await until(lambda: open_alarm(v, TEMP) is None, 5)
+        again = await ack(c, aid, rid=rid)
+    assert (again.status_code, again.json()) == (202, {"request_id": rid, "status": "applied"})
+    assert len(ack_audits(rid)) == 1

@@ -60,3 +60,13 @@ test("one-sided or no limits", () => {
   expect(limitLabels({ red_high: 10, yellow_high: null }, y)).toEqual([{ value: 10, tone: "red", at: y(10) }]);
   expect(limitLabels({}, y)).toEqual([]);
 });
+
+test("a fractional bucket width rounded by the server never paints a false gap, a missing bucket still does", () => {
+  const ms = 3_600_000 / 1333; // 2700.675…
+  const starts = [0, 1, 2, 3, 4].map((i) => Math.round(i * ms)); // the server's whole-millisecond starts: 0, 2701, 5401, 8102, 10803
+  expect(toSeries(starts.map((t) => b(t)), ms).line).not.toContain(null);
+  expect(toSeries([b(starts[0]!), b(starts[2]!)], ms).line).toEqual([1, 2, null, 1, 2]); // one bucket missing between them
+  expect(toSeries([b(starts[0]!), b(starts[3]!)], ms).line).toContain(null); // two buckets missing
+  expect(toSeries([b(0), b(Math.round(1.4 * ms))], ms).line).not.toContain(null); // 1.4 buckets: jitter, not a gap
+  expect(toSeries([b(0), b(Math.round(1.6 * ms))], ms).line).toContain(null);
+});

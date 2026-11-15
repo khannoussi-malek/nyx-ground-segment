@@ -3,7 +3,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { MissionDb } from "./api";
-import { Chart, ChartPanel, options } from "./Chart";
+import { Chart, ChartPanel, options, RESIZE_DEBOUNCE_MS } from "./Chart";
 import { createStore, ingest } from "./store";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -43,7 +43,7 @@ beforeEach(() => {
   made.plots.length = 0;
   FakeRO.all = [];
   vi.stubGlobal("ResizeObserver", FakeRO);
-  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "Date"] });
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval", "setTimeout", "clearTimeout", "Date"] });
   vi.setSystemTime(new Date("2026-11-14T10:10:00.000Z"));
 });
 afterEach(() => {
@@ -61,6 +61,7 @@ function stubBuckets(rows: unknown[] = []) {
 }
 const urls = (f: ReturnType<typeof stubBuckets>) => f.mock.calls.map((c) => new URL(String(c[0]), "http://x"));
 const flush = () => act(async () => {});
+const settle = () => act(async () => void vi.advanceTimersByTime(RESIZE_DEBOUNCE_MS));
 async function mountChart(rows: unknown[] = []) {
   const f = stubBuckets(rows);
   act(() => root.render(<Chart vehicle="NYX-TA1" param="cabin_pressure_kpa" unit="kPa" limits={{ red_low: 95, yellow_low: 98, yellow_high: 104, red_high: 106 }} />));
@@ -83,12 +84,12 @@ test("the request carries the container width and the 2-minute window; the plot 
 test("a resize refetches with the new width and resizes the plot; a width outside 100..4000 is clamped", async () => {
   const f = await mountChart();
   FakeRO.all[0]!.resize(1200);
-  await flush();
+  await settle();
   expect(urls(f).map((u) => u.searchParams.get("width"))).toEqual(["800", "1200"]);
   expect(made.plots).toHaveLength(1);
   expect(made.plots[0]!.setSize).toHaveBeenCalledWith({ width: 1200, height: 220 });
   FakeRO.all[0]!.resize(5000);
-  await flush();
+  await settle();
   expect(urls(f).at(-1)!.searchParams.get("width")).toBe("4000");
 });
 
@@ -230,4 +231,51 @@ test("the limits and unit come from the mission db; before telemetry the panel w
   expect(made.plots[0]!.opts.axes[1].label).toBe("a_param (kPa)");
   act(() => root.render(<ChartPanel store={createStore()} mission={null} />));
   expect(host.textContent).toContain("Waiting for telemetry");
+});
+
+test("a window being dragged refetches once, after it settles; the first measurement is not delayed", async () => {
+  const f = await mountChart();
+  expect(f).toHaveBeenCalledTimes(1); // immediate
+  FakeRO.all[0]!.resize(900);
+  FakeRO.all[0]!.resize(1000);
+  FakeRO.all[0]!.resize(1100);
+  await act(async () => void vi.advanceTimersByTime(RESIZE_DEBOUNCE_MS - 1));
+  expect(f).toHaveBeenCalledTimes(1);
+  await act(async () => void vi.advanceTimersByTime(1));
+  expect(urls(f).map((u) => u.searchParams.get("width"))).toEqual(["800", "1100"]);
+});
+
+test("an answer for an old range is aborted and never replaces the newer one", async () => {
+  const resolvers: ((r: Response) => void)[] = [];
+  const signals: AbortSignal[] = [];
+  const f = vi.fn((_u: string, init?: { signal?: AbortSignal }) => {
+    signals.push(init!.signal!);
+    return new Promise<Response>((res) => resolvers.push(res));
+  });
+  vi.stubGlobal("fetch", f);
+  act(() => root.render(<Chart vehicle="v" param="p" />));
+  FakeRO.all[0]!.resize(800);
+  await flush();
+  const btn = [...host.querySelectorAll("button")].find((b) => b.textContent === "1 h")!;
+  await act(async () => btn.click());
+  expect(signals[0]!.aborted).toBe(true);
+  const rows = (v: number) => new Response(JSON.stringify([bucket("2026-11-14T10:09:59.000Z", v, v)]), { status: 200 });
+  await act(async () => resolvers[1]!(rows(2))); // the new range answers first
+  await act(async () => resolvers[0]!(rows(1))); // the old one answers late
+  const last = made.plots[0]!.setData.mock.calls.at(-1)![0];
+  expect(last[1]).toEqual([2, 2]);
+  expect(host.querySelector('[role="alert"]')).toBeNull(); // an aborted request is not an error
+});
+
+test("the y range always includes the limits, with a margin; without data or limits it is 0..1", () => {
+  const range = (limits: Parameters<typeof options>[3]["current"]) =>
+    (options(800, "p", undefined, { current: limits }).scales!.y!.range as (u: unknown, min: number | null, max: number | null) => [number, number]);
+  const lim = { red_low: 95, yellow_low: 98, yellow_high: 104, red_high: 106 };
+  const [lo, hi] = range(lim)(null, 100, 102);
+  expect(lo).toBeCloseTo(94.45);
+  expect(hi).toBeCloseTo(106.55);
+  expect(range(lim)(null, 90, 110)[0]).toBeLessThan(90); // data outside the limits widens it too
+  expect(range(undefined)(null, 100, 102)).toEqual([99.9, 102.1]);
+  expect(range(undefined)(null, null, null)).toEqual([0, 1]);
+  expect(range({ red_high: 5 })(null, 5, 5)).toEqual([4, 6]); // a flat line at its limit still gets a range
 });

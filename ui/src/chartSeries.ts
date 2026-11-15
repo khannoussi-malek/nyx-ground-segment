@@ -17,14 +17,17 @@ export type Series = { x: number[]; line: (number | null)[]; lo: (number | null)
 
 /** M4 (D-UI-11): each bucket gives two points, its first value at the bucket start and its last at the bucket end, so the
  *  line passes through what the bucket really started and ended with; the band is the bucket's min/max. A missing bucket
- *  (the next one starts after this one ends) inserts one null point: a gap, never a line across it. x in epoch ms. */
+ *  inserts one null point: a gap, never a line across it. x in epoch ms.
+ *  The x of first and last are approximations: a Bucket carries no first/last timestamps, only the bucket start `t`.
+ *  A gap is a distance of more than 1.5 buckets between starts, so the server rounding a fractional bucket width to
+ *  milliseconds can never paint a false gap. */
 export function toSeries(buckets: readonly Bucket[], bucketMs: number): Series {
   const s: Series = { x: [], line: [], lo: [], hi: [] };
-  let prevEnd: number | null = null;
+  let prevStart: number | null = null;
   for (const b of buckets) {
     const t = Date.parse(b.t);
-    if (prevEnd !== null && t > prevEnd + 1) {
-      s.x.push(prevEnd + 1);
+    if (prevStart !== null && t - prevStart > 1.5 * bucketMs) {
+      s.x.push(prevStart + bucketMs);
       s.line.push(null);
       s.lo.push(null);
       s.hi.push(null);
@@ -33,7 +36,7 @@ export function toSeries(buckets: readonly Bucket[], bucketMs: number): Series {
     s.line.push(b.first, b.last);
     s.lo.push(b.lo, b.lo);
     s.hi.push(b.hi, b.hi);
-    prevEnd = t + bucketMs - 1;
+    prevStart = t;
   }
   return s;
 }

@@ -9,6 +9,7 @@ import type { Store } from "./store";
 import { utcClock } from "./time";
 
 const HEIGHT = 220;
+export const RESIZE_DEBOUNCE_MS = 200;
 const RIGHT_PAD = 44; // room for the red limit numbers outside the plot
 
 const css = (name: string, fallback: string): string => {
@@ -37,12 +38,23 @@ export function Chart({ vehicle, param, unit, limits }: { vehicle: string; param
   useEffect(() => {
     const el = host.current;
     if (!el) return;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let first = true;
     const ro = new ResizeObserver((entries) => {
       const w = Math.round(entries[0]?.contentRect.width ?? 0);
-      if (w > 0) setWidth(w);
+      if (w <= 0) return;
+      clearTimeout(timer);
+      // the first measurement starts the chart at once; a window being dragged refetches once it settles
+      if (first) {
+        first = false;
+        setWidth(w);
+      } else timer = setTimeout(() => setWidth(w), RESIZE_DEBOUNCE_MS);
     });
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      clearTimeout(timer);
+      ro.disconnect();
+    };
   }, []);
 
   // one request per range and refresh: min, max, first and last come from the same buckets
@@ -51,21 +63,23 @@ export function Chart({ vehicle, param, unit, limits }: { vehicle: string; param
     const w = clampWidth(width);
     const ms = WINDOWS[win];
     let live = true;
+    const abort = new AbortController(); // a response for an old range or width must not replace a newer one
     const load = async () => {
       const to = new Date();
       try {
-        const buckets = await fetchBuckets(vehicle, param, new Date(to.getTime() - ms).toISOString(), to.toISOString(), w);
+        const buckets = await fetchBuckets(vehicle, param, new Date(to.getTime() - ms).toISOString(), to.toISOString(), w, abort.signal);
         if (!live) return;
         setData(toPlot(toSeries(buckets, bucketMsFor(ms, w))));
         setError("");
       } catch (e) {
-        if (live) setError(e instanceof Error ? e.message : "chart data unavailable");
+        if (live && !abort.signal.aborted) setError(e instanceof Error ? e.message : "chart data unavailable");
       }
     };
     void load();
     const id = setInterval(() => void load(), refreshMs(ms));
     return () => {
       live = false;
+      abort.abort();
       clearInterval(id);
     };
   }, [vehicle, param, win, width]);
@@ -110,7 +124,21 @@ export function options(width: number, param: string, unit: string | undefined, 
     padding: [8, RIGHT_PAD, 0, 0],
     legend: { show: false },
     cursor: { drag: { x: false, y: false } },
-    scales: { x: { time: true } },
+    scales: {
+      x: { time: true },
+      // the limits are always inside the range, so their lines can be seen even when the data stays well within them
+      y: {
+        range: (_u, dataMin, dataMax) => {
+          const lim = limits.current;
+          const all = [dataMin, dataMax, lim?.red_low, lim?.yellow_low, lim?.yellow_high, lim?.red_high].filter((v): v is number => typeof v === "number" && Number.isFinite(v));
+          if (all.length === 0) return [0, 1];
+          const lo = Math.min(...all);
+          const hi = Math.max(...all);
+          const pad = (hi - lo) * 0.05 || 1;
+          return [lo - pad, hi + pad];
+        },
+      },
+    },
     axes: [
       // UTC clock text with the Z (UI-08), from the same helper as every other time on the page
       { values: (_u, splits) => splits.map((s) => utcClock(new Date(s * 1000).toISOString())), stroke: ink },

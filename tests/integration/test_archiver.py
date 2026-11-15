@@ -825,19 +825,34 @@ async def test_corrupt_hour_already_hot_deleted_stays_open_and_is_left_alone() -
             assert await unresolved_corrupt(c, v) == 1
 
 
-async def test_heal_refused_when_the_hot_rows_lost_the_old_range() -> None:
-    """The corrupt object cannot prove the new version drops nothing, but the row can."""
+def _lose_min(v: str, db: str) -> str:
+    insert_late(v, [{"t_onboard": H + timedelta(milliseconds=1), "seq": 8888}], db)
+    return "delete from telemetry where vehicle=%s and seq=0"  # min moves up, count equal
+
+
+def _lose_max(v: str, db: str) -> str:
+    insert_late(v, [{"t_onboard": H + timedelta(seconds=5, milliseconds=50), "seq": 8889}], db)
+    return "delete from telemetry where vehicle=%s and seq=99"  # max moves down, count equal
+
+
+def _lose_count(v: str, db: str) -> str:
+    return "delete from telemetry where vehicle=%s and seq=50"  # range intact, one row fewer
+
+
+@pytest.mark.parametrize("lose", [_lose_min, _lose_max, _lose_count], ids=["min", "max", "count"])
+async def test_heal_refused_when_the_hot_rows_lost_the_old_range(lose: Any) -> None:
+    """The corrupt object cannot prove the new version drops nothing, but the row can: count,
+    first and last row time must all still be covered."""
     from gs.archiver.scrub import scrub_pass, unresolved_corrupt
 
     v = vid()
     with archive_db() as db:
-        hot_hour(v, H, n=100, db=db)
+        hot_hour(v, H, n=100, db=db)  # 10 Hz: seq 99 is the last, at H + 9.9 s
         async with app_conn(db) as c:
             assert await archive_hour(archiver_ctx(), c, v, H) is not None
             _flip(object_key(v, H))
             await scrub_pass(archiver_ctx(), c)
-            await c.execute("delete from telemetry where vehicle=%s and seq=0", (v,))  # min up
-            insert_late(v, [{"t_onboard": H + timedelta(milliseconds=1), "seq": 8888}], db)
+            await c.execute(lose(v, db), (v,))
             assert await archive_hour(archiver_ctx(), c, v, H, version=1) is None
             assert archive_rows(v, db)[0]["version"] == 0
             assert await unresolved_corrupt(c, v) == 1

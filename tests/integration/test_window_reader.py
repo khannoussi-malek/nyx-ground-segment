@@ -8,6 +8,7 @@ from typing import Any
 
 import psycopg
 import pyarrow as pa
+import pyarrow.compute
 import pytest
 from minio import Minio
 
@@ -227,3 +228,74 @@ async def test_empty_hours_and_half_open_edges_yield_nothing() -> None:
         (t,) = await read(c, v, H, H + HOUR + timedelta(seconds=3), [])
         assert t.num_rows == 3
         assert await read(c, vid(), H, H + 3 * HOUR, []) == []
+
+
+class ArchiveAfterRowRead:
+    """A connection proxy: right after the reader asked for the archive row, the archiver archives
+    the hour and deletes its hot rows (what a pass could do between the reader's two queries)."""
+
+    def __init__(self, real: psycopg.AsyncConnection[Any], v: str, h: datetime) -> None:
+        self._real, self._v, self._h, self.fired = real, v, h, False
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._real, name)
+
+    async def execute(self, query: Any, *args: Any, **kw: Any) -> Any:
+        out = await self._real.execute(query, *args, **kw)
+        if "from archive_object where vehicle" in str(query) and not self.fired:
+            self.fired = True
+            rows_ = await out.fetchall()  # what the reader gets: no archive row yet
+            async with app_conn() as other:
+                await archive_and_delete(other, self._v, self._h)
+            return _Cursor(rows_)
+        return out
+
+
+class _Cursor:
+    def __init__(self, rows_: list[Any]) -> None:
+        self._rows = rows_
+
+    async def fetchone(self) -> Any:
+        return self._rows[0] if self._rows else None
+
+
+async def test_archive_and_delete_between_the_two_reads_loses_no_row() -> None:
+    v = vid()
+    hot_hour(v, H, n=300, rate_hz=1.0)
+    async with app_conn() as real:
+        proxy = ArchiveAfterRowRead(real, v, H)
+        tables = [t async for t in window_hours(proxy, s3(), BUCKET, v, H, H + HOUR, [])]  # type: ignore[arg-type]
+        assert proxy.fired
+    ks = keys(tables)
+    assert len(ks) == len(set(ks)) == 300  # the hot read came first: every row, once
+
+
+async def test_naive_datetimes_are_rejected() -> None:
+    v = vid()
+    naive = datetime(2026, 1, 1)
+    async with app_conn() as c:
+        for lo, hi in ((naive, H), (H, naive)):
+            with pytest.raises(ValueError, match="naive"):
+                await read(c, v, lo, hi, [])
+            with pytest.raises(ValueError, match="naive"):
+                await verify_window(c, s3(), BUCKET, v, lo, hi)
+            with pytest.raises(ValueError, match="naive"):
+                await has_data(c, v, lo, hi)
+
+
+async def test_archived_hour_merged_with_hot_rows_carrying_an_extra_column() -> None:
+    v = vid()
+    hot_hour(v, H, n=100, rate_hz=1.0)
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as adm:
+        try:
+            async with app_conn() as c:
+                assert await archive_hour(archiver_ctx(), c, v, H) is not None  # without COL
+                adm.execute(
+                    f"alter table telemetry add column if not exists {COL} double precision"
+                )
+                insert_late(v, [{"t_onboard": H + timedelta(minutes=30), "seq": 5000, COL: 7.5}])
+                (t,) = await read(c, v, H, H + HOUR, [COL])
+        finally:
+            adm.execute(f"alter table telemetry drop column if exists {COL}")
+    assert t.num_rows == 101 and t[COL].null_count == 100
+    assert t.filter(pa.compute.equal(t["seq"], 5000))[COL].to_pylist() == [7.5]

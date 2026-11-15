@@ -33,6 +33,9 @@ class ArchiveCorrupt(Exception):
 
 
 def _hours(t_from: datetime, t_to: datetime) -> Iterator[datetime]:
+    for t in (t_from, t_to):
+        if t.tzinfo is None or t.utcoffset() is None:
+            raise ValueError(f"naive datetime {t!r}")
     h = hour_of(t_from)
     while h < t_to:
         yield h
@@ -75,8 +78,9 @@ async def window_hours(
     current object (ArchiveCorrupt when it fails the hash) plus the hot rows still or again there
     (late frames), the archived row winning a shared key (EX-29). The hot rows are read BEFORE the
     archive row: an archive-and-delete in between then leaves the rows in the object we find."""
+    hours = list(_hours(t_from, t_to))  # rejects naive datetimes before any I/O
     schema = await hot_schema(conn)
-    for h in _hours(t_from, t_to):
+    for h in hours:
         hot = await hot_table(conn, hour_bounds(vehicle, h), schema)
         cur = await conn.execute(ROW_SQL, (vehicle, h))
         found = await cur.fetchone()
@@ -111,6 +115,7 @@ async def has_data(
     conn: psycopg.AsyncConnection[Any], vehicle: str, t_from: datetime, t_to: datetime
 ) -> bool:
     """A hot row or an archived row range overlapping [t_from, t_to)."""
+    list(_hours(t_from, t_to))  # naive datetimes raise
     cur = await conn.execute(
         "select exists (select 1 from telemetry where vehicle = %(v)s and t_onboard >= %(a)s"
         " and t_onboard < %(b)s) or exists (select 1 from archive_object where vehicle = %(v)s"

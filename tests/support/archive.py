@@ -113,11 +113,12 @@ def archive_db() -> Iterator[str]:
 def archiver_paused() -> Iterator[None]:
     """G4-3: the compose archiver would archive and delete the hot hours these tests create.
     Stopped for the module, started again (and awaited healthy) in finally."""
-    compose("stop", "archiver")
     try:
+        compose("stop", "archiver")
         yield
     finally:
         compose("start", "archiver")
         deadline = time.monotonic() + 60
         while inspect_health("archiver") != "healthy" and time.monotonic() < deadline:
             time.sleep(1)
+        assert inspect_health("archiver") == "healthy", "archiver did not come back healthy"

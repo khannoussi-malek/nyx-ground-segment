@@ -6,7 +6,7 @@ from typing import Literal
 
 from minio import Minio
 
-from tests.support.env import dotenv
+from tests.support.env import REPO, dotenv
 
 _MC = (
     "export MC_CONFIG_DIR=/tmp/mc; "
@@ -24,7 +24,11 @@ def mc(cmd: str) -> subprocess.CompletedProcess[str]:
 
 def inspect_health(service: str) -> str:
     cid = subprocess.run(
-        ["docker", "compose", "ps", "-q", service], capture_output=True, text=True, check=True
+        ["docker", "compose", "ps", "-q", service],
+        capture_output=True,
+        text=True,
+        check=True,
+        cwd=REPO,
     ).stdout.strip()
     out = subprocess.run(
         ["docker", "inspect", cid, "--format", "{{json .State.Health.Status}}"],

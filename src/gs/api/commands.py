@@ -63,6 +63,11 @@ async def release_lock(r: redis.asyncio.Redis, key: str, owner: str) -> None:
                 pass  # expired and taken by someone else: theirs now
 
 
+# error texts that can follow an applied XADD: MULTI refused (the XADD then ran on its own and
+# EXEC fails), or redis-py's own count check after EXEC replied
+_AFTER_EXEC = ("EXEC without MULTI", "Wrong number of response items")
+
+
 class PreSendError(Exception):
     """A Redis error before the MULTI that carries the XADD: the command was never sent."""
 
@@ -74,8 +79,8 @@ def not_sent(e: BaseException) -> bool:
     closed connections and write errors got no reply: ambiguous, the row stays SENT."""
     if isinstance(e, PreSendError):
         return True
-    if isinstance(e, redis.exceptions.ResponseError) and "Wrong number of response items" in str(e):
-        return False  # redis-py's own check after EXEC replied: the transaction ran
+    if isinstance(e, redis.exceptions.ResponseError) and any(m in str(e) for m in _AFTER_EXEC):
+        return False  # the XADD may have run: outside a refused MULTI, or EXEC already replied
     # BusyLoadingError and ExternalAuthProviderError subclass ConnectionError, not ResponseError
     if isinstance(
         e,

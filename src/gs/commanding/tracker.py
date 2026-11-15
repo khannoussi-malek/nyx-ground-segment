@@ -2,7 +2,8 @@
 
 Order per pass (D-ING-05: commit, then ack): read tcack:<v> (pending first, then new, no BLOCK);
 validate every entry before the transaction (D-ING-27); one transaction on the lock connection
-decides every open row with decide(); then MULTI DLQ + XACK; then publish cmd/link messages.
+decides every open row with decide(); then publish cmd/link messages; then MULTI DLQ + XACK
+(the frame path's order).
 Must not import gs.ingest.worker at runtime (it imports this module).
 """
 

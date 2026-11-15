@@ -396,3 +396,14 @@ test("App: each live tm frame leaves a latency sample after the second animation
   expect(window.__nyxLatency).toEqual([expect.objectContaining({ vehicle: "NYX-TA1", seq: 2, age_ms: 10 })]);
   expect(typeof window.__nyxLatency![0]!.paint_ms).toBe("number");
 });
+
+test("App: without the opt-in the probe does nothing (P-pf28)", async () => {
+  const raf = vi.fn((cb: () => void) => (cb(), 0));
+  vi.stubGlobal("requestAnimationFrame", raf);
+  delete window.__nyxLatency;
+  const es = await liveConsole();
+  es.emit("snapshot", snapshot());
+  es.emit("tm", { ...tmFrame, seq: 2, t_onboard: "2026-11-14T10:00:01.000000Z", age_ms: 10 });
+  expect(raf).not.toHaveBeenCalled();
+  expect(window.__nyxLatency).toBeUndefined();
+});

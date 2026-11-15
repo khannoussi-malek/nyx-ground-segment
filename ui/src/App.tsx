@@ -11,7 +11,7 @@ import { LiveTable } from "./LiveTable";
 import { Login } from "./Login";
 import { bootUser, checkSession, loadMission, safeLogout } from "./session";
 import { connectEvents } from "./sse";
-import { probe } from "./probe";
+import { createProbe } from "./probe";
 import { createStore, ingest, type Store } from "./store";
 
 /** Beeps once per new RED alert key and sounds one tone at each loss-of-monitoring onset (D-UI-08, D-UI-21).
@@ -89,6 +89,7 @@ function SoundBadge({ ctx, running, onArm }: { ctx: AudioContext | null; running
 
 function Console({ user, audio, onLogout }: { user: string; audio: AudioContext | null; onLogout: () => void }) {
   const [ctx, setCtx] = useState(audio);
+  const [probe] = useState(() => createProbe()); // opt-in: does nothing unless the perf run armed window.__nyxLatency (P-pf28)
   const [store] = useState(() => createStore(undefined, undefined, probe));
   const [mission, setMission] = useState<MissionDb | null>(null);
   useEffect(() => {

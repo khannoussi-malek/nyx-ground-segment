@@ -121,11 +121,11 @@ test("stop shows the pending report text; once frozen the report table and the C
   await act(async () => button("Stop vent test")!.click());
   expect(host.querySelector('[role="status"]')!.textContent).toContain("Report pending: 5900 of 6000 frames");
   expect(rows()[0]!.getAttribute("data-active")).toBeNull();
-  const csv = host.querySelector<HTMLAnchorElement>("a[download]")!;
-  expect(csv.getAttribute("href")).toBe("/api/sessions/5/report.csv");
+  expect(host.querySelector("a[download]")).toBeNull(); // pending: the server would answer 409 JSON, not a file
   // frozen now
   report = json(200, sessionReport());
   await act(async () => button("Check again")!.click());
+  expect(host.querySelector<HTMLAnchorElement>("a[download]")!.getAttribute("href")).toBe("/api/sessions/5/report.csv");
   const text = host.querySelector(".report")!.textContent!;
   expect(text).toContain("complete, 6000 frames");
   expect(text).toContain("cabin_pressure_kpa");
@@ -163,4 +163,85 @@ test("a failing list or report is shown, never an empty 'no sessions'", async ()
   await flush();
   expect(host.querySelector('[role="alert"]')!.textContent).toContain("503");
   expect(host.textContent).not.toContain("No sessions yet");
+});
+
+test("no CSV link for a session whose report is still running; no link in the session table at all", async () => {
+  server([sessionView({ id: 3, name: "second", ended_at: "2026-11-14T10:10:00Z" })], {
+    "GET /api/sessions/3/report": () => json(409, { error: "SESSION_RUNNING", message: "m" }),
+  });
+  mount();
+  await flush();
+  expect(host.querySelector("a[download]")).toBeNull();
+  await act(async () => button("Report")!.click());
+  expect(host.querySelector("a[download]")).toBeNull();
+});
+
+test("Start is disabled when the chosen vehicle already has an active session, even with a name; another vehicle is fine", async () => {
+  server([sessionView({ id: 1, vehicle: "NYX-TA1" })]);
+  mount();
+  await flush();
+  set(field("Session name"), "second try");
+  set(field("Vehicle"), "NYX-TA1");
+  expect(button("Start session")!.disabled).toBe(true);
+  set(field("Vehicle"), "NYX-TA2");
+  expect(button("Start session")!.disabled).toBe(false);
+});
+
+test("Start is disabled with a vehicle but a blank or whitespace-only name; a scripted submit sends nothing", async () => {
+  const s = server([]);
+  mount();
+  await flush();
+  set(field("Vehicle"), "NYX-TA1");
+  expect(button("Start session")!.disabled).toBe(true);
+  set(field("Session name"), "   ");
+  expect(button("Start session")!.disabled).toBe(true);
+  await act(async () => (host.querySelector("form") as HTMLFormElement).requestSubmit());
+  expect(s.f.mock.calls.every((c) => (c[1] as { method?: string } | undefined)?.method !== "POST")).toBe(true);
+});
+
+test("the list is re-read after a refused start or stop: another operator's change shows (SESSION_ACTIVE, 404)", async () => {
+  const s = server([]);
+  let list: unknown[] = [];
+  s.f.mockImplementation(async (url: string, init?: { method?: string }) => {
+    if (init?.method === "POST" && url === "/api/sessions") {
+      list = [sessionView({ id: 9, name: "started by fc2", conductor: "fc2" })]; // fc2 got there first
+      return json(409, { error: "SESSION_ACTIVE", message: "NYX-TA1 already has an active session" });
+    }
+    if (init?.method === "POST") {
+      list = [];
+      return json(404, { error: "NOT_FOUND", message: "no such session" });
+    }
+    return json(200, list);
+  });
+  mount();
+  await flush();
+  set(field("Vehicle"), "NYX-TA1");
+  set(field("Session name"), "mine");
+  await act(async () => button("Start session")!.click());
+  expect(host.querySelector('[role="alert"]')!.textContent).toBe("NYX-TA1 already has an active session");
+  expect(rows().map((r) => r.textContent)).toEqual([expect.stringContaining("started by fc2")]);
+  await act(async () => button("Stop started by fc2")!.click());
+  expect(host.querySelector('[role="alert"]')!.textContent).toBe("no such session");
+  expect(host.textContent).toContain("No sessions yet");
+});
+
+test("report answers arriving out of order: the slow answer for A never overwrites B", async () => {
+  const a = sessionView({ id: 1, name: "A", ended_at: "2026-11-14T10:10:00Z" });
+  const b = sessionView({ id: 2, name: "B", ended_at: "2026-11-14T10:10:00Z" });
+  const s = server([a, b]);
+  const held: Record<string, (r: Response) => void> = {};
+  s.f.mockImplementation(async (url: string) => {
+    if (url === "/api/sessions") return json(200, [a, b]);
+    return new Promise<Response>((res) => (held[url] = res));
+  });
+  mount();
+  await flush();
+  const reportButtons = [...host.querySelectorAll("button")].filter((x) => x.textContent === "Report");
+  await act(async () => reportButtons[0]!.click()); // A, slow
+  await act(async () => reportButtons[1]!.click()); // B
+  await act(async () => held["/api/sessions/2/report"]!(json(200, sessionReport({ session: sessionView({ id: 2, name: "B", ended_at: "2026-11-14T10:10:00Z" }) }))));
+  expect(host.querySelector(".report h3")!.textContent).toContain("B");
+  await act(async () => held["/api/sessions/1/report"]!(json(200, sessionReport({ session: sessionView({ id: 1, name: "A", ended_at: "2026-11-14T10:10:00Z" }) }))));
+  expect(host.querySelector(".report h3")!.textContent).toContain("B"); // still B
+  expect(host.querySelector("a[download]")!.getAttribute("href")).toBe("/api/sessions/2/report.csv");
 });

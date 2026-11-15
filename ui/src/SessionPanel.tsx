@@ -8,7 +8,7 @@ import { utcClock, utcIso } from "./time";
 const MAY_NOT_HAVE_COMPLETED = "May not have completed – check the session list before trying again";
 type View = { id: number; state: "loading" } | { id: number; state: "error"; message: string } | { id: number; state: "done"; result: ReportResult };
 
-function Report({ result, onRecheck }: { result: ReportResult; onRecheck: () => void }) {
+function Report({ id, result, onRecheck }: { id: number; result: ReportResult; onRecheck: () => void }) {
   if (result.kind === "running") return <p role="status">Session still running – stop it to get the report</p>;
   if (result.kind === "pending") {
     const n = result.frames !== null && result.expected !== null ? `: ${result.frames} of ${result.expected} frames` : "";
@@ -27,6 +27,10 @@ function Report({ result, onRecheck }: { result: ReportResult; onRecheck: () => 
       <p>
         {utcIso(r.session.started_at)} – {r.session.ended_at ? utcIso(r.session.ended_at) : "running"} · {Math.round(r.duration_s)} s ·{" "}
         {r.complete ? `complete, ${r.frames} frames` : <strong>incomplete: {r.frames} of {r.expected} frames</strong>}
+      </p>
+      {/* the CSV exists only once the report is frozen: before that the server answers 409 JSON, not a file */}
+      <p>
+        <a href={reportCsvUrl(id)} download>Download CSV</a>
       </p>
       {r.note && <p>{r.note}</p>}
       <table>
@@ -89,13 +93,17 @@ export function SessionPanel({ store }: { store: Store }) {
   }, []);
   useEffect(() => void refresh(), [refresh]);
 
+  const latest = useRef(0);
   const openReport = useCallback(async (id: number) => {
+    const mine = ++latest.current; // an answer that is no longer the latest request is ignored
     setView({ id, state: "loading" });
+    let next: View;
     try {
-      setView({ id, state: "done", result: await getReport(id) });
+      next = { id, state: "done", result: await getReport(id) };
     } catch (e) {
-      setView({ id, state: "error", message: e instanceof Error ? e.message : "could not load the report" });
+      next = { id, state: "error", message: e instanceof Error ? e.message : "could not load the report" };
     }
+    if (mine === latest.current) setView(next);
   }, []);
 
   async function act(call: () => Promise<SessionResult>, then?: (s: SessionView) => void) {
@@ -108,7 +116,7 @@ export function SessionPanel({ store }: { store: Store }) {
     setBusy(false);
     if (r.ok) then?.(r.session);
     else setError(r.ambiguous ? MAY_NOT_HAVE_COMPLETED : r.message);
-    if (r.ok || r.ambiguous) void refresh();
+    void refresh(); // also after a refusal: another operator may have started or stopped it (SESSION_ACTIVE, 404, ...)
   }
 
   const active = (sessions ?? []).filter((s) => s.ended_at === null);
@@ -157,8 +165,7 @@ export function SessionPanel({ store }: { store: Store }) {
                     </button>
                   ) : (
                     <>
-                      <button type="button" onClick={() => void openReport(s.id)}>Report</button>{" "}
-                      <a href={reportCsvUrl(s.id)} download>CSV</a>
+                      <button type="button" onClick={() => void openReport(s.id)}>Report</button>
                     </>
                   )}
                 </td>
@@ -169,7 +176,7 @@ export function SessionPanel({ store }: { store: Store }) {
       )}
       {view?.state === "loading" && <p role="status">Loading the report…</p>}
       {view?.state === "error" && <p role="alert">{view.message}</p>}
-      {view?.state === "done" && <Report result={view.result} onRecheck={() => void openReport(view.id)} />}
+      {view?.state === "done" && <Report id={view.id} result={view.result} onRecheck={() => void openReport(view.id)} />}
     </section>
   );
 }

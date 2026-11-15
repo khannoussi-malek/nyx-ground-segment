@@ -43,10 +43,11 @@ def test_main_sets_up_json_logging(
 
 
 def test_no_plain_text_logging_in_src() -> None:
-    export = Path("gs/common/interfaces/export.py")  # build tool: prints the files it wrote
+    # command-line tools whose output is the product: the files export wrote, backfill's prompt
+    tools = {Path("gs/common/interfaces/export.py"), Path("gs/simulator/backfill.py")}
     bad = []
     for f in (REPO / "src/gs").rglob("*.py"):
-        if f.relative_to(REPO / "src") == export:
+        if f.relative_to(REPO / "src") in tools:
             continue
         text = f.read_text()
         if re.search(r"(?<![\w.])print\(|logging\.basicConfig", text):

@@ -21,7 +21,7 @@ from gs.archiver.s3 import checksum_headers
 from gs.common.hooks import Hooks
 from tests.support.archive import app_conn, archive_rows, archiver_ctx, hot_hour, stored_in
 from tests.support.env import vid
-from tests.support.pg import app_dsn, insert_rows, rows
+from tests.support.pg import admin_dsn, app_dsn, insert_rows, rows
 from tests.support.s3 import s3_client
 
 H = hour_of(datetime.now(UTC)) - timedelta(hours=30)
@@ -96,19 +96,66 @@ async def test_empty_hour_returns_none() -> None:
         object_bytes(object_key(v, H))  # nothing was uploaded
 
 
-async def test_rearchive_is_idempotent_and_versions_get_their_own_key() -> None:
+async def test_versions_get_their_own_key_and_the_old_object_stays() -> None:
     v = vid()
     hot_hour(v, H, n=50)
     async with app_conn() as c:
         first = await archive_hour(archiver_ctx(), c, v, H)
-        again = await archive_hour(archiver_ctx(), c, v, H)
         v1 = await archive_hour(archiver_ctx(), c, v, H, version=1)
-    assert first is not None and again is not None and v1 is not None
-    assert first.sha256 == again.sha256  # the encoding is deterministic
+    assert first is not None and v1 is not None
     stored = archive_rows(v)
     assert len(stored) == 1 and stored[0]["version"] == 1  # one row names the latest version
     assert object_bytes(object_key(v, H, 1)).startswith(b"PAR1")
     assert object_bytes(object_key(v, H)).startswith(b"PAR1")  # the old object is not removed
+
+
+async def test_encoding_is_deterministic() -> None:
+    v = vid()
+    hot_hour(v, H, n=50)
+    async with app_conn() as c:
+        first = await archive_hour(archiver_ctx(), c, v, H)
+        await c.execute("select 1")
+    assert first is not None
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as a:
+        a.execute("delete from archive_object where vehicle=%s", (v,))
+    async with app_conn() as c:
+        again = await archive_hour(archiver_ctx(), c, v, H)
+    assert again is not None and again.sha256 == first.sha256
+
+
+async def test_an_existing_row_is_never_overwritten_by_the_same_or_older_version() -> None:
+    v = vid()
+    hot_hour(v, H, n=50)
+    async with app_conn() as c:
+        first = await archive_hour(archiver_ctx(), c, v, H)
+        assert first is not None
+        before = object_bytes(object_key(v, H))
+        late_row(v, H + timedelta(seconds=1, milliseconds=5), 999)
+        assert await archive_hour(archiver_ctx(), c, v, H) is None  # version 0 again
+        v1 = await archive_hour(archiver_ctx(), c, v, H, version=1)
+        assert v1 is not None
+        assert await archive_hour(archiver_ctx(), c, v, H, version=1) is None  # same version
+        assert await archive_hour(archiver_ctx(), c, v, H, version=0) is None  # older version
+    assert object_bytes(object_key(v, H)) == before  # the recorded copy is untouched
+    assert archive_rows(v)[0]["version"] == 1 and archive_rows(v)[0]["sha256"] == v1.sha256
+
+
+async def test_a_hot_deleted_hour_is_never_rebuilt_from_its_late_rows() -> None:
+    """After the hot delete the object is the only copy: archive_hour over just the late rows
+    would overwrite it with them."""
+    v = vid()
+    hot_hour(v, H, n=300)
+    ctx = archiver_ctx()
+    async with app_conn() as c:
+        row = await archive_hour(ctx, c, v, H)
+        assert row is not None and await delete_hot(ctx, c, row, hour_bounds(v, H))
+        before = object_bytes(object_key(v, H))
+        late_row(v, H + timedelta(seconds=5, milliseconds=5), 5000)
+        for version in (0, 1, 2):
+            assert await archive_hour(ctx, c, v, H, version=version) is None
+    assert object_bytes(object_key(v, H)) == before and hot_n(v) == 1
+    with pytest.raises(S3Error):
+        object_bytes(object_key(v, H, 1))  # nothing was uploaded
 
 
 def _tamper_value(real: Any) -> Any:
@@ -172,18 +219,23 @@ async def test_hot_rows_changing_during_the_pass_write_no_row(
     assert archive_rows(v) == []  # the object no longer matches the hot rows: not verified
 
 
-async def test_hour_bounds_ignore_session_timezone() -> None:
+@pytest.mark.parametrize("zone", ["Asia/Tokyo", "Asia/Kolkata", "America/St_Johns"])
+async def test_hour_bounds_ignore_session_timezone(zone: str) -> None:
     v = vid()
     hot_hour(v, H, n=300)
     async with app_conn() as c:
         utc = await archive_hour(archiver_ctx(), c, v, H)
-        await c.execute("SET TIME ZONE 'Asia/Tokyo'")
-        tokyo = await archive_hour(archiver_ctx(), c, v, H)
-    assert utc is not None and tokyo is not None
-    assert (tokyo.rows, tokyo.t_min, tokyo.t_max, tokyo.sha256) == (
+    assert utc is not None
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as a:
+        a.execute("delete from archive_object where vehicle=%s", (v,))  # so the zone run may write
+    async with app_conn() as c:
+        await c.execute(f"SET TIME ZONE '{zone}'")  # noqa: S608 (a fixed test string)
+        local = await archive_hour(archiver_ctx(), c, v, H)
+    assert local is not None
+    assert (local.rows, local.t_min, local.t_max, local.sha256) == (
         utc.rows, utc.t_min, utc.t_max, utc.sha256,
     )  # fmt: skip
-    assert tokyo.rows == 300
+    assert local.rows == 300
 
 
 def _raise_exit(code: int) -> NoReturn:
@@ -506,3 +558,27 @@ async def test_merge_rolls_back_when_the_late_rows_change_before_the_delete(
         monkeypatch.undo()
         again = await merge_late(archiver_ctx(), c, archive_row(v))
     assert again is not None and again.rows == 102 and again.version == 1 and hot_n(v) == 0
+
+
+async def test_put_itself_sends_the_checksum_header(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Break the digest put() sends: the server must refuse the body, so no object and no row."""
+    wrong = {"x-amz-checksum-sha256": base64.b64encode(hashlib.sha256(b"other").digest()).decode()}
+    monkeypatch.setattr(s3_mod, "checksum_headers", lambda digest: wrong)
+    key = f"t/{vid()}.bin"
+    with pytest.raises(S3Error) as e:
+        await s3_mod.put(s3_client("archiver"), "archive", key, b"the real body")
+    assert e.value.code in {"BadDigest", "XAmzContentChecksumMismatch"}
+    with pytest.raises(S3Error) as missing:
+        s3_client("root").stat_object("archive", key)
+    assert missing.value.code == "NoSuchKey"
+    v = vid()
+    hot_hour(v, H, n=20)
+    monkeypatch.setattr("gs.archiver.job.put", s3_mod.put)
+    async with app_conn() as c:
+        with pytest.raises(S3Error):
+            await archive_hour(archiver_ctx(), c, v, H)
+    assert archive_rows(v) == []
+    with pytest.raises(S3Error):
+        object_bytes(object_key(v, H))

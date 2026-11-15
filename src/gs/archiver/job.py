@@ -66,7 +66,7 @@ async def archive_hour(
     table = await hot_table(conn, w, schema)
     if table.num_rows == 0:
         return None
-    if version >= 1 and not await _supersedes_recorded(ctx, conn, vehicle, w.start, table):
+    if not await _may_replace_recorded(ctx, conn, vehicle, w.start, version, table):
         return None
     key = object_key(vehicle, w.start, version)
     sha = await put(ctx.s3, ctx.bucket, key, encode(table))
@@ -111,16 +111,26 @@ async def _recorded_table(ctx: ArchiverCtx, row: ArchiveRow) -> pa.Table | None:
     return decode(data)
 
 
-async def _supersedes_recorded(
+async def _may_replace_recorded(
     ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], vehicle: str, hour: datetime,
-    table: pa.Table,
+    version: int, table: pa.Table,
 ) -> bool:  # fmt: skip
-    """A new version must contain every row of the recorded one (hot rows are a superset only if
-    nothing was lost since). Containing the old key set implies min <= old t_min, max >= old t_max
-    and rows >= old rows."""
+    """Checked BEFORE the PUT. Without a row anything goes. With one: only a strictly newer version,
+    and never once the hot rows are deleted (the object is then the only copy; late rows go
+    through merge_late). The new version must contain every row of the recorded one (hot rows are
+    a superset only if nothing was lost since), which also implies min <= old t_min, max >= old
+    t_max and rows >= old rows."""
     old = await _recorded(conn, vehicle, hour)
     if old is None:
         return True
+    if old.hot_deleted_at is not None or version <= old.version:
+        _fail(
+            vehicle,
+            hour,
+            f"a row exists (version {old.version}, hot deleted: "
+            f"{old.hot_deleted_at is not None}); refusing to overwrite with version {version}",
+        )
+        return False
     prev = await _recorded_table(ctx, old)
     if prev is None or not set(keys(prev)) <= set(keys(table)):
         _fail(vehicle, hour, "the new version would drop rows of the recorded version")

@@ -1,7 +1,7 @@
 """POST/GET /api/commands: confirm token, 2 s interlock, QUEUED → SENT → XADD (D-CMD-06/07/11).
 
-Safety rule (P-pf12/16): SEND_ERROR ("not sent, safe to retry") only for an error that proves no
-byte reached Redis; any other XADD error leaves the row SENT for the tracker to judge by evidence.
+Safety rule (P-pf12/16/38): SEND_ERROR ("not sent, safe to retry") only for an error that proves
+the XADD was not applied; any other XADD error leaves the row SENT for the tracker to judge.
 """
 
 import errno
@@ -63,14 +63,25 @@ async def release_lock(r: redis.asyncio.Redis, key: str, owner: str) -> None:
                 pass  # expired and taken by someone else: theirs now
 
 
+class PreSendError(Exception):
+    """A Redis error before the MULTI that carries the XADD: the command was never sent."""
+
+
 def not_sent(e: BaseException) -> bool:
-    """True only when the error proves the command never reached Redis (P-pf16 allow-list):
-    connection refused, authentication/authorization at connect, or an ACL NOPERM reply."""
+    """True only when the error proves the command was not applied (P-pf16, P-pf38): any error
+    REPLY (the server refused the transaction atomically: NOPERM, OOM, LOADING, READONLY,
+    MISCONF, WRONGTYPE, ERR, EXECABORT), auth at connect, or connection refused. Timeouts,
+    closed connections and write errors got no reply: ambiguous, the row stays SENT."""
+    if isinstance(e, PreSendError):
+        return True
+    # BusyLoadingError and ExternalAuthProviderError subclass ConnectionError, not ResponseError
     if isinstance(
         e,
-        redis.exceptions.AuthenticationError
+        redis.exceptions.ResponseError
+        | redis.exceptions.BusyLoadingError
+        | redis.exceptions.AuthenticationError
         | redis.exceptions.AuthorizationError
-        | redis.exceptions.NoPermissionError,
+        | redis.exceptions.ExternalAuthProviderError,
     ):
         return True
     cause = e.__context__
@@ -79,6 +90,27 @@ def not_sent(e: BaseException) -> bool:
         and isinstance(cause, OSError)
         and cause.errno == errno.ECONNREFUSED
     )
+
+
+async def send_locked(r: redis.asyncio.Redis, key: str, owner: str, stream: str, data: str) -> bool:
+    """XADD only while the interlock is still ours (P-pf39): WATCH key, GET == owner, then
+    MULTI XADD EXEC. False: the lock expired or changed hands, nothing was sent. A Redis error
+    before the MULTI is a PreSendError; one from EXEC is classified by not_sent()."""
+    async with r.pipeline(transaction=True) as pipe:
+        try:
+            await pipe.watch(key)
+            mine = await pipe.get(key) == owner
+        except redis.exceptions.RedisError as e:
+            raise PreSendError(f"{type(e).__name__}: {e}") from e
+        if not mine:
+            return False
+        pipe.multi()  # type: ignore[no-untyped-call]
+        pipe.xadd(stream, {"data": data})
+        try:
+            await pipe.execute()
+        except redis.exceptions.WatchError:  # the key expired or was taken after our GET
+            return False
+    return True
 
 
 def _broker_down(e: Exception) -> ApiError:
@@ -296,8 +328,10 @@ async def post_command(body: CommandRequest, request: Request, user: User) -> Co
             HTTPStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", "database too slow: command not sent"
         )
     try:
-        await request.app.state.redis.xadd(f"tc:{body.vehicle}", {"data": tc.model_dump_json()})
-    except redis.exceptions.RedisError as e:
+        ours = await send_locked(
+            request.app.state.redis, key, owner, f"tc:{body.vehicle}", tc.model_dump_json()
+        )
+    except (redis.exceptions.RedisError, PreSendError) as e:
         log.warning("XADD tc:%s failed for %s: %s: %s", body.vehicle, cmd_id, type(e).__name__, e)
         if not_sent(e):
             await _send_error(request, tc, body.vehicle)
@@ -313,6 +347,13 @@ async def post_command(body: CommandRequest, request: Request, user: User) -> Co
             "the broker did not confirm the send: the command may have been sent,"
             " check the command list before sending again",
         ) from e
+    if not ours:  # the 2 s interlock ran out before the send: someone else may hold it now
+        await _send_error(request, tc, body.vehicle)
+        raise ApiError(
+            HTTPStatus.SERVICE_UNAVAILABLE,
+            "UNAVAILABLE",
+            "command not sent (the send took longer than the 2 s interlock): safe to retry",
+        )
     return CommandAccepted(cmd_id=cmd_id)
 
 

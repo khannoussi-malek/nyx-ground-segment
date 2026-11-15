@@ -18,10 +18,11 @@ import redis.asyncio
 import redis.exceptions
 from fastapi import FastAPI
 from jsonschema import Draft202012Validator
+from redis._parsers.base import BaseParser
 
 import gs.api.commands as commands_mod
 from gs.api.app import create_app
-from gs.api.commands import args_hash, lock_key, mark_sent, not_sent, release_lock
+from gs.api.commands import PreSendError, args_hash, lock_key, mark_sent, not_sent, release_lock
 from tests.support.env import vid
 from tests.support.http import CLIENT_HEADERS, FC1_PW, FC2_PW, api_settings, login
 from tests.support.pg import app_dsn, audit_rows, commands_for
@@ -197,6 +198,7 @@ def test_args_hash_is_canonical() -> None:
     a = args_hash("NYX-TA1", "x", {"b": 1, "a": "z"})
     assert a == args_hash("NYX-TA1", "x", {"a": "z", "b": 1}) and len(a) == 64
     assert a != args_hash("NYX-TA2", "x", {"b": 1, "a": "z"})
+    assert a != args_hash("NYX-TA1", "y", {"b": 1, "a": "z"})  # the name is part of it
 
 
 # ---- send and SEND_ERROR (D-CMD-11, P-pf12/16)
@@ -205,18 +207,20 @@ def lock_value(api: Api, name: str = "isolate_valve") -> str | None:
     return str(client("admin").get(keys[0])) if keys else None
 
 
-async def refused_xadd(*a: Any, **k: Any) -> Any:
-    """A real connect to a closed port: redis-py's ConnectionError from ECONNREFUSED."""
+async def refused_send(r: Any, *a: Any) -> bool:
+    """The real send against a closed port: redis-py's ConnectionError from ECONNREFUSED."""
     closed = redis.asyncio.Redis(host=HOST, port=1, socket_timeout=1)
     try:
-        return await closed.xadd(*a, **k)
+        return await REAL_SEND(closed, *a)
     finally:
         await closed.aclose()
 
 
+REAL_SEND = commands_mod.send_locked
+
+
 async def test_send_error_releases_lock(api: Api, monkeypatch: pytest.MonkeyPatch) -> None:
-    real = api.app.state.redis.xadd
-    monkeypatch.setattr(api.app.state.redis, "xadd", refused_xadd)
+    monkeypatch.setattr(commands_mod, "send_locked", refused_send)
     r = await api.fc1.post("/api/commands", json=api.iso())
     assert r.status_code == 503 and r.json()["error"] == "BROKER_DOWN"
     assert "safe to retry" in r.json()["message"]
@@ -227,19 +231,50 @@ async def test_send_error_releases_lock(api: Api, monkeypatch: pytest.MonkeyPatc
     assert lock_value(api) is None  # released
     states = [a["details"]["state"] for a in api.audits("fc1") if a["action"] == "CMD_STATE"]
     assert states == ["SENT", "FAILED"]
-    monkeypatch.setattr(api.app.state.redis, "xadd", real)
+    monkeypatch.setattr(commands_mod, "send_locked", REAL_SEND)
     assert (await api.fc1.post("/api/commands", json=api.iso())).status_code == 202
 
 
 async def test_acl_refusal_is_send_error(api: Api, monkeypatch: pytest.MonkeyPatch) -> None:
-    sim = aclient("sim")  # NOPERM: the sim user may not write tc:
-    monkeypatch.setattr(api.app.state.redis, "xadd", sim.xadd)
+    sim = aclient("sim")  # NOPERM: the sim user may not touch cmdlock:* or write tc:
+
+    async def as_sim(r: Any, *a: Any) -> bool:
+        return await REAL_SEND(sim, *a)
+
+    monkeypatch.setattr(commands_mod, "send_locked", as_sim)
     try:
         r = await api.fc1.post("/api/commands", json=api.iso())
     finally:
         await sim.aclose()
-    assert r.status_code == 503
+    assert r.status_code == 503 and "safe to retry" in r.json()["message"]
     assert commands_for(api.v)[0]["failure_reason"] == "SEND_ERROR"
+
+
+REPLIES = [  # error replies to MULTI XADD EXEC: the server refused it atomically (P-pf38)
+    "OOM command not allowed when used memory > 'maxmemory'.",
+    "LOADING Redis is loading the dataset in memory",
+    "READONLY You can't write against a read only replica.",
+    "MISCONF Redis is configured to save RDB snapshots, but it's currently unable to persist",
+    "WRONGTYPE Operation against a key holding the wrong kind of value",
+    "ERR any error reply",
+    "EXECABORT Transaction discarded because of previous errors.",
+    "NOPERM User api has no permissions to run the 'xadd' command",
+]
+
+
+@pytest.mark.parametrize("reply", REPLIES)
+async def test_error_reply_is_send_error(
+    api: Api, monkeypatch: pytest.MonkeyPatch, reply: str
+) -> None:
+    async def refused(*a: Any) -> bool:
+        raise BaseParser.parse_error(reply)  # type: ignore[no-untyped-call]  # redis-py raises this
+
+    monkeypatch.setattr(commands_mod, "send_locked", refused)
+    r = await api.fc1.post("/api/commands", json=api.iso())
+    assert r.status_code == 503 and "safe to retry" in r.json()["message"]
+    [row] = commands_for(api.v)
+    assert (row["state"], row["failure_reason"]) == ("FAILED", "SEND_ERROR")
+    assert lock_value(api) is None
 
 
 @pytest.mark.parametrize(
@@ -252,10 +287,10 @@ async def test_acl_refusal_is_send_error(api: Api, monkeypatch: pytest.MonkeyPat
 async def test_timed_out_xadd_leaves_row_sent(
     api: Api, monkeypatch: pytest.MonkeyPatch, err: Exception
 ) -> None:  # P-pf12: it may have landed (G30); the tracker judges by evidence
-    async def boom(*a: Any, **k: Any) -> Any:
+    async def boom(*a: Any) -> bool:
         raise err
 
-    monkeypatch.setattr(api.app.state.redis, "xadd", boom)
+    monkeypatch.setattr(commands_mod, "send_locked", boom)
     r = await api.fc1.post("/api/commands", json=api.iso())
     assert r.status_code == 503 and r.json()["error"] == "BROKER_DOWN"
     assert "may have been sent" in r.json()["message"]
@@ -275,21 +310,24 @@ def test_not_sent_allow_list() -> None:
     assert not_sent(chained(ConnectionRefusedError(errno.ECONNREFUSED, "refused")))
     assert not_sent(redis.exceptions.AuthenticationError("invalid username-password pair"))
     assert not_sent(redis.exceptions.AuthorizationError("NOAUTH"))
-    assert not_sent(redis.exceptions.NoPermissionError("NOPERM"))
+    assert not_sent(redis.exceptions.ExternalAuthProviderError("provider down"))
+    assert not_sent(PreSendError("before the MULTI"))
+    for reply in REPLIES:  # incl. LOADING: BusyLoadingError is a ConnectionError subclass
+        assert not_sent(BaseParser.parse_error(reply)), reply  # type: ignore[no-untyped-call]
     assert not not_sent(redis.exceptions.TimeoutError("Timeout reading from socket"))
     assert not not_sent(redis.exceptions.ConnectionError("Error while writing to socket"))
+    assert not not_sent(redis.exceptions.ConnectionError("Connection closed by server."))
     assert not not_sent(chained(OSError("Multiple exceptions: ...")))  # errno unknown
-    assert not not_sent(redis.exceptions.ResponseError("OOM command not allowed"))
 
 
 async def test_queued_then_sent_before_xadd(api: Api, monkeypatch: pytest.MonkeyPatch) -> None:
-    real, seen = api.app.state.redis.xadd, []
+    seen: list[str] = []
 
-    async def spy(*a: Any, **k: Any) -> Any:
+    async def spy(*a: Any) -> bool:
         seen.append(commands_for(api.v)[0]["state"])
-        return await real(*a, **k)
+        return await REAL_SEND(*a)
 
-    monkeypatch.setattr(api.app.state.redis, "xadd", spy)
+    monkeypatch.setattr(commands_mod, "send_locked", spy)
     r = await api.fc1.post("/api/commands", json={**api.iso(), "reason": "check valve A"})
     assert r.status_code == 202 and seen == ["SENT"]  # SENT is committed before the XADD
     [row] = commands_for(api.v)
@@ -300,6 +338,80 @@ async def test_queued_then_sent_before_xadd(api: Api, monkeypatch: pytest.Monkey
     assert (req["action"], req["reason"]) == ("CMD_REQUESTED", "check valve A")
     assert req["details"]["cmd_id"] == r.json()["cmd_id"]
     assert (state["action"], state["details"]["state"]) == ("CMD_STATE", "SENT")
+
+
+# ---- the interlock covers the send (P-pf39) and concurrent requests
+async def test_lock_lost_before_send_at_most_one_xadd(
+    api: Api, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(commands_mod, "LOCK_TTL_MS", 200)
+    real_mark, calls = commands_mod.mark_sent, [0]
+
+    async def stalled(*a: Any) -> bool:  # only the first request's DB phase stalls
+        calls[0] += 1
+        if calls[0] == 1:
+            await asyncio.sleep(0.5)  # its 200 ms lock runs out meanwhile
+        return await real_mark(*a)
+
+    monkeypatch.setattr(commands_mod, "mark_sent", stalled)
+
+    async def second() -> httpx.Response:
+        await asyncio.sleep(0.3)  # after the first lock expired, before its send
+        return await api.fc2.post("/api/commands", json=api.iso())
+
+    first, late = await asyncio.gather(api.fc1.post("/api/commands", json=api.iso()), second())
+    assert late.status_code == 202
+    assert first.status_code == 503 and "safe to retry" in first.json()["message"]
+    [tc] = api.tc()  # at most one XADD
+    assert tc["cmd_id"] == late.json()["cmd_id"] and tc["issued_by"] == "fc2"
+    lost = [r for r in commands_for(api.v) if str(r["cmd_id"]) == first_id(api, "fc1")]
+    assert [(r["state"], r["failure_reason"]) for r in lost] == [("FAILED", "SEND_ERROR")]
+
+
+def first_id(api: Api, user: str) -> str:
+    [r] = [r for r in commands_for(api.v) if r["issued_by"] == user]
+    return str(r["cmd_id"])
+
+
+async def test_send_locked_needs_our_owner() -> None:
+    v, r = vid(), aclient("api")
+    key = f"cmdlock:{v}:isolate_valve:h"
+    try:
+        await r.set(key, "theirs|fc2", px=2000)
+        assert await REAL_SEND(r, key, "mine|fc1", f"tc:{v}", "{}") is False
+        assert stream_entries(f"tc:{v}") == []
+        assert await REAL_SEND(r, key, "theirs|fc2", f"tc:{v}", "{}") is True
+        assert len(stream_entries(f"tc:{v}")) == 1
+    finally:
+        await r.aclose()
+
+
+async def test_two_confirms_with_one_token(api: Api) -> None:
+    token = await confirm_token(api.fc1, api.vent())
+    body = {**api.vent(), "confirm_token": token, "reason": REASON}
+    a, b = await asyncio.gather(
+        api.fc1.post("/api/commands", json=body), api.fc1.post("/api/commands", json=body)
+    )
+    assert sorted([a.status_code, b.status_code]) == [202, 409]
+    assert {a.json().get("error"), b.json().get("error")} == {None, "CONFIRMATION_INVALID"}
+    assert len(api.tc()) == 1
+
+
+async def test_two_identical_posts_race(api: Api) -> None:
+    a, b = await asyncio.gather(
+        api.fc1.post("/api/commands", json=api.iso()), api.fc2.post("/api/commands", json=api.iso())
+    )
+    assert sorted([a.status_code, b.status_code]) == [202, 409]
+    assert {a.json().get("error"), b.json().get("error")} == {None, "DUPLICATE_COMMAND"}
+    assert len(api.tc()) == 1
+
+
+async def test_ttls_are_the_design_values(api: Api) -> None:
+    assert (commands_mod.LOCK_TTL_MS, commands_mod.CONFIRM_TTL_MS) == (2_000, 60_000)
+    assert commands_mod.REASON_MIN == 10
+    assert (await api.fc1.post("/api/commands", json=api.iso())).status_code == 202
+    [key] = client("admin").keys(f"cmdlock:{api.v}:*")
+    assert 1_000 < int(client("admin").pttl(key)) <= 2_000
 
 
 async def test_monotonic_transitions() -> None:

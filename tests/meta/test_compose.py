@@ -39,7 +39,8 @@ ENV = {
     },
     "minio": {"MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"},
     "minio-init": {
-        "MC_CONFIG_DIR", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_ARCHIVER_SECRET", "S3_BUCKET",
+        "MC_CONFIG_DIR", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_ARCHIVER_SECRET",
+        "S3_REPLAY_SECRET", "S3_BUCKET",
     },
     "migrate": {"DATABASE_URL", "MISSION_DB"},
     "simulator": {
@@ -54,7 +55,8 @@ ENV = {
     "ingest-2": INGEST_ENV,
     "api": {
         "REDIS_URL", "DATABASE_URL", "SESSION_SECRET", "USERS_FILE", "MISSION_DB", "VEHICLES",
-        "UI_DIST", "BIND_HOST", "API_PORT",
+        "UI_DIST", "BIND_HOST", "API_PORT", "S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY",
+        "S3_BUCKET",
     },
 }  # fmt: skip
 
@@ -87,13 +89,13 @@ USES = {  # secret keys each service's environment is derived from
     "redis": {"REDIS_HEALTH_PW"},
     "db": {"POSTGRES_PASSWORD", "GS_OWNER_PASSWORD", "GS_APP_PASSWORD"},
     "minio": {"S3_ACCESS_KEY", "S3_SECRET_KEY"},
-    "minio-init": {"S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_ARCHIVER_SECRET"},
+    "minio-init": {"S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_ARCHIVER_SECRET", "S3_REPLAY_SECRET"},
     "migrate": {"GS_OWNER_PASSWORD"},
     "simulator": {"REDIS_SIM_PW"},
     "archiver": {"REDIS_HEALTH_PW", "GS_APP_PASSWORD", "S3_ARCHIVER_SECRET"},
     "ingest-1": {"REDIS_INGEST_PW", "GS_APP_PASSWORD"},
     "ingest-2": {"REDIS_INGEST_PW", "GS_APP_PASSWORD"},
-    "api": {"REDIS_API_PW", "GS_APP_PASSWORD", "SESSION_SECRET"},
+    "api": {"REDIS_API_PW", "GS_APP_PASSWORD", "SESSION_SECRET", "S3_REPLAY_SECRET"},
 }
 
 
@@ -202,3 +204,10 @@ def test_archiver_service(services: dict[str, dict[str, Any]]) -> None:
         "minio-init": "service_completed_successfully",
     }  # fmt: skip
     assert "healthcheck" in a
+
+
+def test_api_reads_the_archive_as_replay(services: dict[str, dict[str, Any]]) -> None:  # T4-l
+    env = services["api"]["environment"]
+    got = (env["S3_ENDPOINT"], env["S3_ACCESS_KEY"], env["S3_BUCKET"])
+    assert got == ("minio:9000", "replay", "archive")
+    assert env["S3_SECRET_KEY"] == dotenv()["S3_REPLAY_SECRET"]

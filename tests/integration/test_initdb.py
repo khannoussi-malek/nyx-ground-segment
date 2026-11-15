@@ -153,3 +153,19 @@ def test_archive_object_has_range_scrub_and_version_columns() -> None:
             )
     with psycopg.connect(app_dsn("gs")) as c:
         assert priv(c, "archive_object", "UPDATE") and not priv(c, "archive_object", "DELETE")
+
+
+def test_session_report_update_granted() -> None:  # T4-m: refreeze rewrites the stored report
+    def col(c: psycopg.Connection[tuple[object, ...]], column: str, p: str) -> bool:
+        q = "select has_column_privilege('gs_app', 'session_report', %s, %s)"
+        row = c.execute(q, (column, p)).fetchone()
+        assert row is not None
+        return bool(row[0])
+
+    with throwaway_db() as db, psycopg.connect(admin_dsn(db)) as fresh:
+        live = psycopg.connect(app_dsn("gs"))  # the running stack got 05-gate4.sql by psql -f
+        with live:
+            for c in (fresh, live):
+                assert all(col(c, k, "UPDATE") for k in ("report", "csv", "created_at"))
+                assert not col(c, "session_id", "UPDATE")
+                assert not priv(c, "session_report", "DELETE")

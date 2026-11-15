@@ -20,7 +20,7 @@ from redis.maint_notifications import MaintNotificationsConfig
 from starlette.exceptions import HTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
-from gs.api import alarms, auth, commands, deps, events, sessions, telemetry
+from gs.api import alarms, auth, commands, deps, events, replays, sessions, telemetry
 from gs.api.auth import SESSION_TTL_S, load_users
 from gs.api.bodies import ErrorBody, Health
 from gs.api.deps import ApiError, User, errors
@@ -162,7 +162,9 @@ ROUTER.add_api_route(
     response_class=StreamingResponse,
     responses={200: {"content": {"text/event-stream": {}}}, **errors(401, 503)},
 )
-for _r in (auth.router, commands.router, alarms.router, sessions.router, telemetry.router):
+for _r in (
+    auth.router, commands.router, alarms.router, sessions.router, telemetry.router, replays.router,
+):  # fmt: skip
     ROUTER.include_router(_r)
 
 

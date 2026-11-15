@@ -40,14 +40,14 @@ def inspect_health(service: str) -> str:
     return status
 
 
-def s3_client(user: Literal["root", "archiver"] = "archiver") -> Minio:
-    """A MinIO client on the host port, as the root user or as the least-privilege archiver."""
+def s3_client(user: Literal["root", "archiver", "replay"] = "archiver") -> Minio:
+    """A MinIO client on the host port, as root or as a least-privilege user (archiver, replay)."""
     env = dotenv()
-    access, secret = (
-        (env["S3_ACCESS_KEY"], env["S3_SECRET_KEY"])
-        if user == "root"
-        else ("archiver", env["S3_ARCHIVER_SECRET"])
-    )
+    access, secret = {
+        "root": (env["S3_ACCESS_KEY"], env["S3_SECRET_KEY"]),
+        "archiver": ("archiver", env["S3_ARCHIVER_SECRET"]),
+        "replay": ("replay", env["S3_REPLAY_SECRET"]),
+    }[user]
     # a fixed region spares the client the GetBucketLocation call the archiver policy does not grant
     return Minio(
         f"127.0.0.1:{env['MINIO_HOST_PORT']}", access, secret, secure=False, region="us-east-1"

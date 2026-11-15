@@ -122,3 +122,22 @@ def test_init_rerun_keeps_policy() -> None:
         assert c.get_object("archive", key).read() == b"x"  # and it still has its grants
     finally:
         root.remove_object("archive", key)
+
+
+def test_replay_user_reads_only() -> None:  # T4-l: the API reads the archive as `replay`
+    root, c = s3_client("root"), s3_client("replay")
+    key = f"t/{vid()}.bin"
+    root.put_object("archive", key, io.BytesIO(b"x"), 1)
+    try:
+        assert c.get_object("archive", key).read() == b"x"
+        assert key in [o.object_name for o in c.list_objects("archive", prefix="t/")]
+        for op in (
+            lambda: c.put_object("archive", f"t/{vid()}.bin", io.BytesIO(b"y"), 1),
+            lambda: c.remove_object("archive", key),
+        ):
+            with pytest.raises(S3Error) as e:
+                op()
+            assert e.value.code == "AccessDenied"
+        assert root.get_object("archive", key).read() == b"x"  # still there
+    finally:
+        root.remove_object("archive", key)

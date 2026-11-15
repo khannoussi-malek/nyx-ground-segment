@@ -1,6 +1,7 @@
 #!/bin/bash
-# One-shot MinIO setup (run by the minio-init service): the archive bucket and the least-privilege
-# `archiver` user (put/get/list on that bucket only, no delete; D-ARC-09). Idempotent: safe to re-run.
+# One-shot MinIO setup (run by the minio-init service): the archive bucket, the least-privilege
+# `archiver` user (put/get/list on that bucket only, no delete; D-ARC-09) and the get-only `replay`
+# user the API reads the archive with (get/list, T4-l). Idempotent: safe to re-run.
 set -euo pipefail
 export MC_CONFIG_DIR="${MC_CONFIG_DIR:-/tmp/mc}"
 
@@ -32,4 +33,20 @@ mc admin policy create s3 nyx-archiver /tmp/nyx-archiver.json
 entities=$(mc admin policy entities s3 --user archiver)
 if [[ $entities != *nyx-archiver* ]]; then
   mc admin policy attach s3 nyx-archiver --user archiver
+fi
+
+mc admin user add s3 replay "$S3_REPLAY_SECRET"
+cat > /tmp/nyx-replay.json <<POLICY
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {"Effect": "Allow", "Action": ["s3:GetObject"], "Resource": ["arn:aws:s3:::$S3_BUCKET/*"]},
+    {"Effect": "Allow", "Action": ["s3:ListBucket"], "Resource": ["arn:aws:s3:::$S3_BUCKET"]}
+  ]
+}
+POLICY
+mc admin policy create s3 nyx-replay /tmp/nyx-replay.json
+entities=$(mc admin policy entities s3 --user replay)
+if [[ $entities != *nyx-replay* ]]; then
+  mc admin policy attach s3 nyx-replay --user replay
 fi

@@ -56,7 +56,8 @@ services:
     depends_on: {minio: {condition: service_healthy}}
     entrypoint: ["/bin/bash", "/minio_init.sh"]
     volumes: ["./scripts/minio_init.sh:/minio_init.sh:ro"]
-    environment: {MC_CONFIG_DIR: /tmp/mc, S3_ACCESS_KEY: "${S3_ACCESS_KEY}", S3_SECRET_KEY: "${S3_SECRET_KEY}", S3_ARCHIVER_SECRET: "${S3_ARCHIVER_SECRET}", S3_BUCKET: archive}
+    environment: {MC_CONFIG_DIR: /tmp/mc, S3_ACCESS_KEY: "${S3_ACCESS_KEY}", S3_SECRET_KEY: "${S3_SECRET_KEY}", S3_ARCHIVER_SECRET: "${S3_ARCHIVER_SECRET}",
+                  S3_REPLAY_SECRET: "${S3_REPLAY_SECRET}", S3_BUCKET: archive}
     restart: "no"
   migrate:   # one-shot; its long-running dependent is ingest-1, never named in --wait (S2)
     <<: *app
@@ -113,7 +114,8 @@ services:
     environment: {REDIS_URL: "redis://api:${REDIS_API_PW}@redis:6379/0",
                   DATABASE_URL: "postgresql://gs_app:${GS_APP_PASSWORD}@db:5432/gs", SESSION_SECRET: "${SESSION_SECRET}",
                   USERS_FILE: /run/users.yaml, MISSION_DB: /mission, VEHICLES: "NYX-TA1,NYX-TA2", BIND_HOST: "0.0.0.0", API_PORT: "8000",
-                  UI_DIST: /app/ui/dist}
+                  UI_DIST: /app/ui/dist, S3_ENDPOINT: "minio:9000", S3_ACCESS_KEY: replay,
+                  S3_SECRET_KEY: "${S3_REPLAY_SECRET}", S3_BUCKET: archive}
     volumes:
       - ./mission:/mission:ro
       - {type: bind, source: ./users.yaml, target: /run/users.yaml, read_only: true, bind: {create_host_path: false}}

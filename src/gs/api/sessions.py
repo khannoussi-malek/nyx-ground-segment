@@ -112,6 +112,15 @@ async def get_report(session_id: int, request: Request, user: User) -> SessionRe
     return got
 
 
+@router.post(
+    "/api/sessions/{session_id}/report/refreeze",
+    responses={**REPORT_ERRORS, **errors(403, 410)},
+)
+async def refreeze_report(session_id: int, request: Request, user: User) -> SessionReport:
+    """D-DB-10, T4-m: rebuild an incomplete frozen report while the session's hot rows exist."""
+    raise _todo("report refreeze (Track SR Task 16)")
+
+
 @router.get(
     "/api/sessions/{session_id}/report.csv",
     response_class=Response,

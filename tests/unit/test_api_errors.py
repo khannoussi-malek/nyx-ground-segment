@@ -11,6 +11,7 @@ from gs.api.app import create_app
 from gs.api.bodies import CommandConflict, ReportConflict
 from gs.api.deps import ApiError
 from gs.api.settings import Settings
+from gs.archiver.s3 import S3Settings
 
 
 def _app(tmp_path: Path) -> FastAPI:
@@ -18,6 +19,7 @@ def _app(tmp_path: Path) -> FastAPI:
         Settings(
             redis_url="redis://x", database_url="postgresql://x", session_secret="s",
             users_file=tmp_path / "u.yaml", mission_db=tmp_path, vehicles=(), ui_dist=tmp_path,
+            s3=S3Settings("x:9000", "replay", "k", "archive"),
         )
     )  # fmt: skip
 

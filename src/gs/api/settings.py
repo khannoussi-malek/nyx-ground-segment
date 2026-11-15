@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from pathlib import Path
 
+from gs.archiver.s3 import S3Settings
 from gs.common.config import require, vehicle_list
 
 
@@ -13,6 +14,7 @@ class Settings:
     mission_db: Path
     vehicles: tuple[str, ...]
     ui_dist: Path
+    s3: S3Settings  # the get-only `replay` MinIO user (T4-l, R2-19)
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -24,4 +26,5 @@ class Settings:
             mission_db=Path(require("MISSION_DB")),
             vehicles=vehicle_list(require("VEHICLES")),
             ui_dist=Path(require("UI_DIST")),
+            s3=S3Settings.from_env(),
         )

@@ -28,7 +28,7 @@ STEP_S, RED_QUEUED = 60.0, 10
 def red_queued(since_ms: int) -> bool:
     """RED_QUEUED frames with the step's value are in tm:V since `since_ms` (nobody reads it)."""
     entries: Any = client("admin").xrange(f"tm:{V}", min=str(since_ms))
-    reds = [f for _, f in entries if json.loads(f["data"])["values"].get(PARAM) == RED]
+    reds = [f for _, f in entries if json.loads(f["data"]).get(PARAM) == RED]
     return len(reds) >= RED_QUEUED
 
 

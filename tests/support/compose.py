@@ -10,6 +10,8 @@ from typing import Any
 from tests.support.env import REPO, dotenv
 
 ONE_SHOTS = ("migrate", "minio-init")
+# services a system test needs besides the API; a coverage run's module fixtures stop some of them
+STACK_SERVICES = ("simulator", "ingest-1", "ingest-2")
 
 
 def compose_config() -> dict[str, Any]:
@@ -66,6 +68,12 @@ def compose_ps() -> dict[str, dict[str, Any]]:
     out = compose("ps", "-a", "--format", "json").stdout
     rows = [json.loads(line) for line in out.splitlines() if line.strip()]
     return {r["Service"]: r for r in rows}
+
+
+def stack_problems(api_ok: bool, ps: Mapping[str, Mapping[str, Any]]) -> list[str]:
+    """What is down: "api" when its /healthz failed, then each unhealthy STACK_SERVICES entry."""
+    down = [s for s in STACK_SERVICES if ps.get(s, {}).get("Health") != "healthy"]
+    return ([] if api_ok else ["api"]) + down
 
 
 def wait_healthy(svc: str, timeout: float = 60) -> None:

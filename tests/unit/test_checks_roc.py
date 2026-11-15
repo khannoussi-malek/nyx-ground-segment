@@ -1,5 +1,7 @@
 import random
 
+import pytest
+
 from gs.alarms.checks import Reading, Sample
 from gs.alarms.checks.limit import Limit, LimitCheck
 from gs.alarms.checks.roc import Roc, RocCheck
@@ -41,6 +43,11 @@ def roc_levels(samples: list[Sample], cfg: RocCheck | None = None) -> list[Readi
     return [r for r in run(Roc(cfg or shipped_roc()), samples) if r is not None]
 
 
+def judged(r: Reading | None) -> tuple[Level, str | None] | None:
+    """(level, side) of a reading, its value aside."""
+    return None if r is None else (r.level, r.side)
+
+
 def first_seq(readings: list[Reading | None], level: Level) -> int | None:
     return next((i for i, r in enumerate(readings) if r is not None and r.level == level), None)
 
@@ -63,7 +70,7 @@ def test_too_few_samples_no_opinion() -> None:  # < 80 % of window_s / period_s 
 
 def test_eight_of_ten_samples_is_enough() -> None:  # 80 % exactly (float 8.000000000000002)
     pts = [(i * 0.1, 101.3 - 0.04 * i) for i in range(8)]
-    assert roc_readings(pts, period_s=0.1)[-1] == Reading(Level.YELLOW, "FALLING")
+    assert judged(roc_readings(pts, period_s=0.1)[-1]) == (Level.YELLOW, "FALLING")
     assert roc_readings(pts[:7], period_s=0.1)[-1] is None
 
 
@@ -72,7 +79,7 @@ def test_window_drops_old_samples() -> None:  # a past fall leaves the 1 s windo
         (i * 0.1, 100.94) for i in range(10, 25)
     ]
     out = roc_readings(pts, period_s=0.1)
-    assert out[9] == Reading(Level.YELLOW, "FALLING") and out[-1] == Reading(Level.NOMINAL, None)
+    assert judged(out[9]) == (Level.YELLOW, "FALLING") and judged(out[-1]) == (Level.NOMINAL, None)
 
 
 def test_rising_and_both_directions() -> None:
@@ -83,12 +90,17 @@ def test_rising_and_both_directions() -> None:
         )  # fmt: skip
 
     up, down = ramp(+0.5), ramp(-0.5)
-    assert {r for r in roc_levels(up, cfg("rising"))} == {Reading(Level.RED, "RISING")}
-    assert {r for r in roc_levels(down, cfg("rising"))} == {Reading(Level.NOMINAL, None)}
-    assert {r for r in roc_levels(up, cfg("both"))} == {Reading(Level.RED, "RISING")}
-    assert {r for r in roc_levels(down, cfg("both"))} == {Reading(Level.RED, "FALLING")}
-    assert {r for r in roc_levels(down, cfg("falling"))} == {Reading(Level.RED, "FALLING")}
+    assert set(map(judged, roc_levels(up, cfg("rising")))) == {(Level.RED, "RISING")}
+    assert set(map(judged, roc_levels(down, cfg("rising")))) == {(Level.NOMINAL, None)}
+    assert set(map(judged, roc_levels(up, cfg("both")))) == {(Level.RED, "RISING")}
+    assert set(map(judged, roc_levels(down, cfg("both")))) == {(Level.RED, "FALLING")}
+    assert set(map(judged, roc_levels(down, cfg("falling")))) == {(Level.RED, "FALLING")}
 
 
 def test_duplicate_timestamps_no_opinion() -> None:  # no slope from one instant
     assert roc_readings([(1.0, 101.0)] * 12, period_s=0.1)[-1] is None
+
+
+def test_reading_carries_slope() -> None:  # Task 8: a ROC reading's value is the slope per s
+    rd = roc_levels(ramp(-0.4, n=20))[-1]  # no noise
+    assert rd.value == pytest.approx(-0.4, abs=1e-9) and rd.side == "FALLING"

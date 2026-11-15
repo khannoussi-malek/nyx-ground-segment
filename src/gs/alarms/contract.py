@@ -37,6 +37,9 @@ class Transition:
     note: str | None
     opened_at: datetime
     closed_at: datetime | None
+    # the trigger slot's reading on the transition frame; None for ACK/RTN/CLEAR and when that
+    # slot gave no reading on that frame (ruling R-b)
+    value: float | None = None
 
 
 @dataclass(frozen=True)

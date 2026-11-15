@@ -28,6 +28,7 @@ Result = Literal["applied", "superseded"]
 REJECT_CLASSES = ("22", "23", "P0")
 NOT_OPEN = "alarm no longer open"  # ruling R-w
 CHANGED = "alarm changed since the request"  # ruling P-pf42
+UNSEEN = "alarm changed since you saw it"  # ruling P-pf43: seen_key is not the newest event key
 # P-pf42b: commit -> publish -> SSE -> screen takes time; a RAISE/ESCALATE this close before
 # the request (or before the late publish of a held one) may not have been on the screen
 ACK_PROPAGATION_S = 2.0
@@ -42,6 +43,8 @@ class AckReq:
     by_user: str
     note: str
     changed: bool = False  # raised/escalated too late for the operator to have seen it
+    seen_key: str | None = None  # the event key the console showed (P-pf43); None: margins
+    last_key: str | None = None  # the alarm's newest alarm_events key when the pass read it
 
 
 async def pending_acks(
@@ -50,22 +53,26 @@ async def pending_acks(
     """Pending requests of `vehicle`, oldest first, each with whether the ACK may cover what the
     operator did not see (P-pf42/42b): a RAISE/ESCALATE processed later than ACK_PROPAGATION_S
     before the request, or `shown` (alarm -> when a RAISE/ESCALATE, or any held or post-takeover
-    state, of it was last published; database clock) later than that."""
+    state, of it was last published; database clock) later than that. Each also carries its
+    seen_key and the alarm's newest alarm_events key, which decide instead when the request has
+    a seen_key (P-pf43)."""
     cur = await conn.execute(
         "SELECT q.request_id, q.alarm_id, a.param, q.by_user, q.note, q.requested_at,"
         " EXISTS (SELECT 1 FROM alarm_events e WHERE e.alarm_id = q.alarm_id"
         "         AND e.kind IN ('RAISE', 'ESCALATE')"
-        "         AND e.processed_at > q.requested_at - make_interval(secs => %s))"
+        "         AND e.processed_at > q.requested_at - make_interval(secs => %s)),"
+        " q.seen_key, (SELECT e.key FROM alarm_events e WHERE e.alarm_id = q.alarm_id"
+        "              ORDER BY e.id DESC LIMIT 1)"
         " FROM alarm_ack_request q JOIN alarms a USING (alarm_id)"
         " WHERE q.vehicle = %s AND q.status = 'pending'"
         " ORDER BY q.requested_at, q.request_id",
         (ACK_PROPAGATION_S, vehicle),
     )
     margin, out = timedelta(seconds=ACK_PROPAGATION_S), []
-    for rid, aid, param, user, note, asked, changed in await cur.fetchall():
+    for rid, aid, param, user, note, asked, changed, seen, last in await cur.fetchall():
         at = (shown or {}).get(aid)
         late = at is not None and asked < at + margin
-        out.append(AckReq(rid, aid, param, user, note, changed or late))
+        out.append(AckReq(rid, aid, param, user, note, changed or late, seen, last))
     return out
 
 
@@ -85,7 +92,10 @@ def apply_ack(
     a = state.alarms.get(req.param)
     if a is None or a.alarm_id != req.alarm_id:
         return state, None, "superseded", NOT_OPEN
-    if req.changed:
+    if req.seen_key is not None:  # exact: what the operator saw is the newest event, or not
+        if req.seen_key != req.last_key:
+            return state, None, "superseded", UNSEEN
+    elif req.changed:  # no key (old clients, scripts): the margins
         return state, None, "superseded", CHANGED
     if a.state == "ACKED":
         return state, None, "superseded", ALREADY_ACKED

@@ -62,6 +62,7 @@ class AckRequest(_Body):
     # FastAPI validates the decoded JSON in python mode, where a strict UUID rejects the string
     request_id: Annotated[UUID, Field(strict=False)]
     note: str
+    seen_key: str | None = None  # AlarmView.last.key on screen at ACK time (P-pf43)
 
 
 class AckAccepted(_Body):

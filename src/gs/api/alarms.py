@@ -53,25 +53,26 @@ async def list_alarms(
 
 
 async def _stored(
-    conn: psycopg.AsyncConnection, rid: UUID, alarm_id: UUID, user: str, note: str
+    conn: psycopg.AsyncConnection, rid: UUID, alarm_id: UUID, user: str, body: AckRequest
 ) -> AckAccepted | None:
     """The stored request `rid`, if any; 422 REQUEST_ID_REUSED when it is another ACK (other
-    alarm, user or note): answering with its status would show ACK PENDING on an alarm nobody
-    acknowledged (review of Task 10)."""
+    alarm, user, note or seen_key): answering with its status would show ACK PENDING on an
+    alarm nobody acknowledged (review of Task 10, P-pf43)."""
     cur = await conn.execute(
-        "SELECT alarm_id, by_user, note, status FROM alarm_ack_request WHERE request_id = %s",
+        "SELECT alarm_id, by_user, note, seen_key, status FROM alarm_ack_request"
+        " WHERE request_id = %s",
         (rid,),
     )
     row = await cur.fetchone()
     if row is None:
         return None
-    if tuple(row[:3]) != (alarm_id, user, note):
+    if tuple(row[:4]) != (alarm_id, user, body.note, body.seen_key):
         raise ApiError(
             HTTPStatus.UNPROCESSABLE_ENTITY,
             "REQUEST_ID_REUSED",
             f"request_id {rid} belongs to another ACK request",
         )
-    return AckAccepted.model_validate({"request_id": rid, "status": row[3]})
+    return AckAccepted.model_validate({"request_id": rid, "status": row[4]})
 
 
 @router.post(
@@ -86,7 +87,7 @@ async def post_ack(alarm_id: UUID, body: AckRequest, request: Request, user: Use
         raise ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "NOTE_REQUIRED", "an ACK needs a note")
     rid = body.request_id
     async with _db(request) as conn, conn.transaction():
-        if (stored := await _stored(conn, rid, alarm_id, user, body.note)) is not None:
+        if (stored := await _stored(conn, rid, alarm_id, user, body)) is not None:
             return stored
         cur = await conn.execute(
             "SELECT vehicle, state FROM alarms WHERE alarm_id = %s", (alarm_id,)
@@ -98,14 +99,14 @@ async def post_ack(alarm_id: UUID, body: AckRequest, request: Request, user: Use
         if state == "CLEARED":
             raise ApiError(HTTPStatus.CONFLICT, "ALARM_CLEARED", "the alarm is already cleared")
         cur = await conn.execute(
-            "INSERT INTO alarm_ack_request (request_id, alarm_id, vehicle, by_user, note)"
-            " VALUES (%s, %s, %s, %s, %s) ON CONFLICT (request_id) DO NOTHING",
-            (rid, alarm_id, vehicle, user, body.note),
+            "INSERT INTO alarm_ack_request (request_id, alarm_id, vehicle, by_user, note,"
+            " seen_key) VALUES (%s, %s, %s, %s, %s, %s) ON CONFLICT (request_id) DO NOTHING",
+            (rid, alarm_id, vehicle, user, body.note, body.seen_key),
         )
         if cur.rowcount:
             details = {"vehicle": vehicle, "alarm_id": alarm_id, "request_id": rid}
             await audit(conn, user, "ALARM_ACK", body.note, details)
         # a concurrent twin may have won the insert: it must be this same request too
-        stored = await _stored(conn, rid, alarm_id, user, body.note)
+        stored = await _stored(conn, rid, alarm_id, user, body)
     assert stored is not None  # inserted or found, in this transaction
     return stored

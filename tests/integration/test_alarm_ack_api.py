@@ -18,7 +18,7 @@ from gs.common.interfaces.sse import Alarm
 from gs.common.uievents import publish_ui
 from gs.ingest import acks
 from gs.ingest import worker as worker_mod
-from gs.ingest.acks import ACK_PROPAGATION_S, CHANGED, pending_acks
+from gs.ingest.acks import ACK_PROPAGATION_S, CHANGED, UNSEEN, pending_acks
 from gs.ingest.worker import Timing, load_state, process_batch
 from tests.support.env import now, until, vid
 from tests.support.ingest import make_ctx, owned, worker
@@ -66,6 +66,7 @@ def request(
     note: str = "seen, venting",
     user: str = "fc1",
     requested_at: datetime | None = None,
+    seen_key: str | None = None,
 ) -> str:
     """INSERT the way the API does (D-ALM-14); returns the request_id as text. `requested_at`
     back-dates the request (submitted before something the owner then committed first)."""
@@ -73,8 +74,9 @@ def request(
     with psycopg.connect(app_dsn("gs")) as c:
         c.execute(
             "insert into alarm_ack_request (request_id, alarm_id, vehicle, by_user, note,"
-            " requested_at) values (%s, %s, %s, %s, %s, coalesce(%s, clock_timestamp()))",
-            (rid, alarm_id, v, user, note, requested_at),
+            " requested_at, seen_key)"
+            " values (%s, %s, %s, %s, %s, coalesce(%s, clock_timestamp()), %s)",
+            (rid, alarm_id, v, user, note, requested_at, seen_key),
         )
     return str(rid)
 
@@ -358,9 +360,10 @@ async def test_acked_state_kept_after_publish_error(monkeypatch: pytest.MonkeyPa
     assert failed and kinds(v) == [("RAISE", "system"), ("ACK", "fc1"), ("CLEAR", "system")]
 
 
-async def ack_after_escalation(after_s: float) -> tuple[str, str]:
-    """YELLOW, ESCALATE to RED, then an ACK dated `after_s` after the ESCALATE was processed;
-    one owner throughout. Returns (vehicle, request_id)."""
+async def ack_after_escalation(after_s: float, seen: str | None = None) -> tuple[str, str]:
+    """YELLOW, ESCALATE to RED, then an ACK dated `after_s` after the ESCALATE was processed,
+    with the key of the alarm's `seen` (RAISE or ESCALATE) row as seen_key (P-pf43); one owner
+    throughout. Returns (vehicle, request_id)."""
     v, base = vid(), now() - timedelta(minutes=1)
     async with owned(v):
         produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
@@ -372,7 +375,8 @@ async def ack_after_escalation(after_s: float) -> tuple[str, str]:
             v,
         )
         at = esc["processed_at"] + timedelta(seconds=after_s)
-        rid = request(v, esc["alarm_id"], requested_at=at)
+        key = {r["kind"]: r["key"] for r in alarm_events_for(v)}.get(seen or "")
+        rid = request(v, esc["alarm_id"], requested_at=at, seen_key=key)
         await until(lambda: settled(v), 3)
     return v, rid
 
@@ -382,8 +386,20 @@ def test_propagation_margin_is_two_seconds() -> None:  # pinned (P-pf42b)
 
 
 async def test_escalation_just_before_request_superseded() -> None:  # P-pf42b rule 1
-    v, rid = await ack_after_escalation(1.0)
+    v, rid = await ack_after_escalation(1.0)  # no seen_key: the margins decide (P-pf43)
     assert status(v) == {rid: ("superseded", CHANGED)}
+    assert [r["seen_key"] for r in ack_requests_for(v)] == [None]
+
+
+async def test_seen_key_of_the_current_state_applies() -> None:  # P-pf43
+    v, rid = await ack_after_escalation(1.0, seen="ESCALATE")  # inside the margin: key decides
+    assert status(v) == {rid: ("applied", None)}
+
+
+async def test_seen_key_stale_after_escalation_superseded() -> None:  # P-pf43
+    v, rid = await ack_after_escalation(30.0, seen="RAISE")  # no outage, long past the margin
+    assert status(v) == {rid: ("superseded", UNSEEN)}
+    assert UNSEEN == "alarm changed since you saw it"
 
 
 async def test_request_past_the_margin_applies() -> None:  # the boundary's other side

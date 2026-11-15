@@ -38,6 +38,17 @@
             "format": "uuid",
             "title": "Request Id",
             "type": "string"
+          },
+          "seen_key": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Seen Key"
           }
         },
         "required": [

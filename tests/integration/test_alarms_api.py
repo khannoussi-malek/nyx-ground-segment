@@ -35,9 +35,15 @@ async def alarm_of(v: str, value: float, nominal_after: int = 0) -> str:
 
 
 async def ack(
-    c: httpx.AsyncClient, alarm_id: str, note: str = "seen, venting", rid: str = ""
+    c: httpx.AsyncClient,
+    alarm_id: str,
+    note: str = "seen, venting",
+    rid: str = "",
+    seen_key: str | None = None,
 ) -> httpx.Response:
     body = {"request_id": rid or str(uuid.uuid4()), "note": note}
+    if seen_key is not None:
+        body["seen_key"] = seen_key
     return await c.post(f"/api/alarms/{alarm_id}/ack", json=body)
 
 
@@ -224,4 +230,21 @@ async def test_request_id_reused_concurrently_is_422(
     assert rows("select alarm_id from alarm_ack_request where request_id=%s", rid) == [
         {"alarm_id": uuid.UUID(winner)}
     ]
+    assert len(ack_audits(rid)) == 1
+
+
+async def test_seen_key_stored_and_part_of_the_request(app: Any) -> None:  # P-pf43
+    v = vid()
+    aid = await alarm_of(v, 31.0)
+    rid = str(uuid.uuid4())
+    async with authed(app) as c:
+        first = await ack(c, aid, rid=rid, seen_key="k-raise")
+        repeat = await ack(c, aid, rid=rid, seen_key="k-raise")
+        other_key = await ack(c, aid, rid=rid, seen_key="k-other")
+        no_key = await ack(c, aid, rid=rid)
+    assert first.status_code == repeat.status_code == 202
+    for r in (other_key, no_key):
+        assert (r.status_code, r.json()["error"]) == (422, "REQUEST_ID_REUSED")
+    q = "select seen_key from alarm_ack_request where request_id=%s"
+    assert rows(q, rid) == [{"seen_key": "k-raise"}]
     assert len(ack_audits(rid)) == 1

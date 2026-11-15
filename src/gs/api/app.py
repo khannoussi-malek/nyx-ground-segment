@@ -37,6 +37,7 @@ CLIENT_HEADER = "X-GS-Client"
 SOCKET_TIMEOUT_S = 5
 CHECK_TIMEOUT_S = 2
 DB_CONNECT_S = 5  # the start-set connection; then the load_dir fallback
+JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"  # pydantic v2 emits 2020-12
 ROUTER = APIRouter()
 log = logging.getLogger(__name__)
 
@@ -62,19 +63,33 @@ async def mission_db(request: Request, _user: User) -> MissionDbView:
 
 @ROUTER.get("/api/mission-db/frame-schema", responses=errors(401, 503))
 async def frame_schema(request: Request, user: User) -> dict[str, Any]:  # D-EXT-19
-    return build_frame_model(deps.mission(request).param_names).model_json_schema()
+    schema = build_frame_model(deps.mission(request).param_names).model_json_schema()
+    return {"$schema": JSON_SCHEMA_DIALECT, **schema}
 
 
-def no_hazardous_downgrade(old: MissionDb, new: MissionDb) -> None:
+def _hazardous(mdb: MissionDb) -> frozenset[str]:
+    return frozenset(n for n, c in mdb.commands.items() if c.hazardous)
+
+
+class HazardGuard:
     """The API's reload never drops a command's hazardous flag (D-CMD-09, G31): the confirm
-    step stays until the API restarts with the new file. Ingest applies the same set."""
-    was = {n: c.hazardous for n, c in old.commands.items()}
-    names = sorted(n for n, c in new.commands.items() if was.get(n) and not c.hazardous)
-    if names:
-        raise MissionDbError(
-            "commands.yaml",
-            f"hazardous true->false for {', '.join(names)}: commands not updated until API restart",
-        )
+    step stays until the API restarts with the new file; ingest applies the same set. It
+    remembers every name that was ever hazardous since start, so removing a command and
+    re-adding it without the flag is refused too (P-pf44). `old` is the active set, so the
+    names grow only with applied sets."""
+
+    def __init__(self, start: MissionDb) -> None:
+        self._ever = _hazardous(start)
+
+    def __call__(self, old: MissionDb, new: MissionDb) -> None:
+        self._ever = self._ever | _hazardous(old)
+        names = sorted(n for n, c in new.commands.items() if n in self._ever and not c.hazardous)
+        if names:
+            raise MissionDbError(
+                "commands.yaml",
+                "mission db not updated in the API until API restart"
+                f" (hazardous downgrade: {', '.join(names)})",
+            )
 
 
 async def _reloaded(conn: psycopg.AsyncConnection, old: MissionDb, new: MissionDb) -> None:
@@ -87,6 +102,7 @@ async def _reloaded(conn: psycopg.AsyncConnection, old: MissionDb, new: MissionD
         "commands_sha256": new.commands_sha256,
         "parameters_sha256": new.parameters_sha256,
         "hazardous_changed": changed,
+        "previous_set_sha256": old.set_sha256,
     }
     await audit(conn, "system", "LIMITS_RELOADED", None, details)
 
@@ -132,6 +148,8 @@ async def healthz(request: Request) -> Response:
         status, checks["ui_events"] = "degraded", "degraded"
     elif up and not hub.up():  # the reader failed or hangs: no deltas reach any console
         status, checks["ui_events"] = "degraded", "stalled"
+    if up and request.app.state.watcher.refused:  # P-pf46: ingest runs the newer set
+        status, checks["mission_db"] = "degraded", "pending API restart"
     body = Health(status=status, checks=checks)
     return JSONResponse(body.model_dump(), status_code=200 if up else 503)
 
@@ -173,13 +191,14 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.pool = pool
         hub = Hub(app.state.redis, pool, settings.vehicles, lambda: watcher.current.param_names)
 
-        async def to_clients(evs: Sequence[GroundEvent]) -> None:  # the API can't XADD ui:events
+        # the API can't XADD ui:events; the watcher passes only rejections whose row it inserted
+        async def to_clients(evs: Sequence[GroundEvent]) -> None:
             for e in evs:
                 hub.broadcast(format_sse("link", to_link(e)))
 
         watcher = MissionWatcher(
             settings.mission_db, settings.database_url, "api", mdb, on_apply=_reloaded,
-            on_events=to_clients, check=no_hazardous_downgrade, by="api",
+            on_events=to_clients, check=HazardGuard(mdb), by="api",
         )  # fmt: skip
         app.state.hub, app.state.watcher = hub, watcher
         tasks = [

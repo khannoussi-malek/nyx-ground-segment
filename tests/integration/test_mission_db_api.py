@@ -59,7 +59,8 @@ async def test_hazardous_downgrade_needs_restart(users_file: Path, tmp_path: Pat
     async with authed(app) as c:
         before = await mission_db(c)
         strip = app.state.hub.subscribe()  # what the API's SSE clients receive
-        edit(m / "commands.yaml", "hazardous: true", "hazardous: false")
+        # a set no earlier run stored: only the service whose insert wins announces it
+        edit(m / "commands.yaml", "hazardous: true", f"hazardous: false  # {vid()}")
         key = rejected_key(set_formula(m))
 
         seen: list[str] = []  # link keys the API's clients got (it forwards other traffic too)
@@ -71,14 +72,18 @@ async def test_hazardous_downgrade_needs_restart(users_file: Path, tmp_path: Pat
                     seen.append(json.loads(f.split("data: ", 1)[1])["event"]["key"])
             return key in seen
 
-        # the row may exist from an earlier run (same edit, same set): wait for this rejection
         await until(strip_has_it, RELOAD_S)
         after = await mission_db(c)
+        health = (await c.get("/healthz")).json()  # P-pf46: the API lags ingest until restart
+        assert health["status"] == "degraded"
+        assert health["checks"]["mission_db"] == "pending API restart"
     assert seen.count(key) == 1
     (ev,) = [e for e in events_for(None, "LIMITS_REJECTED") if e["key"] == key]
     d = ev["details"]
     assert (d["file"], d["by"]) == ("commands.yaml", "api")
-    assert "vent_cabin" in d["error"] and "commands not updated until API restart" in d["error"]
+    assert d["error"] == (
+        "mission db not updated in the API until API restart (hazardous downgrade: vent_cabin)"
+    )
     assert after["set_sha256"] == before["set_sha256"]
     assert after["commands"]["vent_cabin"]["hazardous"] is True  # still enforced
 
@@ -87,6 +92,7 @@ async def test_hazardous_change_audited(users_file: Path, tmp_path: Path) -> Non
     m = mission_copy(tmp_path)
     t0 = now()
     async with authed(api_on(users_file, m)) as c:
+        before = (await mission_db(c))["set_sha256"]
         edit(
             m / "commands.yaml",
             "hazardous: false",
@@ -102,8 +108,10 @@ async def test_hazardous_change_audited(users_file: Path, tmp_path: Path) -> Non
         assert (await mission_db(c))["commands"]["isolate_valve"]["hazardous"] is True
     (row,) = reloaded()
     assert row["actor"] == "system" and row["details"]["hazardous_changed"] == ["isolate_valve"]
+    assert row["details"]["previous_set_sha256"] == before
     assert set(row["details"]) == {
-        "set_sha256", "limits_sha256", "commands_sha256", "parameters_sha256", "hazardous_changed"
+        "set_sha256", "limits_sha256", "commands_sha256", "parameters_sha256",
+        "hazardous_changed", "previous_set_sha256",
     }  # fmt: skip
 
 
@@ -112,6 +120,7 @@ async def test_frame_schema_served(users_file: Path) -> None:  # D-EXT-19
     async with authed(app) as c:
         schema = await get_json(c, "/api/mission-db/frame-schema")
     params = app.state.watcher.current.param_names
+    assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
     assert set(params) <= set(schema["properties"])
     frame = json.loads(make_frame("NYX-TA1", 7, datetime.now(UTC), random.Random(7)))
     jsonschema.Draft202012Validator(schema).validate(frame)

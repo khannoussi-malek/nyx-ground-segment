@@ -126,9 +126,10 @@ async def start_set(
 
 class MissionWatcher:
     """Polls the mission dir; applies a new valid set after two equal polls (EX-09).
-    `on_apply(conn, old, new)` runs after the set is stored, `on_events([LIMITS_REJECTED])`
-    once per newly rejected set, `check(old, new)` before applying (P-pf5); `by` names the
-    rejecting service in the event details."""
+    `on_apply(conn, old, new)` runs in the transaction that stores the set, and the set becomes
+    current only after it commits (P-pf45); `on_events([LIMITS_REJECTED])` once per newly
+    rejected set whose row this watcher inserted; `check(old, new)` before applying (P-pf5);
+    `by` names the rejecting service in the event details."""
 
     def __init__(
         self,
@@ -149,10 +150,16 @@ class MissionWatcher:
         self._stored = False  # the active set may come from load_dir with the DB down (P-pf5)
         self._poll = Poll()
         self._rejected: tuple[Hashes, float] | None = None  # hashes, when last validated
+        self._refused = False
 
     @property
     def current(self) -> MissionDb:
         return self._current
+
+    @property
+    def refused(self) -> bool:
+        """`check` refused the files on disk; cleared when a set applies or the files revert."""
+        return self._refused
 
     async def run(self, stop: asyncio.Event) -> None:
         conn: psycopg.AsyncConnection | None = None
@@ -164,8 +171,8 @@ class MissionWatcher:
                             self._dsn, autocommit=True, application_name=self._app
                         )
                     await self._tick(conn)
-                except psycopg.Error:
-                    log.exception("mission watcher: database error, reconnecting")
+                except Exception:  # noqa: BLE001  the watcher must never die silently
+                    log.exception("mission watcher: tick failed, reconnecting")
                     if conn is not None:
                         with suppress(psycopg.Error):
                             await conn.close()
@@ -193,27 +200,29 @@ class MissionWatcher:
         )
         self._poll, ready = observe(self._poll, hashes, active)
         if hashes == active:  # files reverted to the active set: forget the rejection
-            self._rejected = None
+            self._rejected, self._refused = None, False
         rej = self._rejected
         if rej is not None and rej[0] == hashes:
             if time.monotonic() - rej[1] < REVALIDATE_S:
                 return
         elif not ready:
             return
+        refused = False
         try:
             mdb = validate_set(raw, await telemetry_columns(conn))
+            refused = self._check is not None
             if self._check is not None:
                 self._check(self._current, mdb)
         except MissionDbError as e:
             ev = _rejected(raw, e, self._by)
-            await insert_events(conn, [ev])  # key dedups across workers
+            won = await insert_events(conn, [ev])  # key dedups across workers and the API
             fresh = rej is None or rej[0] != hashes  # not a 10 s revalidation of the same files
-            self._rejected = (hashes, time.monotonic())
-            if fresh and self._on_events is not None:
+            self._rejected, self._refused = (hashes, time.monotonic()), refused
+            if fresh and won and self._on_events is not None:  # one link per stored rejection
                 await self._on_events([ev])
             return
-        await insert_set(conn, mdb)
-        old, self._current = self._current, mdb
-        self._rejected = None
-        if self._on_apply is not None:
-            await self._on_apply(conn, old, mdb)
+        async with conn.transaction():  # the set row and its audit, or neither (P-pf45)
+            await insert_set(conn, mdb)
+            if self._on_apply is not None:
+                await self._on_apply(conn, self._current, mdb)
+        self._current, self._rejected, self._refused = mdb, None, False

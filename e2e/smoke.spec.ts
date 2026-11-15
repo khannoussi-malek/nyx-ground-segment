@@ -15,7 +15,8 @@ test("login, live values update, recovers after api restart, logout", async ({ p
   const t0 = Date.now(); // proves early: SSE reconnect through compose
   restartApi();
   const s1 = await seqOf(page, "NYX-TA1")();
-  await expect.poll(seqOf(page, "NYX-TA1"), { timeout: 5000 }).toBeGreaterThan(s1);
+  // 100 ms polls: the default backoff (100, 250, 500, 1000 ms, ...) added up to 1 s to the measurement
+  await expect.poll(seqOf(page, "NYX-TA1"), { timeout: 5000, intervals: [100] }).toBeGreaterThan(s1);
   const ms = Date.now() - t0;
   console.log(`reconnect after api restart: ${ms} ms`);
   expect(ms).toBeLessThan(5000); // UI-07 budget

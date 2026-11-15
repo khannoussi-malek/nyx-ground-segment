@@ -8,7 +8,7 @@ import psycopg
 from fastapi import APIRouter, Request, Response
 
 from gs.api.bodies import ReportConflict, SessionReport, SessionStart, SessionView
-from gs.api.dbguard import connect, db_503
+from gs.api.dbguard import connect, db_503, utc
 from gs.api.deps import ApiError, User, errors, mission, vehicles
 from gs.api.report import frozen_report, stored_csv
 from gs.common.audit import audit
@@ -29,7 +29,7 @@ _FIELDS = _COLS.split(", ")
 
 
 def _view(row: tuple[Any, ...]) -> SessionView:
-    return SessionView(**dict(zip(_FIELDS, row, strict=True)))
+    return SessionView(**dict(zip(_FIELDS, utc(row), strict=True)))
 
 
 @router.post("/api/sessions", status_code=201, responses=errors(400, 401, 403, 409, 422, 503))

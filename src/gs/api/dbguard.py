@@ -2,8 +2,9 @@
 (P-pf27; auth.py keeps its own copy of the same rule)."""
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import AbstractAsyncContextManager, contextmanager
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any
 
@@ -32,3 +33,8 @@ def db_503(request: Request) -> Iterator[None]:
     except (psycopg.Error, PoolTimeout) as e:
         log.warning("database error on %s: %s: %s", request.url.path, type(e).__name__, e)
         raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", "database unreachable") from e
+
+
+def utc(values: Sequence[Any]) -> list[Any]:
+    """timestamptz arrives in the session's TimeZone; the bodies take UTC only (like views._utc)."""
+    return [v.astimezone(UTC) if isinstance(v, datetime) else v for v in values]

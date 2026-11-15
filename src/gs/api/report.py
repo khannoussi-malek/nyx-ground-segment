@@ -10,6 +10,7 @@ import psycopg
 from psycopg import sql
 
 from gs.api.bodies import AlarmTransition, ParamStats, ReportConflict, SessionReport, SessionView
+from gs.api.dbguard import utc
 from gs.common.interfaces.sse import TransitionView
 from gs.common.missiondb import MissionDb
 from gs.common.time import iso_z
@@ -21,7 +22,11 @@ LINK_KINDS = ("GAP", "SEQ_JUMP", "SEQ_RESET", "LOS", "AOS")  # a SEQ_RESET is a 
 CSV_COLUMNS = (
     "section", "key", "vehicle", "name", "kind", "time", "end_time", "by_user", "unit",
     "min", "max", "avg", "n", "expected", "level", "value", "state", "outcome", "note",
+    "frozen_at", "duration_s",
 )  # fmt: skip
+NOT_TEXT = {"time", "end_time", "frozen_at", "min", "max", "avg", "n", "expected", "value",
+            "duration_s"}  # fmt: skip
+FORMULA_START = ("=", "+", "-", "@", "\t", "\r")
 
 
 def _end(s: SessionView) -> datetime:
@@ -86,7 +91,7 @@ async def _transitions(conn: psycopg.AsyncConnection, s: SessionView) -> list[Al
                 check_kind=r[8], level=r[9], value=r[10],
             ),
         )
-        for r in await cur.fetchall()
+        for r in map(utc, await cur.fetchall())
     ]  # fmt: skip
 
 
@@ -118,7 +123,7 @@ async def _load(conn: psycopg.AsyncConnection, session_id: int) -> SessionView |
     )
     row = await cur.fetchone()
     cols = ("id", "vehicle", "name", "conductor", "started_at", "ended_at", "ended_by")
-    return SessionView(**dict(zip(cols, row, strict=True))) if row else None
+    return SessionView(**dict(zip(cols, utc(row), strict=True))) if row else None
 
 
 async def _stored(conn: psycopg.AsyncConnection, session_id: int) -> SessionReport | None:
@@ -171,8 +176,11 @@ async def stored_csv(conn: psycopg.AsyncConnection, session_id: int) -> str:
     return str(row[0])
 
 
-def _f(v: object) -> str:
-    return "" if v is None else str(v)
+def _f(col: str, v: object) -> str:
+    """Empty for None; operator-typed text that a spreadsheet would run as a formula gets a
+    leading ' (P-pf30); numeric and time columns are left alone so -5.0 stays a number."""
+    text = "" if v is None else str(v)
+    return "'" + text if col not in NOT_TEXT and text.startswith(FORMULA_START) else text
 
 
 def _t(v: datetime | None) -> str:
@@ -186,7 +194,8 @@ def report_csv(r: SessionReport) -> str:
         {"section": "summary", "key": s.id, "vehicle": s.vehicle, "name": s.name,
          "kind": "complete" if r.complete else "incomplete", "time": _t(s.started_at),
          "end_time": _t(s.ended_at), "by_user": s.conductor, "n": r.frames,
-         "expected": r.expected, "note": r.note}
+         "expected": r.expected, "note": r.note, "frozen_at": _t(r.frozen_at),
+         "duration_s": r.duration_s}
     ]  # fmt: skip
     rows += [
         {"section": "parameter", "key": k, "name": k, "unit": p.unit, "min": p.min, "max": p.max,
@@ -214,5 +223,5 @@ def report_csv(r: SessionReport) -> str:
     w = csv.writer(out, lineterminator="\n")
     w.writerow(CSV_COLUMNS)
     for row in rows:
-        w.writerow(_f(row.get(c)) for c in CSV_COLUMNS)
+        w.writerow(_f(c, row.get(c)) for c in CSV_COLUMNS)
     return out.getvalue()

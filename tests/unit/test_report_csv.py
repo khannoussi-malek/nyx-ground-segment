@@ -77,3 +77,36 @@ def test_none_is_an_empty_field() -> None:
     assert (alarm["name"], alarm["kind"], alarm["level"], alarm["value"]) == (
         "p_tank", "RAISE", "RED_HIGH", "9.5",
     )  # fmt: skip
+
+
+def test_summary_has_frozen_at_and_duration() -> None:
+    summary = next(csv.DictReader(io.StringIO(report_csv(_report()))))
+    assert (summary["frozen_at"], summary["duration_s"]) == ("2026-11-15T12:00:00.000000Z", "10.0")
+
+
+def test_formula_cells_are_quoted_but_numbers_are_not() -> None:
+    r = _report()
+    named = r.session.model_copy(update={"name": "=HYPERLINK(1)", "conductor": "+cmd"})
+    neg = ParamStats(unit="-x", min=-5.0, max=-1.0, avg=-3.0, n=2)
+    alarm = r.alarms[0].model_copy(
+        update={
+            "transition": r.alarms[0].transition.model_copy(update={"note": "@sum", "value": -9.5})
+        }
+    )
+    rows = list(
+        csv.DictReader(
+            io.StringIO(
+                report_csv(
+                    r.model_copy(
+                        update={"session": named, "parameters": {"p": neg}, "alarms": [alarm]}
+                    )
+                )
+            )
+        )
+    )
+    summary, param = rows[0], rows[1]
+    assert (summary["name"], summary["by_user"]) == ("'=HYPERLINK(1)", "'+cmd")
+    assert (param["min"], param["max"], param["avg"]) == ("-5.0", "-1.0", "-3.0")  # numbers stay
+    assert param["unit"] == "'-x"
+    al = next(x for x in rows if x["section"] == "alarm")
+    assert (al["note"], al["value"]) == ("'@sum", "-9.5")

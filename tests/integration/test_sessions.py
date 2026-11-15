@@ -3,7 +3,7 @@ import csv
 import dataclasses
 import io
 from collections.abc import AsyncIterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -15,6 +15,8 @@ from psycopg_pool import AsyncConnectionPool
 
 from gs.api import dbguard, report
 from gs.api.app import create_app
+from gs.api.bodies import ReportConflict, SessionReport
+from gs.api.sessions import _view
 from gs.common.missiondb import load_dir
 from tests.support.env import vid
 from tests.support.http import CLIENT_HEADERS as H
@@ -314,6 +316,7 @@ async def test_report_csv_route(rep: tuple[httpx.AsyncClient, str]) -> None:
         js["parameters"][P1]["avg"], js["parameters"][P1]["n"],
     )  # fmt: skip
     assert [x for x in rows if x["section"] == "summary"][0]["n"] == "100"
+    assert [x["key"] for x in rows if x["section"] == "parameter"] == list(SET.parameters)
 
 
 async def test_silent_session_report(
@@ -365,3 +368,39 @@ async def test_concurrent_readers_share_one_frozen_copy(rep: tuple[httpx.AsyncCl
     _watermark(v, T0 + 10 * SEC)
     got = await asyncio.gather(*(c.get(f"/api/sessions/{sid}/report") for _ in range(4)))
     assert len({r.json()["frozen_at"] for r in got}) == 1
+
+
+async def test_the_30s_rule_with_the_real_constant(rep: tuple[httpx.AsyncClient, str]) -> None:
+    _, v = rep
+    sid = _session(v)
+    _frames(v, 50)
+    _watermark(v, T0 + 5 * SEC)  # never reaches ended_at
+    assert report.FREEZE_AFTER_S == 30
+    end = T0 + 10 * SEC
+    async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as conn:
+        pending = await report.frozen_report(conn, sid, SET, end + timedelta(seconds=29.999))
+        assert isinstance(pending, ReportConflict) and pending.error == "REPORT_PENDING"
+        done = await report.frozen_report(conn, sid, SET, end + timedelta(seconds=30))
+    assert isinstance(done, SessionReport)
+    assert (done.complete, done.note) == (False, "incomplete: 50 of 100 frames")
+
+
+async def test_report_survives_a_non_utc_session_timezone(
+    rep: tuple[httpx.AsyncClient, str],
+) -> None:
+    _, v = rep
+    sid = _session(v)
+    _frames(v, 100)
+    _watermark(v, T0 + 10 * SEC)
+    await _alarm_and_command(v)
+    async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as conn:
+        await conn.execute("SET TIME ZONE 'Asia/Tokyo'")
+        got = await report.frozen_report(conn, sid, SET, datetime.now(UTC))
+    assert isinstance(got, SessionReport) and len(got.alarms) == 1
+    assert got.session.started_at.utcoffset() == timedelta(0)
+
+
+def test_session_view_converts_to_utc() -> None:
+    tokyo = timezone(timedelta(hours=9))
+    row = (1, "NYX-TA1", "n", "fc1", T0.astimezone(tokyo), None, None)
+    assert _view(row).started_at.utcoffset() == timedelta(0)

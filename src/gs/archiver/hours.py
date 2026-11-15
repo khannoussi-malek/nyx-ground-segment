@@ -45,7 +45,9 @@ def delete_due(hour: datetime, now: datetime, retention_h: float) -> bool:
 
 
 def object_key(vehicle: str, hour: datetime, version: int = 0) -> str:
-    h = _utc(hour)
+    h = hour_bounds(vehicle, hour).start  # naive or unaligned raises
+    if version < 0:
+        raise ValueError(f"negative version {version}")
     suffix = f".v{version}" if version else ""
     return f"{vehicle}/{h:%Y/%m/%d}/{h:%H}{suffix}.parquet"
 

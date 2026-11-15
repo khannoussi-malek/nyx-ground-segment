@@ -1,4 +1,4 @@
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 from gs.archiver.hours import HOUR
 from gs.archiver.plan import (
@@ -92,3 +92,14 @@ def test_oldest_unarchived() -> None:
     assert (
         oldest_unarchived(NOW, {(V, NOW.replace(minute=0, second=0)): 5}, {}) is None
     )  # not yet eligible
+
+
+def test_keys_in_another_zone_match_the_same_instants() -> None:
+    """psycopg hands datetimes back in the session zone (Asia/Tokyo): same instants, same plan."""
+    tokyo = timezone(timedelta(hours=9))
+    local = H.astimezone(tokyo)
+    assert plan_pass(NOW, {(V, local): 36000}, {(V, H): row()}, 25) == [DeleteHot(V, H)]
+    assert plan_pass(NOW, {(V, local): 5}, {}, 25) == [Archive(V, H, 0)]
+    assert plan_pass(NOW, {(V, H): 3}, {(V, local): row(deleted=True)}, 25) == [MergeLate(V, H, 1)]
+    assert oldest_unarchived(NOW, {(V, local): 5}, {(V, H + HOUR): row(H + HOUR)}) == H
+    assert oldest_unarchived(NOW, {(V, local): 5}, {(V, H): row()}) is None

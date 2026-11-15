@@ -42,6 +42,9 @@ def test_bounds_accept_an_aligned_instant_in_another_zone_as_utc() -> None:
 def test_hour_of_floors_in_utc() -> None:
     assert hour_of(H + timedelta(minutes=59, seconds=59, microseconds=999999)) == H
     assert hour_of(datetime(2026, 11, 14, 15, 30, tzinfo=timezone(timedelta(hours=2)))) == H
+    assert hour_of(
+        datetime(2026, 11, 14, 14, 45, tzinfo=timezone(timedelta(hours=5, minutes=30)))
+    ) == datetime(2026, 11, 14, 9, tzinfo=UTC)  # floors the UTC instant, not the local clock
     with pytest.raises(ValueError):
         hour_of(datetime(2026, 11, 14, 13))
 
@@ -64,4 +67,16 @@ def test_object_keys() -> None:
     assert sidecar("NYX-TA9/2026/11/14/13.parquet", "ab" * 32) == (
         "NYX-TA9/2026/11/14/13.parquet.sha256",
         f"{'ab' * 32}  13.parquet\n".encode(),
+    )
+
+
+def test_object_key_rejects_unaligned_naive_and_negative_versions() -> None:
+    for bad in (H + timedelta(minutes=1), H.replace(tzinfo=None)):
+        with pytest.raises(ValueError):
+            object_key("V", bad)
+    with pytest.raises(ValueError):
+        object_key("V", H, -1)
+    assert (
+        object_key("V", datetime(2026, 11, 14, 14, tzinfo=timezone(timedelta(hours=1))))
+        == "V/2026/11/14/13.parquet"
     )

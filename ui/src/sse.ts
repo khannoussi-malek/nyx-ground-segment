@@ -1,9 +1,11 @@
 export const REOPEN_MS = 1000;
+export const KINDS = ["hello", "snapshot", "tm", "alarm", "cmd", "link", "ground", "hb"] as const;
+export type Kind = (typeof KINDS)[number];
 
 /** EventSource with a client watchdog (D-UI-03): on error close and reopen after 1 s, one pending at a time. */
 export function connectEvents(
   url: string,
-  onEvent: (kind: "snapshot" | "tm", data: unknown) => void,
+  onEvent: (kind: Kind, data: unknown) => void,
   onError: () => void,
   deps = {
     EventSource: globalThis.EventSource,
@@ -21,7 +23,7 @@ export function connectEvents(
     if (stopped) return;
     const src = new deps.EventSource(url);
     es = src;
-    for (const kind of ["snapshot", "tm"] as const) {
+    for (const kind of KINDS) {
       src.addEventListener(kind, (e) => {
         let data: unknown;
         try {

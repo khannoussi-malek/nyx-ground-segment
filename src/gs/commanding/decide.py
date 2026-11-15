@@ -59,12 +59,16 @@ class Change:
     late_ack_at: datetime | None = None
     late_ack_accepted: bool | None = None
     guard: tuple[CmdState, ...] = ()
-    audits: tuple[Action, ...] = ()
+    # every state passed through, in order: one CMD_STATE audit each (P-pf37, D-CMD-08)
+    states: tuple[CmdState, ...] = ()
+    audits: tuple[Action, ...] = ()  # one CMD_STATE per entry of `states` first, then late ones
     late_verification: bool = False  # write the LATE_VERIFICATION event
 
 
 def _move(state: CmdState, **fields: Any) -> Change:
-    return Change(state=state, guard=EARLIER[state], audits=("CMD_STATE",), **fields)
+    return Change(
+        state=state, guard=EARLIER[state], states=(state,), audits=("CMD_STATE",), **fields
+    )
 
 
 def _fail(
@@ -105,8 +109,15 @@ def _open(
             return _move("FAILED", failure_reason="REJECTED", failed_at=ack.t)
         received = replace(cmd, state="RECEIVED", received_at=ack.t)
         then = _received(received, None, echo_t, now, caught_up)  # rule 2 in the same call
-        # one UPDATE, one CMD_STATE audit with the final state; received_at keeps the ack time
-        return replace(then or _move("RECEIVED"), received_at=ack.t)
+        if then is None:
+            return _move("RECEIVED", received_at=ack.t)
+        # one UPDATE; RECEIVED and the next state each get their CMD_STATE row, in order
+        return replace(
+            then,
+            received_at=ack.t,
+            states=("RECEIVED", *then.states),
+            audits=("CMD_STATE", *then.audits),
+        )
     if echo_t is not None and echo_t <= r:
         return _move("VERIFIED", verified_at=echo_t)  # received_at stays NULL
     if caught_up and now >= r:

@@ -49,6 +49,11 @@ CASES: list[tuple[CmdRow, AckSeen | None, datetime | None, datetime, bool, Want]
     (row(), None, s(2.0), s(2.1), True, ("VERIFIED", None, None, None)),
     (row(), None, None, s(5.0), True, (F, NR, None, None)),
     (row(), None, None, s(9.0), False, None),  # not caught up: no timeout
+    (row(), OK, s(0.4), s(9), False, ("VERIFIED", None, None, None)),  # a drain applies evidence
+    (row(), OK, None, s(9), False, ("RECEIVED", None, None, None)),  # only timeouts wait
+    (row("QUEUED", sent_at=None), OK, None, s(14.85), True, ("RECEIVED", None, None, None)),
+    (row("QUEUED", sent_at=None), OK, None, s(14.95), True, (F, NV, None, None)),  # V: queued_at
+    (failed(NR, 5), None, s(600), s(606), True, None),  # echo in the window, now outside it
     (row(), None, None, s(4.9), True, None),  # inside the window
     (row(), ack(5.0), None, s(5.0), True, ("RECEIVED", None, None, None)),  # ack at R wins
     (row(), None, s(5.0), s(5.0), True, ("VERIFIED", None, None, None)),  # echo at R wins
@@ -100,7 +105,8 @@ def test_backlog_evidence_wins_over_timeout() -> None:  # Review Focus 1
     c = decide(row(), OK, s(0.4), now=s(8.0), caught_up=True)
     assert c is not None
     assert (c.state, c.verified_at, c.received_at) == ("VERIFIED", s(0.4), s(0.3))
-    assert c.failed_at is None and c.audits == ("CMD_STATE",)
+    assert c.failed_at is None
+    assert c.states == ("RECEIVED", "VERIFIED") and c.audits == ("CMD_STATE", "CMD_STATE")
 
 
 def test_received_then_not_verified_in_one_call() -> None:  # rule 1 then rule 2
@@ -112,6 +118,7 @@ def test_received_then_not_verified_in_one_call() -> None:  # rule 1 then rule 2
         s(0.3),
         s(15.0),
     )
+    assert c.states == ("RECEIVED", "FAILED") and c.audits == ("CMD_STATE", "CMD_STATE")
 
 
 def test_evidence_times_are_stored() -> None:
@@ -140,6 +147,12 @@ def test_late_evidence_audits_and_event() -> None:
     assert not late_ack.late_verification
     plain = decide(row(), None, None, s(5), True)
     assert plain is not None and plain.audits == ("CMD_STATE",) and not plain.late_verification
+    assert plain.states == ("FAILED",)
+    invalid = decide(row(), bad(0.2), s(0.4), s(0.5), True)
+    assert invalid is not None and invalid.late_verification
+    assert invalid.audits == ("CMD_STATE", "CMD_LATE_VERIFICATION") and invalid.states == (
+        "FAILED",
+    )
 
 
 def test_late_window_is_a_parameter() -> None:
@@ -156,4 +169,7 @@ def test_guards_are_monotonic(
     if c is None:
         return
     assert c.guard == (EARLIER[c.state] if c.state else ("FAILED",))
+    assert c.states[-1:] == ((c.state,) if c.state else ())  # P-pf37: every state, in order
+    assert c.audits.count("CMD_STATE") == len(c.states)
+    assert c.audits[: len(c.states)] == ("CMD_STATE",) * len(c.states)  # state rows first
     assert r.state in c.guard  # the row it was decided from passes its own guard

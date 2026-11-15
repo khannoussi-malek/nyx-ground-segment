@@ -4,6 +4,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from gs.alarms import engine
 from gs.alarms.contract import OpenAlarm, Transition
@@ -33,6 +34,7 @@ class Outcome:
     events: tuple[GroundEvent, ...]
     dup_or_late: int
     transitions: tuple[Transition, ...] = ()
+    acked: tuple[UUID, ...] = ()  # alarms of the ACK requests settled in the same commit
 
 
 def state_version() -> int:

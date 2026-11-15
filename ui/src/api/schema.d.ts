@@ -304,6 +304,8 @@ export interface components {
              * Format: uuid
              */
             request_id: string;
+            /** Seen Key */
+            seen_key?: string | null;
         };
         /** AckRequestView */
         AckRequestView: {

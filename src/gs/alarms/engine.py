@@ -74,14 +74,17 @@ def initial_state(cset: CompiledSet) -> EngineState:
     return EngineState(slots, {})
 
 
-def _slot_step(slot: Slot, chk: Check, n: int, s: Sample | None, reset: bool) -> Slot:
+def _slot_step(
+    slot: Slot, chk: Check, n: int, s: Sample | None, reset: bool
+) -> tuple[Slot, float | None]:
+    """The new slot and this frame's reading value (None: no reading)."""
     if s is None or reset:  # keep the level, restart ring and check state (D-ALM-04)
         slot = replace(slot, ring=(), state=chk.initial())
     if s is None:  # a NULL is not classified; a reset's revealing frame is (ruling G15)
-        return slot
+        return slot, None
     st, r = chk.step(slot.state, s, slot.level)
     if r is None:  # no opinion: nothing pushed
-        return replace(slot, state=st)
+        return replace(slot, state=st), None
     ring = (*slot.ring, r.level)[-n:]
     level = slot.level
     if len(ring) == n and min(ring) > level:
@@ -89,7 +92,7 @@ def _slot_step(slot: Slot, chk: Check, n: int, s: Sample | None, reset: bool) ->
     elif len(ring) == n and max(ring) < level:
         level = max(ring)
     side = None if level == Level.NOMINAL else (r.side or slot.side)
-    return Slot(slot.kind, level, side, ring, st)
+    return Slot(slot.kind, level, side, ring, st), r.value
 
 
 def _level_text(sev: Level, side: str | None) -> str:
@@ -204,11 +207,13 @@ def step(
     for param, checks in cset.checks.items():
         v = values.get(param)
         sample = None if v is None else Sample(seq, t.timestamp(), v, period_s)
-        new = [_slot_step(slots[(param, c.kind)], c, n, sample, reset) for c, n in checks]
+        stepped = [_slot_step(slots[(param, c.kind)], c, n, sample, reset) for c, n in checks]
+        new = [s for s, _ in stepped]
         slots.update({(param, s.kind): s for s in new})
         tr = _judge(f, param, alarms, new)
-        if tr is not None:
-            out.append(tr)
+        if tr is not None:  # value: the trigger slot's reading (RTN/CLEAR have no trigger)
+            vals = {s.kind: v for s, v in stepped}
+            out.append(replace(tr, value=vals.get(tr.check_kind) if tr.check_kind else None))
     return EngineState(slots, alarms), tuple(out)
 
 

@@ -6,7 +6,7 @@ from typing import ClassVar, Literal, cast
 
 from pydantic import Field
 
-from gs.alarms.checks import CheckConfig, Reading, Sample, register
+from gs.alarms.checks import CheckConfig, Reading, Sample, Side, register
 from gs.alarms.contract import Level
 
 MIN_FILL = 0.8  # share of the expected samples the window must hold
@@ -51,5 +51,6 @@ class Roc:
         lim = self.cfg.limit_per_s
         hit = {"falling": slope <= -lim, "rising": slope >= lim, "both": abs(slope) >= lim}
         if not hit[self.cfg.direction]:
-            return new, Reading(Level.NOMINAL, None)
-        return new, Reading(Level[self.cfg.severity], "RISING" if slope > 0 else "FALLING")
+            return new, Reading(Level.NOMINAL, None, slope)
+        side: Side = "RISING" if slope > 0 else "FALLING"
+        return new, Reading(Level[self.cfg.severity], side, slope)

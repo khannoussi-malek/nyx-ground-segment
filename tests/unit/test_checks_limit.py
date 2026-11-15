@@ -44,19 +44,23 @@ def test_side() -> None:
 
 
 def test_held_side_is_the_deciding_bound() -> None:
-    assert levels(CP2, [98.1], YELLOW)[0] == Reading(YELLOW, "LOW")
-    assert levels(CP2, [105.9], RED)[0] == Reading(RED, "HIGH")
+    assert levels(CP2, [98.1], YELLOW)[0] == Reading(YELLOW, "LOW", 98.1)
+    assert levels(CP2, [105.9], RED)[0] == Reading(RED, "HIGH", 105.9)
 
 
 def test_one_sided_abs() -> None:
     cfg = shipped("bus_current_a", "limit")
     assert isinstance(cfg, LimitCheck)
-    assert levels(cfg, [8.0])[0] == Reading(YELLOW, "HIGH")
-    assert levels(cfg, [7.81], YELLOW)[0] == Reading(YELLOW, "HIGH")
-    assert levels(cfg, [7.79], YELLOW)[0] == Reading(N, None)
-    assert levels(cfg, [-100.0])[0] == Reading(N, None)  # no low bound
+    assert levels(cfg, [8.0])[0] == Reading(YELLOW, "HIGH", 8.0)
+    assert levels(cfg, [7.81], YELLOW)[0] == Reading(YELLOW, "HIGH", 7.81)
+    assert levels(cfg, [7.79], YELLOW)[0] == Reading(N, None, 7.79)
+    assert levels(cfg, [-100.0])[0] == Reading(N, None, -100.0)  # no low bound
 
 
 def test_red_steps_down_through_yellow() -> None:  # deadband applies band by band
     out = levels(CP2, [94.0, 95.1, 95.3, 98.1, 98.3])
     assert [r.level for r in out] == [RED, RED, YELLOW, YELLOW, N]
+
+
+def test_reading_carries_the_sample() -> None:  # Task 8: a limit reading's value is the sample
+    assert [r.value for r in levels(CP2, [94.0, 100.0])] == [94.0, 100.0]

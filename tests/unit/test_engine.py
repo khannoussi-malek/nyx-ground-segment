@@ -234,3 +234,13 @@ def test_deescalate_keeps_the_last_side() -> None:  # ring (Y, N, N): YELLOW, cu
         ("DEESCALATE", "YELLOW_HIGH"),
         ("RTN", None),
     ]
+
+
+def test_transition_value_from_trigger_reading() -> None:  # Task 8, ruling R-b
+    tr = run_engine(CSET, temp_series([31.0, 31.0, 31.0, 22.0, 22.0, 22.0]))
+    assert [(t.kind, t.value) for t in tr] == [("RAISE", 31.0), ("RTN", None)]
+
+
+def test_roc_transition_value_is_the_slope() -> None:
+    (tr, *_) = [t for t in run_engine(CSET, leak_frames(3.0, seed=1)) if t.check_kind == "roc"]
+    assert tr.kind == "RAISE" and tr.value == pytest.approx(-0.4, abs=0.1)  # P-pf25

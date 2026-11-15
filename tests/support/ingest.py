@@ -2,6 +2,7 @@
 
 import asyncio
 import dataclasses
+import json
 import os
 import socket
 import subprocess
@@ -29,7 +30,7 @@ from gs.ingest.owner import MATCH
 from gs.ingest.validate import FieldStats
 from gs.ingest.worker import Ctx, Timing, process_batch, run_vehicle
 from tests.support.compose import compose, compose_ps, recreate, restart_count
-from tests.support.env import REPO, dotenv, vid, wait_until
+from tests.support.env import REPO, dotenv, until, vid, wait_until
 from tests.support.mission import MISSION_DIR
 from tests.support.pg import admin_dsn, app_dsn, lock_holder
 from tests.support.redisx import GROUP, aclient, client, drained
@@ -273,3 +274,26 @@ def kill_or_crash(case: str) -> None:
     wait_until(lambda: lock_holder("NYX-TA1") == "ingest-2", 15)
     wait_until(lambda: lock_holder("NYX-TA1") == "ingest-1", 30)  # hand-back, no 2nd crash
     assert restart_count("ingest-1") == 1  # the marker kept the hook from firing again
+
+
+def _tail() -> str:
+    entries: Any = client("admin").xrevrange("ui:events", count=1)
+    return str(entries[0][0]) if entries else "0-0"
+
+
+def _resync_after(v: str, after: str) -> bool:
+    """A resync for v newer than stream id `after` (robust to the MAXLEN trim)."""
+    entries: Any = client("admin").xrange("ui:events", min=f"({after}")
+    return any(json.loads(f["data"]) == {"kind": "resync", "vehicle": v} for _, f in entries)
+
+
+@asynccontextmanager
+async def owned(v: str, **kw: Any) -> AsyncIterator[Running]:
+    """`worker([v])` past its first publish (the Resync flush) and the shown stamp after it:
+    an ACK request made from here on is newer than the takeover (P-pf42b)."""
+    after = _tail()
+    async with worker([v], **kw) as w:
+        await until(lambda: _resync_after(v, after), 5)
+        first = w.ctx.loop_seen.get(v)  # the flush and its stamp end that loop pass
+        await until(lambda: w.ctx.loop_seen.get(v) != first, 5)
+        yield w

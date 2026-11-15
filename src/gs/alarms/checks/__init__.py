@@ -28,6 +28,7 @@ class Sample:
 class Reading:
     level: Level
     side: Side | None
+    value: float | None = None  # what was judged: the sample (limit), the slope per s (roc)
 
 
 class CheckConfig(BaseModel):

@@ -106,10 +106,11 @@ ON CONFLICT (alarm_id) DO UPDATE SET state = EXCLUDED.state, severity = EXCLUDED
 """
 _INSERT_ALARM_EVENT = """
 INSERT INTO alarm_events (key, alarm_id, vehicle, param, kind, check_kind, level, severity,
-                          trigger_seq, trigger_t_onboard, by_user, note, alert,
+                          value, trigger_seq, trigger_t_onboard, by_user, note, alert,
                           limits_sha256, set_sha256)
 VALUES (%(key)s, %(alarm_id)s, %(vehicle)s, %(param)s, %(kind)s, %(check_kind)s, %(level)s,
-        %(event_severity)s, %(trigger_seq)s, %(trigger_t)s, %(by_user)s, %(note)s, %(alert)s,
+        %(event_severity)s, %(value)s, %(trigger_seq)s, %(trigger_t)s, %(by_user)s, %(note)s,
+        %(alert)s,
         (SELECT limits_sha256 FROM limits_versions WHERE set_sha256 = %(set_sha256)s),
         %(set_sha256)s)
 ON CONFLICT (key) DO NOTHING
@@ -138,6 +139,7 @@ async def write_transitions(
             "kind": t.kind,
             "check_kind": t.check_kind,
             "level": t.level,
+            "value": t.value,
             "trigger_seq": t.trigger_seq,
             "trigger_t": t.trigger_t,
             "by_user": t.by_user,

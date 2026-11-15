@@ -44,8 +44,8 @@ def errors(*codes: int) -> dict[int | str, dict[str, object]]:
 
 
 def mission(request: Request) -> MissionDb:
-    """The mission-db set the API works with (Task 12 makes it follow reloads)."""
-    db: MissionDb = request.app.state.mission
+    """The mission-db set the API works with now: its own watcher's, following reloads."""
+    db: MissionDb = request.app.state.watcher.current
     return db
 
 

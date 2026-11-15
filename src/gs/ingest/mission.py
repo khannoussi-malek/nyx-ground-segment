@@ -4,7 +4,7 @@ import asyncio
 import hashlib
 import logging
 import time
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +20,10 @@ POLL_S = 1.0
 REVALIDATE_S = 10.0
 _FILES = ("limits.yaml", "commands.yaml", "parameters.yaml")
 Hashes = tuple[str, str, str]
+# raises MissionDbError to refuse `new` while `old` is active (the API's G31 rule, P-pf5)
+Check = Callable[[MissionDb, MissionDb], None]
+OnApply = Callable[[psycopg.AsyncConnection, MissionDb, MissionDb], Awaitable[None]]
+OnEvents = Callable[[Sequence[GroundEvent]], Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -68,22 +72,25 @@ def _hashes(raw: tuple[bytes, bytes, bytes]) -> Hashes:
     return h[0], h[1], h[2]
 
 
-def _rejected(raw: tuple[bytes, bytes, bytes], e: MissionDbError) -> GroundEvent:
+def _rejected(
+    raw: tuple[bytes, bytes, bytes], e: MissionDbError, by: str | None = None
+) -> GroundEvent:
     lim, cmd, par = _hashes(raw)
     set_sha = hashlib.sha256("".join(f"{h}\n" for h in (lim, cmd, par)).encode()).hexdigest()
+    details = {
+        "file": e.file,
+        "error": e.message,
+        "set_sha256": set_sha,
+        "limits_sha256": lim,
+        "commands_sha256": cmd,
+        "parameters_sha256": par,
+    }
     return GroundEvent(
         key=rejected_key(set_sha),
         vehicle=None,
         kind="LIMITS_REJECTED",
         t_onboard=None,
-        details={
-            "file": e.file,
-            "error": e.message,
-            "set_sha256": set_sha,
-            "limits_sha256": lim,
-            "commands_sha256": cmd,
-            "parameters_sha256": par,
-        },
+        details=details if by is None else {**details, "by": by},
     )
 
 
@@ -118,17 +125,41 @@ async def start_set(
 
 
 class MissionWatcher:
-    def __init__(self, mission_dir: Path, dsn: str, consumer: str, active: MissionDb) -> None:
+    """Polls the mission dir; applies a new valid set after two equal polls (EX-09).
+    `on_apply(conn, old, new)` runs in the transaction that stores the set, and the set becomes
+    current only after it commits (P-pf45); `on_events([LIMITS_REJECTED])` once per newly
+    rejected set whose row this watcher inserted; `check(old, new)` before applying (P-pf5);
+    `by` names the rejecting service in the event details."""
+
+    def __init__(
+        self,
+        mission_dir: Path,
+        dsn: str,
+        consumer: str,
+        active: MissionDb,
+        on_apply: OnApply | None = None,
+        on_events: OnEvents | None = None,
+        check: Check | None = None,
+        by: str | None = None,
+    ) -> None:
         self._dir = mission_dir
         self._dsn = dsn
         self._app = f"{consumer}-mission"
         self._current = active
+        self._on_apply, self._on_events, self._check, self._by = on_apply, on_events, check, by
+        self._stored = False  # the active set may come from load_dir with the DB down (P-pf5)
         self._poll = Poll()
         self._rejected: tuple[Hashes, float] | None = None  # hashes, when last validated
+        self._refused = False
 
     @property
     def current(self) -> MissionDb:
         return self._current
+
+    @property
+    def refused(self) -> bool:
+        """`check` refused the files on disk; cleared when a set applies or the files revert."""
+        return self._refused
 
     async def run(self, stop: asyncio.Event) -> None:
         conn: psycopg.AsyncConnection | None = None
@@ -140,8 +171,8 @@ class MissionWatcher:
                             self._dsn, autocommit=True, application_name=self._app
                         )
                     await self._tick(conn)
-                except psycopg.Error:
-                    log.exception("mission watcher: database error, reconnecting")
+                except Exception:  # noqa: BLE001  the watcher must never die silently
+                    log.exception("mission watcher: tick failed, reconnecting")
                     if conn is not None:
                         with suppress(psycopg.Error):
                             await conn.close()
@@ -153,6 +184,9 @@ class MissionWatcher:
                 await conn.close()
 
     async def _tick(self, conn: psycopg.AsyncConnection) -> None:
+        if not self._stored:  # limits_versions holds every set that was ever active
+            await insert_set(conn, self._current)
+            self._stored = True
         try:
             raw = _read_raw(self._dir)
         except MissionDbError as e:  # file mid-replace: try again next poll
@@ -166,19 +200,30 @@ class MissionWatcher:
         )
         self._poll, ready = observe(self._poll, hashes, active)
         if hashes == active:  # files reverted to the active set: forget the rejection
-            self._rejected = None
+            self._rejected, self._refused = None, False
         rej = self._rejected
         if rej is not None and rej[0] == hashes:
             if time.monotonic() - rej[1] < REVALIDATE_S:
                 return
         elif not ready:
             return
+        refused = False
         try:
             mdb = validate_set(raw, await telemetry_columns(conn))
+            refused = self._check is not None
+            if self._check is not None:
+                self._check(self._current, mdb)
         except MissionDbError as e:
-            await insert_events(conn, [_rejected(raw, e)])  # key dedups across workers
-            self._rejected = (hashes, time.monotonic())
+            ev = _rejected(raw, e, self._by)
+            won = await insert_events(conn, [ev])  # key dedups across workers and the API
+            fresh = rej is None or rej[0] != hashes  # not a 10 s revalidation of the same files
+            # only an applied set or reverted files end a refusal: ingest still runs the newer set
+            self._rejected, self._refused = (hashes, time.monotonic()), refused or self._refused
+            if fresh and won and self._on_events is not None:  # one link per stored rejection
+                await self._on_events([ev])
             return
-        await insert_set(conn, mdb)
-        self._current = mdb
-        self._rejected = None
+        async with conn.transaction():  # the set row and its audit, or neither (P-pf45)
+            await insert_set(conn, mdb)
+            if self._on_apply is not None:
+                await self._on_apply(conn, self._current, mdb)
+        self._current, self._rejected, self._refused = mdb, None, False

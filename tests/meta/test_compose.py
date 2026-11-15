@@ -38,7 +38,9 @@ ENV = {
         "POSTGRES_USER", "POSTGRES_DB", "POSTGRES_PASSWORD", "GS_OWNER_PASSWORD", "GS_APP_PASSWORD",
     },
     "minio": {"MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"},
-    "minio-init": {"MC_CONFIG_DIR", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET"},
+    "minio-init": {
+        "MC_CONFIG_DIR", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_ARCHIVER_SECRET", "S3_BUCKET",
+    },
     "migrate": {"DATABASE_URL", "MISSION_DB"},
     "simulator": {
         "REDIS_URL", "SIM_VEHICLES", "SIM_SEED", "BIND_HOST", "HEALTH_PORT", "MISSION_DB",
@@ -80,7 +82,7 @@ USES = {  # secret keys each service's environment is derived from
     "redis": {"REDIS_HEALTH_PW"},
     "db": {"POSTGRES_PASSWORD", "GS_OWNER_PASSWORD", "GS_APP_PASSWORD"},
     "minio": {"S3_ACCESS_KEY", "S3_SECRET_KEY"},
-    "minio-init": {"S3_ACCESS_KEY", "S3_SECRET_KEY"},
+    "minio-init": {"S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_ARCHIVER_SECRET"},
     "migrate": {"GS_OWNER_PASSWORD"},
     "simulator": {"REDIS_SIM_PW"},
     "ingest-1": {"REDIS_INGEST_PW", "GS_APP_PASSWORD"},

@@ -6,6 +6,7 @@ dependencies = [
     "fastapi==0.162.6",
     "httpx==0.28.1",
     "itsdangerous==2.2.0",
+    "minio==7.2.20",
     "psycopg-pool==3.3.3",
     "psycopg[binary]==3.3.9",
     "pydantic==2.14.3",

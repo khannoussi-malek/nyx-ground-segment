@@ -59,6 +59,15 @@ def main(argv: list[str] | None = None) -> int:
         shown = " ".join(f"{name}={env[key]}" for name, key in DEMO_KEYS.items())
         print(f"demo users (shown once): {shown}")
     env = _read_env(env_path)
+    missing = [(k, v) for k, v in _example_pairs(root / ".env.example") if k not in env]
+    if (
+        missing
+    ):  # a worktree's older .env gains new keys without `make reset`; no existing line is touched
+        text = env_path.read_text()
+        with env_path.open("a") as f:
+            f.write("" if text.endswith("\n") or not text else "\n")
+            f.write("".join(f"{k}={v or secrets.token_hex(24)}\n" for k, v in missing))
+        env = _read_env(env_path)
 
     # users.yaml and redis/users.acl stay 0644: the containers (uid 10001, redis uid 999) read
     # these bind mounts as other users on Linux. They hold only scrypt/sha256 hashes.

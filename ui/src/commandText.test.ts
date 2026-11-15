@@ -24,7 +24,7 @@ test("the parenthesis names the failure; the late time is UTC", () => {
 });
 
 test("NOT_SENT is not dressed as a failure of the vehicle; no outcome, no text", () => {
-  expect(outcomeText(failed("NOT_SENT", { failure_reason: "SEND_ERROR" }))).toBe("not sent (broker unavailable) – safe to retry");
+  expect(outcomeText(failed("NOT_SENT", { failure_reason: "SEND_ERROR" }))).toBe("not sent – safe to retry"); // no cause: an interlock expiry is NOT_SENT too
   expect(outcomeText(failed(null))).toBeNull();
 });
 

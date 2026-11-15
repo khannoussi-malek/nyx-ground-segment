@@ -36,7 +36,7 @@ export function outcomeText(c: CommandView, m: MissionDb | null = null): string 
     case "RECEIVED_LATE": return `${head} – vehicle accepted it late, not yet seen executing – wait`;
     case "UNKNOWN":
       return `${head} – outcome unknown: check mode, last_cmd_id and the affected parameters; never blind-resend a hazardous command; tell the test conductor`;
-    case "NOT_SENT": return "not sent (broker unavailable) – safe to retry";
+    case "NOT_SENT": return "not sent – safe to retry"; // broker refused or interlock expired: no cause named
     default: return null;
   }
 }

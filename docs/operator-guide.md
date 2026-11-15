@@ -25,7 +25,7 @@ Choose the target vehicle yourself (there is no default), the command and its ar
 
 ## When a command shows FAILED
 FAILED is final; the line after it says what happened and what to do:
-- **not sent (broker unavailable) – safe to retry**: it never left the ground.
+- **not sent – safe to retry**: it never left the ground (the broker refused it, or the send took longer than the 2 s interlock).
 - **vehicle did not execute it**: the vehicle refused it; send again only after checking why.
 - **vehicle executed it at** `14:03:17Z` – **do NOT resend**: it happened after the wait.
 - **vehicle accepted it late**: accepted but not yet seen executing; wait and watch the parameters.

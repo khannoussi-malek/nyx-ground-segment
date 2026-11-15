@@ -30,9 +30,8 @@ from gs.common.audit import audit
 from gs.common.interfaces import build_frame_model
 from gs.common.interfaces.missiondb import MissionDbView, Vehicles
 from gs.common.missiondb import MissionDb, MissionDbError, load_dir
-from gs.ingest.events import GroundEvent, insert_events
+from gs.ingest.events import GroundEvent, insert_events, to_link
 from gs.ingest.mission import MissionWatcher, start_set
-from gs.ingest.worker import to_link
 
 CLIENT_HEADER = "X-GS-Client"
 SOCKET_TIMEOUT_S = 5

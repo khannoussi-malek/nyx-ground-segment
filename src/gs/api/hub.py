@@ -31,8 +31,7 @@ from gs.common.interfaces.sse import AlarmView
 from gs.common.interfaces.ui_event import Resync
 from gs.common.uievents import UI_EVENTS
 from gs.common.views import alarm_views, command_views, event_views
-from gs.ingest.events import GroundEvent, insert_events, mismatch_key
-from gs.ingest.worker import to_link
+from gs.ingest.events import GroundEvent, insert_events, mismatch_key, to_link
 
 CLIENT_QUEUE = 1000  # SSE frames buffered per client before it is closed
 RETRY_S = 1.0  # between XREAD attempts while the broker is down
@@ -123,6 +122,7 @@ class Hub:
         self.processing: dict[str, bool] = {v: False for v in self.vehicles}
         self.degraded = False  # an entry failed the ui-event model; until restart (D-ING-27)
         self.alive_at = time.monotonic()  # the reader's last pass
+        self._resnap = False  # a rejected entry may have carried an alarm: snapshot next tick
 
     def up(self) -> bool:
         """Deltas flow: the broker answers and the reader is not hung."""
@@ -184,6 +184,9 @@ class Hub:
                 if time.monotonic() >= next_poll:  # also before the first XREAD
                     next_poll = time.monotonic() + HB_S
                     await self._poll_processing()
+                    if self._resnap:  # at most one per HB_S, however many were rejected
+                        self._resnap = False
+                        await self._broadcast_snapshot()
                 read = await self._xread(last_id, stop)
                 if read is None:
                     return
@@ -254,8 +257,8 @@ class Hub:
                 inserted = await insert_events(conn, [ev])
         except (psycopg.Error, PoolTimeout) as e:
             log.warning("INTERFACE_MISMATCH not recorded: %s: %s", type(e).__name__, e)
-        if inserted:  # one link per committed ground event (P-pf9), and a snapshot that
-            self.broadcast(format_sse("link", to_link(ev)))  # restores what was dropped
-            await self._broadcast_snapshot()
+        if inserted:  # one link per committed ground event (P-pf9)
+            self.broadcast(format_sse("link", to_link(ev)))
+        self._resnap = True  # every rejected entry: restore what it may have dropped
         rec = schema_reject(raw, UI_EVENTS, entry_id, detail, datetime.now(UTC))
         await self.redis.xadd(DLQ, {"data": rec.model_dump_json()})

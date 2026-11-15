@@ -4,12 +4,13 @@ import json
 import uuid
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any, Literal
 
 import psycopg
 from psycopg.types.json import Jsonb
 
+from gs.common.interfaces.sse import EventView, Link
 from gs.common.missiondb import MissionDb
 from gs.common.time import iso_z
 
@@ -95,6 +96,14 @@ def _iso(o: object) -> str:
 
 def details_json(details: Mapping[str, Any]) -> str:
     return json.dumps(details, default=_iso)
+
+
+def to_link(e: GroundEvent) -> Link:
+    """The ui:events / SSE message of a committed ground event (one per event, P-pf9)."""
+    t = None if e.t_onboard is None else e.t_onboard.astimezone(UTC)
+    details = json.loads(details_json(e.details))  # times as iso_z, UUIDs as text
+    return Link(event=EventView(key=e.key, vehicle=e.vehicle, kind=e.kind, t_onboard=t,
+                                details=details))  # fmt: skip
 
 
 async def insert_events(conn: psycopg.AsyncConnection, events: Sequence[GroundEvent]) -> int:

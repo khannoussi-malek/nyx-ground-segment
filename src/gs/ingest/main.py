@@ -22,12 +22,12 @@ from gs.common.hooks import Hooks
 from gs.common.logs import setup_logging
 from gs.common.uievents import publish_ui
 from gs.ingest.errors import OperationalDbError
-from gs.ingest.events import GroundEvent, insert_events
+from gs.ingest.events import GroundEvent, insert_events, to_link
 from gs.ingest.liveness import ingest_status, refresh_memory, run_ticks
 from gs.ingest.mission import MissionWatcher, OnEvents, start_set
 from gs.ingest.owner import parse_homes
 from gs.ingest.validate import FieldStats
-from gs.ingest.worker import SOCKET_TIMEOUT_S, Ctx, run_vehicle, to_link
+from gs.ingest.worker import SOCKET_TIMEOUT_S, Ctx, run_vehicle
 
 
 @dataclass(frozen=True)

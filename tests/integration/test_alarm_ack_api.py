@@ -504,3 +504,64 @@ async def test_ack_across_owner_restart_superseded(monkeypatch: pytest.MonkeyPat
     async with worker([v]):  # the new owner flushes its Resync, then reads the request
         await until(lambda: settled(v), 5)
     assert status(v) == {rid: ("superseded", CHANGED)}
+
+
+async def test_slow_publish_moves_the_margin(monkeypatch: pytest.MonkeyPatch) -> None:
+    v, base = vid(), now() - timedelta(minutes=1)  # fix round 3, item 1: no error, just slow
+    slowed: list[bool] = []
+
+    async def slow_escalation(r: Any, msgs: Any) -> None:
+        esc = any(isinstance(m, Alarm) and m.alarm.last.kind == "ESCALATE" for m in msgs)
+        if esc and not slowed:
+            slowed.append(True)
+            await asyncio.sleep(2.5)  # commit at T, on the consoles at T + 2.5 s
+        await publish_ui(r, msgs)
+
+    monkeypatch.setattr(worker_mod, "publish_ui", slow_escalation)
+    async with owned(v):
+        produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
+        await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
+        produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
+        await until(  # published only after the 2.5 s delay
+            lambda: any(m["alarm"]["last"]["kind"] == "ESCALATE" for m in alarm_msgs(v)), 6
+        )
+        (esc,) = rows(
+            "select alarm_id, processed_at from alarm_events where vehicle=%s and kind='ESCALATE'",
+            v,
+        )
+        at = esc["processed_at"] + timedelta(seconds=2.2)  # past rule 1, before the publish + 2 s
+        rid = request(v, esc["alarm_id"], requested_at=at)
+        await until(lambda: settled(v), 3)
+    assert slowed and status(v) == {
+        rid: ("superseded", CHANGED)
+    }  # 2.2 s after commit, not after publish
+
+
+async def test_escalate_then_rtn_in_one_held_batch_superseded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # re-review: an alarm whose held message ends in RTN still counts as shown late
+    v, base = vid(), now() - timedelta(minutes=1)
+    produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
+    async with worker([v]):
+        await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)  # YELLOW
+    a = open_alarm(v, TEMP)
+    assert a is not None
+    produce_values(v, {TEMP: [31.0] * 3 + [22.0] * 3}, base=base, start_seq=10)  # one batch
+    held: list[float] = []
+
+    async def hold_rtn(r: Any, msgs: Any) -> None:
+        rtn = any(isinstance(m, Alarm) and m.alarm.last.kind == "RTN" for m in msgs)
+        if rtn and not held:
+            held.append(time.monotonic() + 3.0)
+        if held and time.monotonic() < held[0]:
+            raise redis.exceptions.ConnectionError("test: broker down")
+        await publish_ui(r, msgs)
+
+    monkeypatch.setattr(worker_mod, "publish_ui", hold_rtn)
+    async with worker([v]):
+        await until(lambda: bool(held), 5)
+        assert [k for k, _ in kinds(v)] == ["RAISE", "ESCALATE", "RTN"]
+        await asyncio.sleep(2.5)  # past rule 1's margin, and past the takeover's stamp
+        rid = request(v, uuid.UUID(str(a["alarm_id"])))
+        await until(lambda: settled(v), 10)
+    assert status(v) == {rid: ("superseded", CHANGED)}

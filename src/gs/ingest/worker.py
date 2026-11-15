@@ -4,7 +4,6 @@ classify, COMMIT, publish to ui:events, then XACK (D-ING-01/02/03/10/11/12/22)."
 import asyncio
 import contextlib
 import functools
-import json
 import logging
 import time
 from collections import Counter
@@ -23,14 +22,14 @@ from gs.alarms.state import load, rebuild
 from gs.commanding.tracker import track_pass
 from gs.common.hooks import Hooks
 from gs.common.interfaces import DlqRecord, FrameHeader, Tm, build_frame_model
-from gs.common.interfaces.sse import Alarm, EventView, Link
+from gs.common.interfaces.sse import Alarm, Link
 from gs.common.interfaces.ui_event import Resync, UiMessage
 from gs.common.missiondb import MissionDb, MissionDbError
 from gs.common.uievents import publish_ui
 from gs.common.views import alarm_views
 from gs.ingest.acks import AckReq, apply_acks, db_now, pending_acks
 from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
-from gs.ingest.events import GroundEvent, details_json, poison_key, reset_key
+from gs.ingest.events import GroundEvent, poison_key, reset_key, to_link
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
 from gs.ingest.link import STALE_S, on_silence
 from gs.ingest.owner import acquire, fence, release, waiting
@@ -92,6 +91,9 @@ class Ctx:
     csets: dict[str, CompiledSet] = field(default_factory=dict)  # set_sha256 -> compiled
     # cmd_tracker_errors, interface_mismatch (D-CMD-05, D-ING-27; /healthz reports both)
     counters: Counter[str] = field(default_factory=Counter)
+    # vehicle -> alarm -> when its state was last published, database clock (P-pf42b: ACK
+    # margins count from the publish); ponytail: never pruned, one entry per alarm shown
+    shown: dict[str, dict[UUID, datetime]] = field(default_factory=dict)
 
 
 class Unpublished(redis.exceptions.ConnectionError):
@@ -148,13 +150,6 @@ def to_tm(frame: FrameHeader, params: Sequence[str], frozen: bool = False) -> Tm
     )
 
 
-def to_link(e: GroundEvent) -> Link:
-    t = None if e.t_onboard is None else e.t_onboard.astimezone(UTC)
-    details = json.loads(details_json(e.details))  # times as iso_z, UUIDs as text
-    return Link(event=EventView(key=e.key, vehicle=e.vehicle, kind=e.kind, t_onboard=t,
-                                details=details))  # fmt: skip
-
-
 def _links(events: Sequence[GroundEvent], vs: VehicleState) -> list[Link]:
     """One `link` per committed ground event (clients dedupe by key), each logged with vehicle
     and the tracker's last seq (ENG-05, P-pf9)."""
@@ -162,6 +157,15 @@ def _links(events: Sequence[GroundEvent], vs: VehicleState) -> list[Link]:
     for e in events:
         log.info("%s %s", e.kind, e.key, extra={"vehicle": e.vehicle, "seq": seq})
     return [to_link(e) for e in events]
+
+
+async def _stamp_shown(
+    ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, ids: set[UUID]
+) -> None:
+    """After a successful publish: these alarms are on screen from now (a slow commit or
+    publish moves the ACK margin with it, P-pf42b)."""
+    if ids:
+        ctx.shown.setdefault(vehicle, {}).update(dict.fromkeys(ids, await db_now(conn)))
 
 
 def _shown_now(msgs: Sequence[UiMessage], vs: VehicleState) -> set[UUID]:
@@ -280,6 +284,7 @@ async def _process(
     msgs = await _ui(conn, nvs, inserted, outs, params)
     try:
         await publish_ui(ctx.redis, msgs)
+        await _stamp_shown(ctx, conn, vehicle, _shown_now(msgs, nvs))
         msgs = []
         ctx.hooks.fire("after_publish_before_ack")
         if entries:  # an ACK-only pass has nothing to ack
@@ -490,7 +495,6 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
     # committed but not yet published; kept across a Redis error (P-pf9). Starts with D-UI-18
     unsent: list[UiMessage] = [Resync(vehicle=vehicle), *_links(reset, vs)]
     # ponytail: never pruned; an entry per alarm whose RAISE/ESCALATE was published late
-    shown: dict[UUID, datetime] = {}  # alarm -> late publish time, database clock (P-pf42b)
     ready, backoff, was_down = False, BACKOFF_START_S, False
     claim_idle: int | None = 0  # XAUTOCLAIM min-idle while draining; None = read new entries
     cursor = "0-0"
@@ -509,9 +513,8 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
         try:
             if unsent:  # the first pass after load_state, or a pass after a Redis error
                 await publish_ui(ctx.redis, unsent)
-                late, unsent = _shown_now(unsent, vs), []
-                if late:  # their operators could see them only now: ACKs measure from here
-                    shown |= dict.fromkeys(late, await db_now(conn))
+                await _stamp_shown(ctx, conn, vehicle, _shown_now(unsent, vs))
+                unsent = []
             if not ready:
                 await _ensure_group(ctx.redis, stream)
                 ready = True
@@ -534,7 +537,7 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
             entries: list[Entry] = [(eid.decode(), f or {}) for eid, f in claimed]
             # after the read: a request waits at most one BLOCK_MS (D-ALM-14: <= 1 s); only
             # after the flush above succeeded (a held message blocks this pass, P-pf42b)
-            acks = await pending_acks(conn, vehicle, shown)
+            acks = await pending_acks(conn, vehicle, ctx.shown.get(vehicle))
             nvs, _ = await process_batch(ctx, conn, stream, entries, vs, acks)
             if nvs.seq != vs.seq:  # a new frame advanced the tracker
                 last_new = time.monotonic()

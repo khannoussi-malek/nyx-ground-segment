@@ -185,3 +185,16 @@ async def test_hb_carries_processing(live_api: LiveApi) -> None:  # D-UI-15, D-I
 
         await hb_until(True)
         await hb_until(False)  # expired: no healthy owner
+
+
+async def test_every_rejected_entry_restores_with_a_snapshot(live_api: LiveApi) -> None:
+    async with sse(live_api) as s:  # fix round 3, item 2: the mismatch row exists after one
+        await s.next_of("ground")
+        xadd_data("ui:events", '{"kind":"no-such-kind"}')
+        await s.next_of("snapshot", timeout=4)
+        n = len(s.seen)
+        for _ in range(2):  # a lasting mismatch: each dropped entry may have been an alarm
+            xadd_data("ui:events", '{"kind":"no-such-kind"}')
+        await s.next_of("snapshot", timeout=4)
+        later = [k for k, _ in s.seen[n:]]
+    assert "link" not in later  # the event row is written once per schema version

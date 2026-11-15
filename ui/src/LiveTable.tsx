@@ -27,7 +27,9 @@ function Vehicle({ store, v, mission, clock, probe }: { store: Store; v: string;
   useTick(AGE_TICK_MS);
   if (!tm) return null;
   const ageMs = ageAt(tm.age_ms, store.receivedAt(v), clock());
-  const condition = conditionFor({ ...link, processing: link.processing[v], ageMs, frozen: tm.frozen });
+  const since = store.healthySince(v);
+  const healthyMs = since === null ? null : clock() - since;
+  const condition = conditionFor({ ...link, processing: link.processing[v], ageMs, frozen: tm.frozen, healthyMs });
   // FROZEN is counted from the rows; only the vehicle-level conditions replace the summary
   const banner = condition === "FROZEN" || condition === "STALE" ? undefined : (condition ?? undefined);
   // no row state before the first snapshot: the gauge fill and the summary wait for the engine (G26)

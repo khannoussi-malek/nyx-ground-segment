@@ -286,6 +286,23 @@ test("recheck after a throttled background tab: silence over 3 s is noticed with
   expect(s.link().connected).toBe(false);
 });
 
+test("healthySince: when the broker came back up, or the vehicle's owner came back; null if never interrupted", () => {
+  let now = 1000;
+  const s = createStore(() => now, { setTimeout: (() => 1) as never, clearTimeout: () => {} });
+  expect(s.healthySince("NYX-TA1")).toBeNull();
+  s.setGround("up"); // up without a down first: no outage
+  expect(s.healthySince("NYX-TA1")).toBeNull();
+  s.setGround("down");
+  now = 5000;
+  s.setGround("up");
+  expect(s.healthySince("NYX-TA1")).toBe(5000);
+  s.setProcessing({ "NYX-TA1": false, "NYX-TA2": true });
+  now = 9000;
+  s.setProcessing({ "NYX-TA1": true, "NYX-TA2": true });
+  expect(s.healthySince("NYX-TA1")).toBe(9000);
+  expect(s.healthySince("NYX-TA2")).toBe(5000);
+});
+
 test("recheck after a throttled background tab: an hb over 3 s old forgets the processing map (P-pf42b)", () => {
   let now = 0;
   const s = createStore(() => now, { setTimeout: (() => 1) as never, clearTimeout: () => {} }); // timer never fires

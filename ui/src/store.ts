@@ -35,6 +35,8 @@ export function createStore(
   let silence: ReturnType<typeof setTimeout> | undefined;
   let lastMessageAt: number | null = null;
   let hbSilence: ReturnType<typeof setTimeout> | undefined;
+  let brokerUpAt: number | null = null; // when the broker came back after a down
+  let ownerUpAt: Readonly<Record<string, number>> = {}; // per vehicle: when processing went false -> true
   let lastHbAt: number | null = null;
   const subs = new Set<() => void>();
   const notify = () => subs.forEach((fn) => fn());
@@ -92,7 +94,10 @@ export function createStore(
       events = trim([e, ...events]);
       notify();
     },
-    setGround: (b: "up" | "down"): void => setLink({ broker: b }),
+    setGround(b: "up" | "down"): void {
+      if (b === "up" && link.broker === "down") brokerUpAt = clock();
+      setLink({ broker: b });
+    },
     /** A stale hb (none for SILENCE_MS) forgets the map: a vehicle without an hb word gets no ACK (P-pf42b). */
     setProcessing(p: Record<string, boolean>): void {
       lastHbAt = clock();
@@ -101,6 +106,8 @@ export function createStore(
         hbSilence = undefined;
         setLink({ processing: {} });
       }, SILENCE_MS);
+      const back = Object.keys(p).filter((v) => p[v] && link.processing[v] === false);
+      if (back.length > 0) ownerUpAt = { ...ownerUpAt, ...Object.fromEntries(back.map((v) => [v, clock()])) };
       setLink({ processing: { ...p } });
     },
     /** Any message proves the link. One-shot timer, re-armed here: a hidden tab throttles intervals (P-pf18). */
@@ -134,6 +141,11 @@ export function createStore(
     commands: (): readonly CommandView[] => commands,
     events: (): readonly EventView[] => events,
     link: (): Link => link,
+    /** When the broker and this vehicle's owner were last both back after an outage; null if neither ever was down. */
+    healthySince(v: string): number | null {
+      const ts = [brokerUpAt, ownerUpAt[v] ?? null].filter((t): t is number => t !== null);
+      return ts.length > 0 ? Math.max(...ts) : null;
+    },
     hasSnapshot: (): boolean => snapshotSeen,
     openAlarm: (v: string, param: string): AlarmView | undefined =>
       alarms.find((a) => a.vehicle === v && a.param === param),

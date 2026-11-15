@@ -28,3 +28,11 @@ test("an unknown processing state is not 'down'; an unknown age is not LOS", () 
   expect(conditionFor({ ...base, processing: undefined })).toBeNull();
   expect(conditionFor({ ...base, ageMs: null })).toBeNull();
 });
+
+test("LOS counts from when monitoring came back: a broker or owner outage is not loss of signal (D-UI-04/15)", () => {
+  // frames resume a moment after the broker or the owner is back; until 2 s of healthy silence, no LOS
+  expect(conditionFor({ ...base, ageMs: 12_000, healthyMs: 500 })).toBeNull();
+  expect(conditionFor({ ...base, ageMs: 12_000, healthyMs: 1999 })).toBeNull();
+  expect(conditionFor({ ...base, ageMs: 12_000, healthyMs: 2000 })).toBe("LOSS OF SIGNAL");
+  expect(conditionFor({ ...base, ageMs: 12_000, healthyMs: null })).toBe("LOSS OF SIGNAL"); // never interrupted
+});

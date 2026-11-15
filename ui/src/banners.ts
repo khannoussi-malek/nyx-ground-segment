@@ -11,10 +11,15 @@ export function conditionFor(c: {
   processing: boolean | undefined;
   ageMs: number | null;
   frozen: boolean;
+  /** ms since the broker and this vehicle's owner were last both back (store.healthySince); null = never down */
+  healthyMs?: number | null;
 }): Condition {
   if (!c.connected) return "NO LIVE CONNECTION";
   if (c.broker === "down") return "GROUND PROCESSING DOWN – BROKER";
   if (c.processing === false) return "GROUND PROCESSING DOWN";
-  if (c.ageMs !== null && c.ageMs >= STALE_MS) return "LOSS OF SIGNAL";
+  // a broker or owner outage is not loss of signal: the 2 s count from when monitoring came back, as the
+  // server's own LOS does (D-UI-04/15); the rows are still STALE meanwhile
+  const healthy = c.healthyMs == null || c.healthyMs >= STALE_MS;
+  if (c.ageMs !== null && c.ageMs >= STALE_MS && healthy) return "LOSS OF SIGNAL";
   return c.frozen ? "FROZEN" : null;
 }

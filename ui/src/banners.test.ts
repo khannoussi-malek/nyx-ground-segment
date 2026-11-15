@@ -112,3 +112,55 @@ test("page load: a vehicle silent for a minute whose open LOS is past the newest
   expect(vehicleCondition(s, V, now)).toBe("LOSS OF SIGNAL");
   expect(toneActive(s)).toEqual({ [LOS.key]: "LOS" });
 });
+
+/** A long session: `first` (a LOS or FROZEN of NYX-TA1), then 210 later link events of NYX-TA2 push it out of the
+ *  store's 200-event list; then NYX-TA1's owner stalls and resumes in place (hb false -> true, no snapshot). */
+function longSession(first: EventView, frozen = false) {
+  let now = 0;
+  const at = (t: number) => void (now = t);
+  const s = createStore(() => now, { setTimeout: (() => 1) as never, clearTimeout: () => {} });
+  ingest(s, "snapshot", { ...serverSnapshot(0), events: [] });
+  ingest(s, "hb", { processing: { [V]: true } });
+  if (frozen) ingest(s, "tm", { ...frame(1), frozen: true });
+  at(2500);
+  ingest(s, "link", { event: first });
+  for (let i = 0; i < 210; i++) ingest(s, "link", { event: eventView(`GAP/${W}/late/${i}`, { kind: "GAP", vehicle: W }) });
+  expect(s.events().some((e) => e.key === first.key)).toBe(false); // out of the list
+  at(5000);
+  ingest(s, "hb", { processing: { [V]: false } });
+  at(15_000);
+  ingest(s, "hb", { processing: { [V]: true } });
+  return { s, at, cond: (t: number) => vehicleCondition(s, V, t) };
+}
+
+test("an open LOS pushed out of the event list by 200+ later events still shows at once after an in-place owner resume, toned", () => {
+  const { s, cond } = longSession(LOS);
+  for (let t = 15_000; t <= 17_000; t += 100) expect(cond(t), `up + ${t - 15_000} ms`).toBe("LOSS OF SIGNAL");
+  expect(toneActive(s)).toEqual({ [LOS.key]: "LOS" });
+});
+
+test("a FROZEN pushed out of the event list keeps its tone after an in-place owner resume", () => {
+  const FROZEN = eventView("FROZEN/NYX-TA1/e/0", { kind: "FROZEN", vehicle: V });
+  const { s, at } = longSession(FROZEN, true);
+  at(15_000);
+  ingest(s, "tm", { ...frame(2), frozen: true }); // still frozen
+  expect(toneActive(s)).toEqual({ [FROZEN.key]: "FROZEN" });
+});
+
+test("an AOS after the LOS clears it, even with the LOS long out of the event list", () => {
+  const { s, at, cond } = longSession(LOS);
+  at(15_500);
+  ingest(s, "tm", frame(3));
+  ingest(s, "link", { event: eventView("AOS/NYX-TA1/e/0", { kind: "AOS", vehicle: V }) });
+  expect(cond(15_600)).toBeNull();
+  expect(toneActive(s)).toEqual({});
+});
+
+test("a snapshot without a vehicle's link or FROZEN event keeps the store's; one with them replaces it", () => {
+  const { s } = longSession(LOS);
+  ingest(s, "snapshot", { ...serverSnapshot(15_000), events: [] });
+  expect(s.lastLink(V)?.key).toBe(LOS.key);
+  const aos = eventView("AOS/NYX-TA1/e/1", { kind: "AOS", vehicle: V });
+  ingest(s, "snapshot", { ...serverSnapshot(15_000), events: [aos] });
+  expect(s.lastLink(V)?.key).toBe(aos.key);
+});

@@ -86,7 +86,7 @@ async def test_snapshot_has_alarms_commands_events_frozen(live_api: LiveApi) -> 
     assert a is not None and [x["alarm_id"] for x in snap["alarms"]] == [str(a["alarm_id"])]
     assert [c["cmd_id"] for c in snap["commands"][:2]] == [str(cmds[1]), str(cmds[0])]
     assert [e["key"] for e in snap["events"][:2]] == [keys[1], keys[0]]  # newest first
-    assert len(snap["commands"]) <= 50 and len(snap["events"]) <= hub_mod.SNAPSHOT_EVENTS + 1
+    assert len(snap["commands"]) <= 50 and len(snap["events"]) <= hub_mod.SNAPSHOT_EVENTS + 2
     kinds = {e["kind"] for e in snap["events"] if e["vehicle"] == v}
     assert {"FROZEN", "LIMITS_APPLIED"} <= kinds
     tm = snap["vehicles"][v]
@@ -95,19 +95,21 @@ async def test_snapshot_has_alarms_commands_events_frozen(live_api: LiveApi) -> 
 
 async def test_snapshot_carries_each_vehicles_open_los_past_the_newest_events() -> None:
     """An old open LOS (it carries its last frame's time) falls out of the newest SNAPSHOT_EVENTS
-    after enough other events; the snapshot still carries each vehicle's newest LOS/AOS event, so
-    a console never hides or un-tones a loss the server keeps open (item E)."""
+    after enough other events; the snapshot still carries each vehicle's newest LOS/AOS and
+    FROZEN event, so a console never hides or un-tones a loss the server keeps open (E, F)."""
     v, w, t = vid(), vid(), now() - timedelta(minutes=10)  # past times: other tests' newest win
     los = GroundEvent(f"LOS/{v}/old", v, "LOS", t - timedelta(hours=1), {})
+    frozen = GroundEvent(f"FROZEN/{v}/old", v, "FROZEN", t - timedelta(hours=2), {})  # its tone key
     newer = [
         GroundEvent(f"GAP/{w}/{i}", w, "GAP", t + timedelta(seconds=i), {})
         for i in range(hub_mod.SNAPSHOT_EVENTS)
     ]
     aos_w = GroundEvent(f"AOS/{w}/new", w, "AOS", t + timedelta(minutes=1), {})
     async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as ac:
-        await insert_events(ac, [los, *newer, aos_w])
+        await insert_events(ac, [frozen, los, *newer, aos_w])
         snap = await hub_mod.build_snapshot(ac, [v, w], [TEMP], now())
     keys = [e.key for e in snap.events]
     assert los.key not in keys[: hub_mod.SNAPSHOT_EVENTS] and keys.count(los.key) == 1
     assert keys.count(aos_w.key) == 1  # once, whether among the newest or carried
-    assert keys[-1] == los.key  # older than every newest event: newest first is kept
+    assert keys.count(frozen.key) == 1
+    assert keys[-2:] == [los.key, frozen.key]  # older than every newest event: newest first is kept

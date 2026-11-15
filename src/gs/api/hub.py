@@ -37,8 +37,8 @@ CLIENT_QUEUE = 1000  # SSE frames buffered per client before it is closed
 RETRY_S = 1.0  # between XREAD attempts while the broker is down
 HB_S = 1.0  # hb:veh:<v> poll period (the SSE hb carries the result)
 SNAPSHOT_COMMANDS = 50  # per vehicle (ruling R-r)
-SNAPSHOT_EVENTS = 50  # newest overall, plus each vehicle's newest LOS/AOS (build_snapshot)
-LINK_KINDS = ("LOS", "AOS")
+SNAPSHOT_EVENTS = 50  # newest overall, plus each vehicle's newest LOS/AOS and FROZEN
+CARRIED_KINDS = (("LOS", "AOS"), ("FROZEN",))  # build_snapshot: one newest event per vehicle each
 EPOCH = datetime(1970, 1, 1, tzinfo=UTC)
 BLOCK_MS = 1000
 STALE_S = 3.0  # no reader pass for this long: it hangs; consoles get ground{down}
@@ -89,19 +89,20 @@ async def build_snapshot(
 ) -> Snapshot:
     """Last values (with FROZEN), the open alarms of each vehicle, and the newest
     SNAPSHOT_COMMANDS commands and SNAPSHOT_EVENTS events overall (+ each vehicle's newest
-    LOS/AOS), newest first (ruling R-r;
+    LOS/AOS and FROZEN), newest first (ruling R-r;
     the console keeps the order). The one snapshot function for connect, reconnect, resync,
     broker up and overflow (D-UI-02)."""
     alarms: list[AlarmView] = []
     for v in vehicles:
         alarms += await alarm_views(conn, vehicle=v)
     events = await event_views(conn, limit=SNAPSHOT_EVENTS)
-    # + each vehicle's newest LOS/AOS when it fell out of the newest (an open LOS carries its
-    # last frame's time): the console's LOS banner and tone read it. Older than every event
-    # above, so appending keeps newest first.
+    # + each vehicle's newest LOS/AOS and FROZEN when they fell out of the newest (an open LOS
+    # carries its last frame's time): the console's LOS banner and its LOS / FROZEN tones read
+    # them. Older than every event above, so appending keeps newest first.
     keys, links = {e.key for e in events}, list[EventView]()
     for v in vehicles:
-        links += await event_views(conn, vehicle=v, kinds=LINK_KINDS, limit=1)
+        for kinds in CARRIED_KINDS:
+            links += await event_views(conn, vehicle=v, kinds=kinds, limit=1)
     old = [e for e in links if e.key not in keys]
     events += sorted(old, key=lambda e: e.t_onboard or EPOCH, reverse=True)
     return Snapshot(

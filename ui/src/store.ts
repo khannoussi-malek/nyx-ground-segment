@@ -50,7 +50,22 @@ export function createStore(
     notify();
   };
   const trim = (list: readonly EventView[]) => list.slice(0, EVENTS_KEPT);
-  const lastLink = (v: string) => events.find((e) => e.vehicle === v && (e.kind === "LOS" || e.kind === "AOS"));
+  // per vehicle, the newest LOS/AOS and FROZEN event, kept apart from the 200-event list: the LOS banner and the
+  // LOS / FROZEN tones read them, and a long session's later events must not push an open one out
+  let links: Readonly<Record<string, EventView>> = {};
+  let frozenEvents: Readonly<Record<string, EventView>> = {};
+  const isLink = (e: EventView) => e.kind === "LOS" || e.kind === "AOS";
+  /** Newest first: the first one per vehicle wins; a vehicle without one keeps `held`. */
+  const newest = (list: readonly EventView[], pick: (e: EventView) => boolean, held: Readonly<Record<string, EventView>>) => {
+    const out = { ...held };
+    const fresh = new Set<string>();
+    for (const e of list) {
+      if (!e.vehicle || !pick(e) || fresh.has(e.vehicle)) continue;
+      fresh.add(e.vehicle);
+      out[e.vehicle] = e;
+    }
+    return out;
+  };
   return {
     applySnapshot(s: Snapshot): void {
       const now = clock();
@@ -59,6 +74,8 @@ export function createStore(
       alarmT = Object.fromEntries((s.alarms ?? []).map((a) => [a.alarm_id, ms(a.last.t)]));
       commands = [...(s.commands ?? [])];
       events = trim(s.events ?? []);
+      links = newest(s.events ?? [], isLink, links);
+      frozenEvents = newest(s.events ?? [], (e) => e.kind === "FROZEN", frozenEvents);
       seen = new Set(events.map((e) => e.key));
       snapshotSeen = true;
       set({ ...s.vehicles });
@@ -93,6 +110,8 @@ export function createStore(
       if (seen.has(e.key)) return;
       seen = new Set([...seen, e.key]);
       events = trim([e, ...events]);
+      if (e.vehicle && isLink(e)) links = { ...links, [e.vehicle]: e };
+      if (e.vehicle && e.kind === "FROZEN") frozenEvents = { ...frozenEvents, [e.vehicle]: e };
       notify();
     },
     setGround(b: "up" | "down"): void {
@@ -143,11 +162,13 @@ export function createStore(
     events: (): readonly EventView[] => events,
     link: (): Link => link,
     /** The vehicle's newest LOS or AOS event: a LOS here is open on the server. */
-    lastLink: (v: string): EventView | undefined => lastLink(v),
+    lastLink: (v: string): EventView | undefined => links[v],
+    /** The vehicle's newest FROZEN event (its tone key). */
+    lastFrozen: (v: string): EventView | undefined => frozenEvents[v],
     /** When the broker and this vehicle's owner were last both back after an outage; null if neither ever was down,
      *  or if the vehicle's LOS is open (it was lost before the outage: no grace hides it). */
     healthySince(v: string): number | null {
-      if (lastLink(v)?.kind === "LOS") return null;
+      if (links[v]?.kind === "LOS") return null;
       const ts = [brokerUpAt, ownerUpAt[v] ?? null].filter((t): t is number => t !== null);
       return ts.length > 0 ? Math.max(...ts) : null;
     },

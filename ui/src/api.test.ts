@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { ackAlarm, listCommands, login, logout, me, missionDb, sendCommand } from "./api";
+import { ackAlarm, fetchBuckets, listCommands, login, logout, me, missionDb, sendCommand } from "./api";
 
 const stub = (status: number, body?: unknown) => {
   const f = vi.fn(async () => new Response(body === undefined ? null : JSON.stringify(body), { status }));
@@ -124,4 +124,16 @@ test("listCommands: GET with the vehicle filter, throws on an error status", asy
   expect(f).toHaveBeenLastCalledWith("/api/commands", { credentials: "same-origin" });
   stub(503);
   await expect(listCommands()).rejects.toThrow("503");
+});
+
+test("fetchBuckets: from, to and the pixel width in the query; throws on an error status", async () => {
+  const f = stub(200, [{ t: "2026-11-14T10:00:00Z", n: 1, first: 1, last: 1, lo: 1, hi: 1, mean: 1 }]);
+  const got = await fetchBuckets("NYX-TA1", "cabin_pressure_kpa", "2026-11-14T10:00:00.000Z", "2026-11-14T10:02:00.000Z", 800);
+  expect(got).toHaveLength(1);
+  expect(f).toHaveBeenCalledWith(
+    "/api/telemetry/NYX-TA1/cabin_pressure_kpa?from=2026-11-14T10%3A00%3A00.000Z&to=2026-11-14T10%3A02%3A00.000Z&width=800",
+    { credentials: "same-origin" },
+  );
+  stub(400);
+  await expect(fetchBuckets("v", "p", "a", "b", 1)).rejects.toThrow("400");
 });

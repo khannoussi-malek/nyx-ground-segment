@@ -3,6 +3,7 @@ import { logout, me, missionDb, type MissionDb } from "./api";
 import { armAudio, beep, beepsFor, tone, toneActive, toneKeys, type ToneState } from "./audio";
 import { sessionKeySet } from "./keySet";
 import { AlarmList } from "./AlarmList";
+import { ChartPanel } from "./Chart";
 import { CommandPanel } from "./CommandPanel";
 import { EventStrip } from "./EventStrip";
 import { LiveTable } from "./LiveTable";
@@ -124,6 +125,7 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
       <main>
         <LiveTable store={store} mission={mission} />
       </main>
+      <ChartPanel store={store} mission={mission} />
       <EventStrip store={store} />
     </div>
   );

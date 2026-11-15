@@ -166,6 +166,16 @@ dialog.ack [role="alert"], dialog.confirm [role="alert"] { color: var(--red); fo
 .timeline .outcome { margin: 0; font-weight: 600; }
 dialog.confirm .hazard { border-left: 4px solid var(--red); padding-left: 0.5rem; color: var(--red); font-weight: 600; }
 
+/* chart */
+.chart-panel { padding: 0 1.5rem 1rem; }
+.chart-panel h2 { margin: 0 0 0.5rem; font-size: 1rem; }
+.chart-panel .filters { display: flex; gap: 1rem; margin-bottom: 0.5rem; font-size: 0.875rem; }
+.chart-panel .filters label { display: flex; gap: 0.5rem; align-items: center; }
+.chart .windows { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+.chart .windows button[aria-pressed="true"] { outline: 2px solid var(--focus); outline-offset: 2px; }
+.chart [role="alert"] { color: var(--red); font-weight: 600; }
+.chart .plot { width: 100%; }
+
 /* event strip */
 .events { padding: 0 1.5rem 1.5rem; }
 .events h2 { margin: 0 0 0.5rem; font-size: 1rem; }

@@ -107,3 +107,13 @@ export async function listCommands(vehicle?: string): Promise<CommandView[]> {
   if (!r.ok) throw fail("commands", r);
   return (await r.json()) as CommandView[];
 }
+
+export type Bucket = components["schemas"]["Bucket"];
+
+/** M4 buckets for one parameter (D-DB-04): `width` is the plot's pixel width, the server picks the bucket from it. */
+export async function fetchBuckets(vehicle: string, param: string, fromIso: string, toIso: string, width: number): Promise<Bucket[]> {
+  const q = new URLSearchParams({ from: fromIso, to: toIso, width: String(width) });
+  const r = await fetch(`/api/telemetry/${encodeURIComponent(vehicle)}/${encodeURIComponent(param)}?${q}`, { credentials: "same-origin" });
+  if (!r.ok) throw fail("telemetry", r);
+  return (await r.json()) as Bucket[];
+}

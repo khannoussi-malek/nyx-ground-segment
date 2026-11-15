@@ -11,12 +11,14 @@ from uuid import UUID, uuid4
 
 import psycopg
 import pytest
+import redis.exceptions
 
 import gs.commanding.tracker as tracker_mod
 from gs.commanding.decide import Change, CmdRow
 from gs.commanding.tracker import LATE_WINDOW_S, TCACK_COUNT, apply_change, track_pass
 from gs.common.interfaces.render import schema_sha12
 from gs.common.interfaces.streams import Tc, TcAck
+from gs.common.uievents import publish_ui
 from gs.common.views import command_views
 from gs.ingest.events import late_key, mismatch_key
 from gs.ingest.liveness import ingest_status
@@ -278,6 +280,33 @@ async def test_cmd_messages_published() -> None:
     assert [m["command"]["state"] for m in mine] == ["RECEIVED"]  # one per change
     for m in mine:
         validate_ui_event(m)
+
+
+async def test_unpublished_cmd_change_flushed_next_pass(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Final review F2: a committed change whose publish failed is held and published first on
+    the next pass (the frame path's `unsent`); re-reading its tcack changes nothing, so without
+    the hold the console never sees it."""
+    failed: list[list[str]] = []
+
+    async def once_down(r: Any, msgs: Any) -> None:
+        if msgs and not failed:
+            failed.append([type(m).__name__ for m in msgs])
+            raise redis.exceptions.ConnectionError("broker down")
+        await publish_ui(r, msgs)
+
+    monkeypatch.setattr(tracker_mod, "publish_ui", once_down)
+    v = vid()
+    cmd_id = insert_cmd(v)
+    tcack(v, cmd_id, now())
+
+    def mine() -> list[dict[str, Any]]:
+        msgs = [json.loads(f["data"]) for _, f in stream_entries("ui:events")]
+        return [m for m in msgs if m["kind"] == "cmd" and m["command"]["cmd_id"] == str(cmd_id)]
+
+    async with worker([v]):
+        await until(lambda: bool(mine()), 5)
+    assert failed == [["Cmd"]] and row_of(v, cmd_id)["state"] == "RECEIVED"
+    assert [m["command"]["state"] for m in mine()] == ["RECEIVED"]
 
 
 async def test_late_verification_publishes_link() -> None:  # P-pf9, Task 27b

@@ -225,8 +225,9 @@ async def test_tracker_runs_every_pass_caught_up_after_a_short_read(
 ) -> None:  # contract table + P-pf2: caught_up only after a `>` read below COUNT
     calls: list[tuple[str, bool, int]] = []
 
-    async def track(ctx: Any, conn: Any, vehicle: str, caught_up: bool) -> None:
+    async def track(ctx: Any, conn: Any, vehicle: str, caught_up: bool) -> list[Any]:
         calls.append((vehicle, caught_up, stored(vehicle)))
+        return []
 
     monkeypatch.setattr(worker_mod, "track_pass", track)
     v = vid()
@@ -239,7 +240,7 @@ async def test_tracker_runs_every_pass_caught_up_after_a_short_read(
 
 
 async def test_tracker_error_never_stops_the_worker(monkeypatch: pytest.MonkeyPatch) -> None:
-    async def broken(ctx: Any, conn: Any, vehicle: str, caught_up: bool) -> None:
+    async def broken(ctx: Any, conn: Any, vehicle: str, caught_up: bool) -> list[Any]:
         raise RuntimeError("tracker bug")
 
     monkeypatch.setattr(worker_mod, "track_pass", broken)
@@ -255,8 +256,9 @@ async def test_tracker_error_never_stops_the_worker(monkeypatch: pytest.MonkeyPa
 async def test_tracker_runs_after_a_redis_error_pass(monkeypatch: pytest.MonkeyPatch) -> None:
     log: list[object] = []
 
-    async def track(ctx: Any, conn: Any, vehicle: str, caught_up: bool) -> None:
+    async def track(ctx: Any, conn: Any, vehicle: str, caught_up: bool) -> list[Any]:
         log.append(("track", caught_up))
+        return []
 
     monkeypatch.setattr(worker_mod, "track_pass", track)
     v = vid()

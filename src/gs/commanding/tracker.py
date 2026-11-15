@@ -28,6 +28,7 @@ from gs.common.interfaces.dlq import DlqRecord, schema_reject
 from gs.common.interfaces.render import schema_sha12
 from gs.common.interfaces.sse import Cmd, EventView, Link
 from gs.common.interfaces.streams import ACK_SCHEMA, Tc, TcAck
+from gs.common.interfaces.ui_event import UiMessage
 from gs.common.missiondb import RECEIVE_TIMEOUT_MAX_S, VERIFY_TIMEOUT_MAX_S
 from gs.common.uievents import publish_ui
 from gs.common.views import command_views
@@ -254,21 +255,23 @@ async def _decide_all(
 
 async def track_pass(
     ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, caught_up: bool
-) -> None:
+) -> list[UiMessage]:
     """`caught_up`: this pass did the `>` read and got fewer than COUNT entries (P-pf2); only
     then, and with no tcack backlog left, may timeouts be judged. Never raises: a tracker error
-    rolls back, is logged and counted, and its entries are read again next pass (D-ING-24)."""
+    rolls back, is logged and counted, and its entries are read again next pass (D-ING-24).
+    Returns the messages of committed changes it could not publish: a re-read changes nothing,
+    so the owner holds them with its own unsent ones and publishes them first next pass."""
     stream = f"tcack:{vehicle}"
     try:  # D-ING-12: a stolen owner must not pull tcack entries into its PEL either
         await fence(conn)
     except OperationalDbError as e:
         log.warning("tracker skipped for %s: %s", vehicle, e, extra={"vehicle": vehicle})
-        return
+        return []
     try:
         read = await _read(ctx, vehicle)
     except redis.exceptions.RedisError as e:
         log.warning("tcack read failed for %s: %s", vehicle, e, extra={"vehicle": vehicle})
-        return
+        return []
     try:
         changed, held, inserted = await _decide_all(
             ctx, conn, vehicle, read, caught_up and read.caught_up
@@ -276,24 +279,27 @@ async def track_pass(
     except Exception:  # noqa: BLE001  D-CMD-05: any SQLSTATE is rolled back, never re-raised
         log.exception("command tracker pass failed for %s", vehicle, extra={"vehicle": vehicle})
         ctx.counters["cmd_tracker_errors"] += 1
-        return
+        return []
     done = [eid for eid, cid in read.entries if cid not in held]
     rejected = [read.dlq[eid] for eid in done if eid in read.dlq]
+    links: list[UiMessage] = [
+        Link(
+            event=EventView(
+                key=e.key,
+                vehicle=e.vehicle,
+                kind=e.kind,
+                t_onboard=e.t_onboard,
+                details=json.loads(details_json(e.details)),  # UUIDs and times as JSON
+            )
+        )
+        for e in inserted
+    ]
+    unsent = links  # ponytail: a failed view read drops its Cmd messages until a snapshot
     try:  # publish, then DLQ + ack in one MULTI: the frame path's order (D-ING-05)
         views = await command_views(conn, cmd_ids=changed, limit=None) if changed else []
-        links = [
-            Link(
-                event=EventView(
-                    key=e.key,
-                    vehicle=e.vehicle,
-                    kind=e.kind,
-                    t_onboard=e.t_onboard,
-                    details=json.loads(details_json(e.details)),  # UUIDs and times as JSON
-                )
-            )
-            for e in inserted
-        ]
-        await publish_ui(ctx.redis, [*(Cmd(command=v) for v in views), *links])
+        unsent = [*(Cmd(command=v) for v in views), *links]
+        await publish_ui(ctx.redis, unsent)
+        unsent = []
         if done:
             pipe = ctx.redis.pipeline(transaction=True)
             for rec in rejected:
@@ -303,3 +309,4 @@ async def track_pass(
             ctx.counters["interface_mismatch"] += len(rejected)  # /healthz degraded (D-ING-27)
     except (redis.exceptions.RedisError, psycopg.Error) as e:  # re-read, re-judged idempotently
         log.warning("tcack publish/ack failed for %s: %s", vehicle, e, extra={"vehicle": vehicle})
+    return unsent

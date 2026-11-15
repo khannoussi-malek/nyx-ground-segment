@@ -11,10 +11,10 @@ import pytest
 
 from gs.api import alarms
 from gs.api.app import create_app
-from gs.ingest.acks import ACK_PROPAGATION_S
+from gs.ingest import acks
 from tests.support.env import dotenv, now, until, vid
 from tests.support.http import CLIENT_HEADERS, FC2_PW, api_settings, authed, get_json
-from tests.support.ingest import worker
+from tests.support.ingest import owned, worker
 from tests.support.pg import app_dsn, audit_rows, open_alarm, rows
 from tests.support.redisx import drained, produce_values
 
@@ -31,7 +31,6 @@ async def alarm_of(v: str, value: float, nominal_after: int = 0) -> str:
             lambda: drained(v) and bool(rows("select 1 from alarms where vehicle=%s", v)), 5
         )
     (a,) = rows("select alarm_id from alarms where vehicle=%s", v)
-    await asyncio.sleep(ACK_PROPAGATION_S)  # on screen long enough to be acknowledged
     return str(a["alarm_id"])
 
 
@@ -42,8 +41,19 @@ async def ack(
     return await c.post(f"/api/alarms/{alarm_id}/ack", json=body)
 
 
+def applied(alarm_id: str) -> bool:
+    q = "select status from alarm_ack_request where alarm_id=%s"
+    return [r["status"] for r in rows(q, alarm_id)] == ["applied"]
+
+
 def ack_audits(rid: str) -> list[dict[str, Any]]:
     return [r for r in audit_rows("ALARM_ACK") if r["details"].get("request_id") == rid]
+
+
+@pytest.fixture(autouse=True)
+def no_margin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not about P-pf42b (test_alarm_ack_api.py covers it): no 2 s margin, no host timing."""
+    monkeypatch.setattr(acks, "ACK_PROPAGATION_S", 0.0)
 
 
 @pytest.fixture
@@ -58,7 +68,6 @@ async def test_ack_202_pending_then_applied(app: Any) -> None:
         await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
         a = open_alarm(v, TEMP)
         assert a is not None
-        await asyncio.sleep(ACK_PROPAGATION_S)
         rid = str(uuid.uuid4())
         r = await ack(c, str(a["alarm_id"]), rid=rid)
         assert (r.status_code, r.json()) == (202, {"request_id": rid, "status": "pending"})
@@ -93,11 +102,12 @@ async def test_ack_errors(app: Any) -> None:
     async with authed(app) as c:
         blank = await ack(c, aid, note="   ")
         unknown = await ack(c, str(uuid.uuid4()))
-        acked = await ack(c, aid)
-        assert acked.status_code == 202
-        produce_values(v, {TEMP: [22.0] * 5}, start_seq=10, base=now() - timedelta(minutes=1))
-        async with worker([v]):  # applies the ACK, then 3 nominal frames clear the alarm
-            await until(lambda: open_alarm(v, TEMP) is None, 5)
+        async with owned(v):  # a running owner (a takeover supersedes earlier requests)
+            acked = await ack(c, aid)
+            assert acked.status_code == 202
+            await until(lambda: applied(aid), 3)
+            produce_values(v, {TEMP: [22.0] * 5}, start_seq=10, base=now() - timedelta(minutes=1))
+            await until(lambda: open_alarm(v, TEMP) is None, 5)  # 3 nominal frames clear it
         cleared = await ack(c, aid)
     got = [(r.status_code, r.json()["error"]) for r in (blank, unknown, cleared)]
     assert got == [(422, "NOTE_REQUIRED"), (404, "ALARM_NOT_FOUND"), (409, "ALARM_CLEARED")]
@@ -111,9 +121,9 @@ async def test_list_filters(app: Any) -> None:
     red_id, yellow_id = await alarm_of(red, 31.0), await alarm_of(yellow, 28.0)
     gone_id = await alarm_of(gone, 28.0, nominal_after=5)  # RTN_UNACK
     async with authed(app) as c:
-        assert (await ack(c, gone_id)).status_code == 202
-        async with worker([gone]):  # ACK of a returned alarm clears it
-            await until(lambda: open_alarm(gone, TEMP) is None, 5)
+        async with owned(gone):
+            assert (await ack(c, gone_id)).status_code == 202
+            await until(lambda: open_alarm(gone, TEMP) is None, 5)  # ACK of RTN_UNACK clears
 
         async def ids(query: str) -> set[str]:
             return {a["alarm_id"] for a in await get_json(c, f"/api/alarms?{query}")}
@@ -177,10 +187,41 @@ async def test_repeat_after_cleared_returns_stored_status(app: Any) -> None:
     aid = await alarm_of(v, 31.0)
     rid = str(uuid.uuid4())
     async with authed(app) as c:
-        assert (await ack(c, aid, rid=rid)).status_code == 202
-        produce_values(v, {TEMP: [22.0] * 5}, start_seq=10, base=now() - timedelta(minutes=1))
-        async with worker([v]):  # applies the ACK, then the nominal frames clear the alarm
+        async with owned(v):
+            assert (await ack(c, aid, rid=rid)).status_code == 202
+            await until(lambda: applied(aid), 3)
+            produce_values(v, {TEMP: [22.0] * 5}, start_seq=10, base=now() - timedelta(minutes=1))
             await until(lambda: open_alarm(v, TEMP) is None, 5)
         again = await ack(c, aid, rid=rid)
     assert (again.status_code, again.json()) == (202, {"request_id": rid, "status": "applied"})
+    assert len(ack_audits(rid)) == 1
+
+
+async def test_request_id_reused_concurrently_is_422(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:  # the twin path: both looked before either inserted
+    a, b = vid(), vid()
+    aid, bid = await alarm_of(a, 31.0), await alarm_of(b, 31.0)
+    rid = str(uuid.uuid4())
+    real, looked, both = alarms._stored, set[Any](), asyncio.Event()
+
+    async def after_both_looked(conn: Any, *args: Any) -> Any:
+        first = args[1] not in looked  # args: rid, alarm_id, user, note
+        looked.add(args[1])
+        if first:  # hold each request's first lookup until the other one made its own
+            if len(looked) == 2:
+                both.set()
+            await asyncio.wait_for(both.wait(), 5)
+            return None  # neither row existed when they looked
+        return await real(conn, *args)
+
+    monkeypatch.setattr(alarms, "_stored", after_both_looked)
+    async with authed(app) as c:
+        r1, r2 = await asyncio.gather(ack(c, aid, rid=rid), ack(c, bid, rid=rid))
+    got = sorted((r.status_code, r.json().get("error")) for r in (r1, r2))
+    assert got == [(202, None), (422, "REQUEST_ID_REUSED")]
+    winner = aid if r1.status_code == 202 else bid
+    assert rows("select alarm_id from alarm_ack_request where request_id=%s", rid) == [
+        {"alarm_id": uuid.UUID(winner)}
+    ]
     assert len(ack_audits(rid)) == 1

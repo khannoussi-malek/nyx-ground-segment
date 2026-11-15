@@ -14,13 +14,14 @@ import pytest
 import redis.exceptions
 from psycopg import sql
 
-from gs.common.interfaces.sse import Alarm, Tm
+from gs.common.interfaces.sse import Alarm
 from gs.common.uievents import publish_ui
+from gs.ingest import acks
 from gs.ingest import worker as worker_mod
 from gs.ingest.acks import ACK_PROPAGATION_S, CHANGED, pending_acks
 from gs.ingest.worker import Timing, load_state, process_batch
 from tests.support.env import now, until, vid
-from tests.support.ingest import make_ctx, worker
+from tests.support.ingest import make_ctx, owned, worker
 from tests.support.pg import (
     ack_requests_for,
     alarm_events_for,
@@ -40,15 +41,23 @@ NOMINAL5 = {TEMP: [22.0] * 5}
 
 
 async def red_alarm(v: str, base: datetime) -> uuid.UUID:
-    """A RED cabin_temp_c alarm raised and committed by a worker that has stopped again, and
-    on screen long enough to be acknowledged (P-pf42b)."""
+    """A RED cabin_temp_c alarm raised and committed by a worker that has stopped again."""
     produce_values(v, RED_STEP, base=base)
     async with worker([v]):
         await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
     a = open_alarm(v, TEMP)
     assert a is not None
-    await asyncio.sleep(ACK_PROPAGATION_S)
     return uuid.UUID(str(a["alarm_id"]))
+
+
+@pytest.fixture
+def no_margin(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tests not about P-pf42b: no 2 s propagation margin (no sleeps, no host-clock timing)."""
+    monkeypatch.setattr(acks, "ACK_PROPAGATION_S", 0.0)
+
+
+def settled(v: str) -> bool:
+    return "pending" not in {s for s, _ in status(v).values()}
 
 
 def request(
@@ -77,12 +86,6 @@ def db_now() -> datetime:
     return t
 
 
-async def drain(v: str, **kw: Any) -> None:
-    """Run a worker until tm:<v> is drained and no request of v is pending."""
-    async with worker([v], **kw):
-        await until(lambda: drained(v) and "pending" not in {s for s, _ in status(v).values()}, 5)
-
-
 async def one_batch(v: str) -> None:
     """One owner pass by hand: state as at a takeover, the pending requests, every new entry of
     tm:<v> as ONE batch (so the requests and the frames share one frame transaction)."""
@@ -108,6 +111,7 @@ def applied_audits(ids: set[str]) -> list[dict[str, Any]]:
     return [r for r in audit_rows("ALARM_ACK_APPLIED") if r["details"]["request_id"] in ids]
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_ack_after_seq_is_owner_seq() -> None:  # D-ALM-14, R2-10
     v, base = vid(), now() - timedelta(minutes=1)
     aid = await red_alarm(v, base)
@@ -124,24 +128,27 @@ async def test_ack_after_seq_is_owner_seq() -> None:  # D-ALM-14, R2-10
     assert ack["id"] < clear["id"] and stored(v) == 15
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_ack_then_rtn_is_cleared() -> None:  # ACK then RTN gives CLEARED, not RTN_UNACK
     v, base = vid(), now() - timedelta(minutes=1)
     aid = await red_alarm(v, base)
-    request(v, aid)
-    produce_values(v, NOMINAL5, base=base, start_seq=10)
-    async with worker([v]):
+    async with owned(v):
+        request(v, aid)
+        await until(lambda: settled(v), 3)
+        produce_values(v, NOMINAL5, base=base, start_seq=10)
         await until(lambda: drained(v) and ("CLEAR", "system") in kinds(v), 5)
     assert kinds(v) == [("RAISE", "system"), ("ACK", "fc1"), ("CLEAR", "system")]
     (a,) = rows("select state, closed_at from alarms where alarm_id = %s", aid)
     assert a["state"] == "CLEARED" and a["closed_at"] is not None
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_second_ack_superseded() -> None:  # two operators
     v, base = vid(), now() - timedelta(minutes=1)
     aid = await red_alarm(v, base)
-    first, second = request(v, aid, user="fc1"), request(v, aid, user="fc2")
-    async with worker([v]):
-        await until(lambda: "pending" not in {s for s, _ in status(v).values()}, 5)
+    async with owned(v):
+        first, second = request(v, aid, user="fc1"), request(v, aid, user="fc2")
+        await until(lambda: settled(v), 5)
     assert status(v) == {first: ("applied", None), second: ("superseded", "already acked")}
     assert [k for k in kinds(v) if k[0] == "ACK"] == [("ACK", "fc1")]
     audits = applied_audits({first, second})
@@ -187,6 +194,7 @@ def boom(errcode: str) -> Iterator[str]:
             c.execute(sql.SQL("DROP FUNCTION {}()").format(fn))
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_bad_ack_request_never_blocks_frames(boom_trigger: str) -> None:  # R2-01
     v, base = boom_trigger, now() - timedelta(minutes=1)
     aid = await red_alarm(v, base)
@@ -203,16 +211,15 @@ async def test_bad_ack_request_never_blocks_frames(boom_trigger: str) -> None:  
     assert audits[good]["result"] == "applied"
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_plpgsql_raise_rejects_and_ingest_keeps_running() -> None:  # P-pf40
     with boom("P0001") as v:  # a trigger's plain RAISE EXCEPTION
         base = now() - timedelta(minutes=1)
         aid = await red_alarm(v, base)
-        bad, good = request(v, aid, note="BOOM"), request(v, aid)
-        produce_values(v, NOMINAL5, base=base, start_seq=10)
-        async with worker([v]) as w:
-            await until(
-                lambda: drained(v) and "pending" not in {s for s, _ in status(v).values()}, 5
-            )
+        async with owned(v) as w:
+            bad, good = request(v, aid, note="BOOM"), request(v, aid)
+            produce_values(v, NOMINAL5, base=base, start_seq=10)
+            await until(lambda: drained(v) and settled(v), 5)
             assert not w.done()  # no exit, no restart loop
         st = status(v)
         assert st[good] == ("applied", None) and st[bad][0] == "rejected"
@@ -221,6 +228,7 @@ async def test_plpgsql_raise_rejects_and_ingest_keeps_running() -> None:  # P-pf
         assert audits[bad]["result"] == "rejected" and audits[good]["result"] == "applied"
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_ack_applies_during_los() -> None:  # Review Focus 2: no frame to start a batch
     v, base = vid(), now() - timedelta(minutes=1)
     produce_values(v, RED_STEP, base=base)
@@ -228,13 +236,13 @@ async def test_ack_applies_during_los() -> None:  # Review Focus 2: no frame to 
         await until(lambda: open_alarm(v, TEMP) is not None and bool(events_for(v, "LOS")), 5)
         a = open_alarm(v, TEMP)
         assert a is not None
-        await asyncio.sleep(ACK_PROPAGATION_S)  # seen on screen first (P-pf42b)
         rid = request(v, uuid.UUID(str(a["alarm_id"])))
         await until(lambda: status(v).get(rid, ("",))[0] == "applied", 1.5)
     (ack,) = [r for r in alarm_events_for(v) if r["kind"] == "ACK"]
     assert ack["after_seq"] == 9  # the last stored frame
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_ack_published_as_alarm_message() -> None:
     v, base = vid(), now() - timedelta(minutes=1)
     produce_values(v, RED_STEP, base=base)
@@ -242,7 +250,6 @@ async def test_ack_published_as_alarm_message() -> None:
         await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
         a = open_alarm(v, TEMP)
         assert a is not None
-        await asyncio.sleep(ACK_PROPAGATION_S)  # seen on screen first (P-pf42b)
         rid = request(v, uuid.UUID(str(a["alarm_id"])))
         await until(lambda: any(m["alarm"]["state"] == "ACKED" for m in alarm_msgs(v)), 3)
     (m,) = [m for m in alarm_msgs(v) if m["alarm"]["state"] == "ACKED"]
@@ -257,15 +264,16 @@ async def test_ack_published_as_alarm_message() -> None:
 
 async def test_escalated_after_request_superseded() -> None:  # P-pf42
     v, base = vid(), now() - timedelta(minutes=1)
-    produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
-    await drain(v)  # YELLOW UNACK
-    a = open_alarm(v, TEMP)
-    assert a is not None and a["severity"] == "YELLOW"
-    asked = db_now()  # the operator saw YELLOW and sent the ACK ...
-    produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
-    await drain(v)  # ... the owner escalated to RED before applying it
-    rid = request(v, uuid.UUID(str(a["alarm_id"])), requested_at=asked)
-    await drain(v)
+    async with owned(v):  # one owner throughout: no takeover rule involved
+        produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
+        await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
+        a = open_alarm(v, TEMP)
+        assert a is not None and a["severity"] == "YELLOW"
+        asked = db_now()  # the operator saw YELLOW and sent the ACK ...
+        produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
+        await until(lambda: ("ESCALATE", "system") in kinds(v), 5)  # ... RED came first
+        rid = request(v, uuid.UUID(str(a["alarm_id"])), requested_at=asked)
+        await until(lambda: settled(v), 3)
     assert status(v) == {rid: ("superseded", "alarm changed since the request")}
     b = open_alarm(v, TEMP)
     assert b is not None and (b["state"], b["severity"]) == ("UNACK", "RED")
@@ -274,15 +282,16 @@ async def test_escalated_after_request_superseded() -> None:  # P-pf42
 
 async def test_reraised_after_request_superseded() -> None:  # P-pf42
     v, base = vid(), now() - timedelta(minutes=1)
-    produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5 + [22.0] * 5}, base=base)
-    await drain(v)  # RAISE, RTN: RTN_UNACK
-    a = open_alarm(v, TEMP)
-    assert a is not None and a["state"] == "RTN_UNACK"
-    asked = db_now()
-    produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=15)
-    await drain(v)  # raised again on the same alarm
-    rid = request(v, uuid.UUID(str(a["alarm_id"])), requested_at=asked)
-    await drain(v)
+    async with owned(v):
+        produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5 + [22.0] * 5}, base=base)
+        await until(lambda: ("RTN", "system") in kinds(v), 5)  # RTN_UNACK
+        a = open_alarm(v, TEMP)
+        assert a is not None and a["state"] == "RTN_UNACK"
+        asked = db_now()
+        produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=15)
+        await until(lambda: [k for k, _ in kinds(v)] == ["RAISE", "RTN", "RAISE"], 5)
+        rid = request(v, uuid.UUID(str(a["alarm_id"])), requested_at=asked)
+        await until(lambda: settled(v), 3)
     assert status(v) == {rid: ("superseded", "alarm changed since the request")}
     b = open_alarm(v, TEMP)
     assert b is not None and b["state"] == "UNACK"
@@ -314,6 +323,7 @@ def raising_on(table: str, column: str, value: str) -> Iterator[None]:
             c.execute(sql.SQL("DROP FUNCTION {}()").format(fn))
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_failed_reject_leaves_request_pending() -> None:  # fix round 1, item 3
     v, base = vid(), now() - timedelta(minutes=1)
     note = f"double boom {v}"
@@ -326,11 +336,10 @@ async def test_failed_reject_leaves_request_pending() -> None:  # fix round 1, i
     assert stored(v) == 15  # the frames still committed
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_acked_state_kept_after_publish_error(monkeypatch: pytest.MonkeyPatch) -> None:
     v, base = vid(), now() - timedelta(minutes=1)  # fix round 1, item 1
     aid = await red_alarm(v, base)
-    request(v, aid)
-    produce_values(v, NOMINAL5, base=base, start_seq=10)
     failed: list[bool] = []
 
     async def lose_acked(r: Any, msgs: Any) -> None:
@@ -340,31 +349,46 @@ async def test_acked_state_kept_after_publish_error(monkeypatch: pytest.MonkeyPa
         await publish_ui(r, msgs)
 
     monkeypatch.setattr(worker_mod, "publish_ui", lose_acked)
-    async with worker([v]):
+    async with owned(v):
+        request(v, aid)
+        await until(lambda: bool(failed), 3)  # the ACK committed, its publish lost
+        produce_values(v, NOMINAL5, base=base, start_seq=10)
         await until(lambda: drained(v) and ("CLEAR", "system") in kinds(v), 5)
         await until(lambda: any(m["alarm"]["state"] == "ACKED" for m in alarm_msgs(v)), 3)
     assert failed and kinds(v) == [("RAISE", "system"), ("ACK", "fc1"), ("CLEAR", "system")]
 
 
-async def yellow_alarm(v: str, base: datetime) -> uuid.UUID:
-    produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
-    await drain(v)
-    a = open_alarm(v, TEMP)
-    assert a is not None and a["severity"] == "YELLOW"
-    return uuid.UUID(str(a["alarm_id"]))
+async def ack_after_escalation(after_s: float) -> tuple[str, str]:
+    """YELLOW, ESCALATE to RED, then an ACK dated `after_s` after the ESCALATE was processed;
+    one owner throughout. Returns (vehicle, request_id)."""
+    v, base = vid(), now() - timedelta(minutes=1)
+    async with owned(v):
+        produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
+        await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
+        produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
+        await until(lambda: ("ESCALATE", "system") in kinds(v), 5)
+        (esc,) = rows(
+            "select alarm_id, processed_at from alarm_events where vehicle=%s and kind='ESCALATE'",
+            v,
+        )
+        at = esc["processed_at"] + timedelta(seconds=after_s)
+        rid = request(v, esc["alarm_id"], requested_at=at)
+        await until(lambda: settled(v), 3)
+    return v, rid
+
+
+def test_propagation_margin_is_two_seconds() -> None:  # pinned (P-pf42b)
+    assert ACK_PROPAGATION_S == 2.0
 
 
 async def test_escalation_just_before_request_superseded() -> None:  # P-pf42b rule 1
-    v, base = vid(), now() - timedelta(minutes=1)
-    aid = await yellow_alarm(v, base)
-    produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
-    await drain(v)
-    (esc,) = rows(
-        "select processed_at from alarm_events where alarm_id=%s and kind='ESCALATE'", aid
-    )
-    rid = request(v, aid, requested_at=esc["processed_at"] + timedelta(seconds=1))
-    await drain(v)
+    v, rid = await ack_after_escalation(1.0)
     assert status(v) == {rid: ("superseded", CHANGED)}
+
+
+async def test_request_past_the_margin_applies() -> None:  # the boundary's other side
+    v, rid = await ack_after_escalation(2.5)
+    assert status(v) == {rid: ("applied", None)}
 
 
 async def test_ack_during_held_escalation_superseded(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -393,6 +417,7 @@ async def test_ack_during_held_escalation_superseded(monkeypatch: pytest.MonkeyP
     assert status(v) == {rid: ("superseded", CHANGED)}  # measured from the late publish
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_whitespace_note_rejected_not_isolated() -> None:  # P-pf42b item 4
     v, base = vid(), now() - timedelta(minutes=1)
     aid = await red_alarm(v, base)
@@ -404,43 +429,78 @@ async def test_whitespace_note_rejected_not_isolated() -> None:  # P-pf42b item 
     assert stored(v) == 15 and [k for k, _ in kinds(v)] == ["RAISE", "RTN"]
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_stuck_rejection_logged_once(caplog: pytest.LogCaptureFixture) -> None:
     v, base = vid(), now() - timedelta(minutes=1)  # P-pf42b item 3
     note = f"stuck {v}"
     aid = await red_alarm(v, base)
-    request(v, aid, note=note)
     with (
         raising_on("alarm_events", "note", note),
         raising_on("audit_log", "reason", note),
         caplog.at_level(logging.ERROR, logger="gs.ingest.acks"),
     ):
-        async with worker([v]):
+        async with owned(v):
+            request(v, aid, note=note)
             await asyncio.sleep(3.5)  # several loop passes, each retrying the request
     stuck = [r for r in caplog.records if "could not be rejected" in r.getMessage()]
     assert len(stuck) == 1
 
 
+@pytest.mark.usefixtures("no_margin")
 async def test_frame_batch_with_ack_survives_publish_error(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:  # P-pf42b item 5: the frame path of Unpublished
+) -> None:  # P-pf42b item 5: the frame path of Unpublished, one owner pass at a time
     v, base = vid(), now() - timedelta(minutes=1)
     aid = await red_alarm(v, base)
-    request(v, aid)
+    rid = request(v, aid)
     produce_values(v, NOMINAL5, base=base, start_seq=10)
-    consumer = f"c-{v}"
-    assert len(read_without_ack(v, consumer)) == 5  # in its PEL: the first pass claims one
-    failed: list[bool] = []
 
-    async def lose_first_batch(r: Any, msgs: Any) -> None:
-        tm = any(isinstance(m, Tm) for m in msgs)
-        if not failed and tm and any(isinstance(m, Alarm) for m in msgs):
-            failed.append(True)  # one frame and the ACK, committed together
-            raise redis.exceptions.ConnectionError("test: publish lost after the commit")
+    async def lose(r: Any, msgs: Any) -> None:
+        raise redis.exceptions.ConnectionError("test: publish lost after the commit")
+
+    ctx, stream = make_ctx(f"c-{v}"), f"tm:{v}"
+    try:
+        async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as conn:
+            vs, _ = await load_state(ctx, conn, v)
+            entries = read_without_ack(v, f"c-{v}")
+            monkeypatch.setattr(worker_mod, "publish_ui", lose)
+            with pytest.raises(worker_mod.Unpublished) as lost:  # one frame and the ACK
+                await process_batch(ctx, conn, stream, entries[:1], vs, await pending_acks(conn, v))
+            assert status(v) == {rid: ("applied", None)}
+            assert any(isinstance(m, Alarm) and m.alarm.state == "ACKED" for m in lost.value.msgs)
+            monkeypatch.setattr(worker_mod, "publish_ui", publish_ui)
+            # the loop keeps the committed state and re-reads the pending entries
+            again = await pending_acks(conn, v)
+            await process_batch(ctx, conn, stream, entries, lost.value.vs, again)
+    finally:
+        await ctx.redis.aclose()
+    assert pending(v) == 0  # the redelivered frame acked as a duplicate, the rest stored
+    assert kinds(v) == [("RAISE", "system"), ("ACK", "fc1"), ("CLEAR", "system")]
+    assert len([r for r in alarm_events_for(v) if r["kind"] == "ACK"]) == 1 and stored(v) == 15
+
+
+async def test_ack_across_owner_restart_superseded(monkeypatch: pytest.MonkeyPatch) -> None:
+    v, base = vid(), now() - timedelta(minutes=1)  # re-review of 33a307b, item 1
+    held: list[bool] = []  # the broker stays down for the escalation's publish
+
+    async def hold_escalation(r: Any, msgs: Any) -> None:
+        if held or any(isinstance(m, Alarm) and m.alarm.last.kind == "ESCALATE" for m in msgs):
+            held.append(True)
+            raise redis.exceptions.ConnectionError("test: broker down")
         await publish_ui(r, msgs)
 
-    monkeypatch.setattr(worker_mod, "publish_ui", lose_first_batch)
-    async with worker([v], consumer=consumer):
-        await until(lambda: drained(v) and ("CLEAR", "system") in kinds(v), 8)
-    assert failed and pending(v) == 0
-    assert kinds(v) == [("RAISE", "system"), ("ACK", "fc1"), ("CLEAR", "system")]
-    assert len([r for r in alarm_events_for(v) if r["kind"] == "ACK"]) == 1
+    monkeypatch.setattr(worker_mod, "publish_ui", hold_escalation)
+    async with owned(v):
+        produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
+        await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
+        a = open_alarm(v, TEMP)
+        assert a is not None
+        produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
+        await until(lambda: bool(held), 5)  # ESCALATE committed, not published
+        await asyncio.sleep(2.5)  # past rule 1's margin from its processed_at
+        rid = request(v, uuid.UUID(str(a["alarm_id"])))  # the operator still sees YELLOW
+    assert status(v) == {rid: ("pending", None)}  # the owner went away, still holding it
+    monkeypatch.setattr(worker_mod, "publish_ui", publish_ui)  # the broker is back
+    async with worker([v]):  # the new owner flushes its Resync, then reads the request
+        await until(lambda: settled(v), 5)
+    assert status(v) == {rid: ("superseded", CHANGED)}

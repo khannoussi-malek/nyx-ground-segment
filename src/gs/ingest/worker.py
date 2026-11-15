@@ -162,10 +162,15 @@ def _links(events: Sequence[GroundEvent], vs: VehicleState) -> list[Link]:
     return out
 
 
-def _raised(msgs: Sequence[UiMessage]) -> set[UUID]:
-    """Alarms whose newest transition in `msgs` raises or escalates them."""
-    kinds = ("RAISE", "ESCALATE")
-    return {m.alarm.alarm_id for m in msgs if isinstance(m, Alarm) and m.alarm.last.kind in kinds}
+def _shown_now(msgs: Sequence[UiMessage], vs: VehicleState) -> set[UUID]:
+    """Alarms whose state reaches the consoles only with this (late) publish: every alarm in a
+    held message, whatever its last transition (an ESCALATE then RTN is still news), and after
+    a start or takeover (a Resync) every open alarm, since a new owner can't know what an
+    earlier one published (P-pf42b)."""
+    ids = {m.alarm.alarm_id for m in msgs if isinstance(m, Alarm)}
+    if any(isinstance(m, Resync) for m in msgs):
+        ids |= {a.alarm_id for a in vs.engine.alarms.values()}
+    return ids
 
 
 async def _ui(
@@ -502,7 +507,7 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
         try:
             if unsent:  # the first pass after load_state, or a pass after a Redis error
                 await publish_ui(ctx.redis, unsent)
-                late, unsent = _raised(unsent), []
+                late, unsent = _shown_now(unsent, vs), []
                 if late:  # their operators could see them only now: ACKs measure from here
                     shown |= dict.fromkeys(late, await db_now(conn))
             if not ready:

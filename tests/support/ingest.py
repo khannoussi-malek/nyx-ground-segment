@@ -2,6 +2,7 @@
 
 import asyncio
 import dataclasses
+import json
 import os
 import socket
 import subprocess
@@ -273,3 +274,22 @@ def kill_or_crash(case: str) -> None:
     wait_until(lambda: lock_holder("NYX-TA1") == "ingest-2", 15)
     wait_until(lambda: lock_holder("NYX-TA1") == "ingest-1", 30)  # hand-back, no 2nd crash
     assert restart_count("ingest-1") == 1  # the marker kept the hook from firing again
+
+
+def _resyncs(v: str) -> int:
+    entries: Any = client("admin").xrange("ui:events")
+    return sum(1 for _, f in entries if json.loads(f["data"]) == {"kind": "resync", "vehicle": v})
+
+
+@asynccontextmanager
+async def owned(v: str, **kw: Any) -> AsyncIterator[Running]:
+    """`worker([v])` past its first publish (the Resync flush): an ACK request made from here on
+    is newer than the takeover, which supersedes every earlier one (P-pf42b)."""
+    n = _resyncs(v)
+    async with worker([v], **kw) as w:
+        deadline = asyncio.get_running_loop().time() + 5
+        while _resyncs(v) == n:
+            assert asyncio.get_running_loop().time() < deadline, "no resync from the worker"
+            await asyncio.sleep(0.05)
+        await asyncio.sleep(0.2)  # the owner stamps the flush time just after publishing
+        yield w

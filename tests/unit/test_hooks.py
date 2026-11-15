@@ -154,3 +154,21 @@ def test_frame_hot_path_with_hooks_off(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(hooks_mod, "_frame_match", boom)
     Hooks().frame("NYX-TA1", 5)
+
+
+def test_archive_points_accepted(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("GS_TEST_HOOKS", "1")
+    for point in ("archive:after_put", "archive:after_reread"):
+        monkeypatch.setenv("CRASH_AT", point)
+        assert Hooks.from_env().crash_at == point
+        assert point in POINTS
+    for bad in ("archive:x", "archive:", "archive"):
+        monkeypatch.setenv("CRASH_AT", bad)
+        with pytest.raises(ConfigError, match="CRASH_AT"):
+            Hooks.from_env()
+    calls: list[int] = []
+    h = Hooks(crash_at="archive:after_put", marker_dir=tmp_path, exit=recorder(calls))  # type: ignore[arg-type]
+    h.fire("archive:after_reread")  # another point: nothing
+    with pytest.raises(Exited):
+        h.fire("archive:after_put")
+    assert calls == [99]

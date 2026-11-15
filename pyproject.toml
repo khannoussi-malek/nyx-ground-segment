@@ -9,6 +9,7 @@ dependencies = [
     "minio==7.2.20",
     "psycopg-pool==3.3.3",
     "psycopg[binary]==3.3.9",
+    "pyarrow==26.0.0",
     "pydantic==2.14.3",
     "pyyaml==6.0.3",
     "redis==8.1.0",
@@ -43,6 +44,10 @@ known-third-party = ["redis"]
 [tool.mypy]
 strict = true
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]  # no stubs, no py.typed
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration", "tests/meta"]

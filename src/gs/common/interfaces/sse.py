@@ -37,7 +37,7 @@ Outcome = Literal["NOT_SENT", "NOT_EXECUTED", "UNKNOWN", "RECEIVED_LATE", "EXECU
 class TransitionView(_Sse):
     key: str
     kind: TransitionKind
-    t: UtcTime  # trigger t_onboard, or the apply time of an ACK
+    t: UtcTime  # trigger t_onboard; an ACK: after_t_onboard (alarm views), apply time (report)
     alert: bool
     by_user: str
     note: str | None

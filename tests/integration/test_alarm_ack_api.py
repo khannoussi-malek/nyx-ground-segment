@@ -264,6 +264,28 @@ async def test_ack_published_as_alarm_message() -> None:
     assert (m["alarm"]["last"]["kind"], m["alarm"]["value"]) == ("ACK", 31.0)  # P-pf4
 
 
+@pytest.mark.usefixtures("no_margin")
+async def test_escalate_after_ack_orders_after_it() -> None:  # final review F1, D-ALM-14
+    """An ACK's last.t is its frame position (after_t_onboard), not its DB apply time: an
+    ESCALATE from a frame generated before the ACK was applied, processed after it, must still
+    be newer, or the console's stale-upsert guard drops it (ACKED YELLOW shown, UNACK RED held)."""
+    v, base = vid(), now() - timedelta(minutes=1)  # frames a minute behind the database clock
+    async with owned(v):
+        produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
+        await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
+        a = open_alarm(v, TEMP)
+        assert a is not None and a["severity"] == "YELLOW"
+        request(v, uuid.UUID(str(a["alarm_id"])))
+        await until(lambda: settled(v), 3)
+        produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
+        await until(lambda: any(m["alarm"]["last"]["kind"] == "ESCALATE" for m in alarm_msgs(v)), 5)
+    last = {m["alarm"]["last"]["kind"]: m["alarm"] for m in alarm_msgs(v)}
+    ack, esc = last["ACK"], last["ESCALATE"]
+    assert datetime.fromisoformat(ack["last"]["t"]) == base + timedelta(milliseconds=900)
+    assert esc["last"]["t"] >= ack["last"]["t"]  # fixed-width UTC strings compare in time order
+    assert (esc["state"], esc["severity"]) == ("UNACK", "RED")
+
+
 async def test_escalated_after_request_superseded() -> None:  # P-pf42
     v, base = vid(), now() - timedelta(minutes=1)
     async with owned(v):  # one owner throughout: no takeover rule involved

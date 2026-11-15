@@ -32,13 +32,16 @@ LIMIT %(limit)s
 """
 
 # last = newest alarm_events row; lv = newest row with a non-NOMINAL level, its value with it
-# (P-pf4), in every state, so a returned alarm still says what it was (P-pf20)
+# (P-pf4), in every state, so a returned alarm still says what it was (P-pf20). last.t is a
+# vehicle time for every kind: an ACK's is its stored frame position (after_t_onboard, D-ALM-14),
+# never its DB apply time, so the console's stale-upsert guard orders it among the transitions
 _ALARMS = """
 SELECT a.alarm_id, a.vehicle, a.param, a.state, a.severity, a.trigger_check, a.limits_sha256,
        a.set_sha256, a.opened_at, a.closed_at,
        lv.level, lv.value,
        last.key AS t_key, last.kind AS t_kind,
-       coalesce(last.trigger_t_onboard, last.processed_at) AS t_t, last.alert AS t_alert,
+       coalesce(last.trigger_t_onboard, last.after_t_onboard, last.processed_at) AS t_t,
+       last.alert AS t_alert,
        last.by_user AS t_by_user, last.note AS t_note, last.check_kind AS t_check_kind,
        last.level AS t_level, last.value AS t_value,
        r.request_id, r.by_user AS r_by_user, r.status AS r_status, r.status_reason

@@ -44,7 +44,8 @@ export function ConfirmDialog({ req, hazard, token, expiresInS, initialReason, o
   }, [expiresInS, opener]);
   async function confirm() {
     // a programmatic submit must not get past what the button enforces
-    if (inFlight.current || dead || !confirmEnabled(typed, req.vehicle, reason)) return;
+    // (the refs, not only `dead`: after an ambiguous result this handler runs once more before React re-renders)
+    if (inFlight.current || ambiguous.current || dead || !confirmEnabled(typed, req.vehicle, reason)) return;
     inFlight.current = true;
     setBusy(true);
     setError("");

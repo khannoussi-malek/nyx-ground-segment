@@ -108,7 +108,7 @@ test("a plain command (vehicle chosen explicitly): posted with the chosen vehicl
   expect(f).toHaveBeenCalledWith("/api/commands?vehicle=NYX-TA2", { credentials: "same-origin" });
   expect(store.commands()).toHaveLength(1);
   expect(host.querySelector('li[data-cmd-id="c9"]')!.textContent).toContain("isolate_valve (valve = A)");
-  expect(host.querySelector('[role="status"]')!.textContent).toBe("Command queued for NYX-TA2");
+  expect(host.querySelector('[role="status"]')!.textContent).toBe("isolate_valve queued for NYX-TA2");
 });
 
 test("a failing list refresh is logged, not fatal", async () => {
@@ -179,7 +179,7 @@ test("confirm posts the same body with the token and the reason, then closes and
     { vehicle: "NYX-TA2", name: "vent_cabin", args: { duration_s: 3 }, confirm_token: "tok1", reason: "venting now" },
   ]);
   expect(host.querySelector("dialog")).toBeNull();
-  expect(host.querySelector('[role="status"]')!.textContent).toBe("Command queued for NYX-TA2");
+  expect(host.querySelector('[role="status"]')!.textContent).toBe("vent_cabin queued for NYX-TA2");
   expect(store.commands()).toEqual([]); // the stub list is empty: nothing invented
 });
 
@@ -339,7 +339,7 @@ test("while the confirm is in flight Cancel is disabled and Esc is ignored; the 
   expect(host.querySelector("dialog")).not.toBeNull();
   await act(async () => held.release(new Response(JSON.stringify({ cmd_id: "c" }), { status: 202 })));
   expect(host.querySelector("dialog")).toBeNull();
-  expect(host.querySelector('[role="status"]')!.textContent).toBe("Command queued for NYX-TA2");
+  expect(host.querySelector('[role="status"]')!.textContent).toBe("vent_cabin queued for NYX-TA2");
 });
 
 test("closing the confirm dialog returns the focus to the Send button", async () => {
@@ -428,9 +428,13 @@ test("the expiry timer firing while a confirm is in flight never says 'send the 
   set(dialogField("Reason"), "venting now");
   set(dialogField("Type"), "NYX-TA2");
   await act(async () => void dlg("Confirm").click());
-  await act(async () => void vi.advanceTimersByTimeAsync(9_000)); // the token's 60 s end is not reached yet
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(9_000);
+  }); // the token's 60 s end is not reached yet
   expect(host.querySelector("dialog [role=alert]")).toBeNull();
-  await act(async () => void vi.advanceTimersByTimeAsync(50_000)); // 59 s: still inside the 10 s send window? no: the request timed out at 10 s
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(50_000);
+  }); // 59 s: still inside the 10 s send window? no: the request timed out at 10 s
   expect(host.querySelector("dialog [role=alert]")!.textContent).toBe(AMBIGUOUS); // the timeout made it ambiguous, the expiry text never appeared
 });
 
@@ -442,10 +446,14 @@ test("the expiry fires first while the request is still hanging: no 'send again'
   set(dialogField("Reason"), "venting now");
   set(dialogField("Type"), "NYX-TA2");
   await act(async () => void dlg("Confirm").click());
-  await act(async () => void vi.advanceTimersByTimeAsync(5_000));
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  });
   expect(host.querySelector("dialog [role=alert]")).toBeNull(); // in flight: nothing said yet
   expect(dlg("Cancel").disabled).toBe(true);
-  await act(async () => void vi.advanceTimersByTimeAsync(5_000)); // the send times out
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(5_000);
+  }); // the send times out
   expect(host.querySelector("dialog [role=alert]")!.textContent).toBe(AMBIGUOUS);
   expect(dlg("Cancel").disabled).toBe(false); // the operator can leave
   expect(dlg("Confirm").disabled).toBe(true);
@@ -516,4 +524,58 @@ test("a scripted submit after an ambiguous failure sends no second POST", async 
   const form = host.querySelector("dialog form") as HTMLFormElement;
   await act(async () => form.requestSubmit());
   expect(posted(f)).toHaveLength(2);
+});
+
+test("an ambiguous result then an immediate scripted submit (before React re-renders) sends exactly one POST", async () => {
+  mount();
+  let rejectIt!: (e: unknown) => void;
+  let confirms = 0;
+  let n = 0;
+  vi.stubGlobal("fetch", vi.fn((_u: string, init?: { method?: string }) => {
+    if (init?.method !== "POST") return Promise.resolve(new Response("[]", { status: 200 }));
+    n++;
+    if (n === 1) return Promise.resolve(new Response(JSON.stringify({ error: "HAZARDOUS_CONFIRMATION_REQUIRED", message: "m", hazard: "h", confirm_token: "t", expires_in_s: 60 }), { status: 409 }));
+    confirms++;
+    return confirms === 1 ? new Promise<Response>((_r, rej) => (rejectIt = rej)) : Promise.resolve(new Response(JSON.stringify({ cmd_id: "dup" }), { status: 202 }));
+  }));
+  await openDialog();
+  set(dialogField("Reason"), "venting now");
+  set(dialogField("Type"), "NYX-TA2");
+  await act(async () => void dlg("Confirm").click());
+  const form = host.querySelector("dialog form") as HTMLFormElement;
+  await act(async () => {
+    rejectIt(new TypeError("offline"));
+    for (let i = 0; i < 20; i++) await Promise.resolve(); // the failed confirm is handled; React has not re-rendered yet
+    form.requestSubmit();
+    for (let i = 0; i < 20; i++) await Promise.resolve();
+  });
+  expect(confirms).toBe(1); // the same token is never sent twice
+  expect(host.querySelector("dialog [role=alert]")!.textContent).toBe(AMBIGUOUS);
+});
+
+test("a late answer from a natively closed dialog does not close the next one, and the message names its command", async () => {
+  mount();
+  let release!: (r: Response) => void;
+  let n = 0;
+  const need = { error: "HAZARDOUS_CONFIRMATION_REQUIRED", message: "m", hazard: "h", expires_in_s: 60 };
+  vi.stubGlobal("fetch", vi.fn((_u: string, init?: { method?: string }) => {
+    if (init?.method !== "POST") return Promise.resolve(new Response("[]", { status: 200 }));
+    n++;
+    if (n === 1) return Promise.resolve(new Response(JSON.stringify({ ...need, confirm_token: "t1" }), { status: 409 }));
+    if (n === 2) return new Promise<Response>((res) => (release = res));
+    return Promise.resolve(new Response(JSON.stringify({ ...need, confirm_token: "t2" }), { status: 409 }));
+  }));
+  await openDialog();
+  set(dialogField("Reason"), "venting now");
+  set(dialogField("Type"), "NYX-TA2");
+  await act(async () => void dlg("Confirm").click());
+  const d = host.querySelector("dialog")!;
+  act(() => void (d.dispatchEvent(new Event("cancel", { cancelable: false })), d.close())); // closed natively, request in flight
+  expect(host.querySelector("dialog")).toBeNull();
+  set(panelSelect("duration_s"), "4");
+  await act(async () => send().click()); // a second hazardous send: a new dialog with token t2
+  expect((host.querySelector("dialog") as HTMLDialogElement).open).toBe(true);
+  await act(async () => release(new Response(JSON.stringify({ cmd_id: "c1" }), { status: 202 }))); // the first confirm answers late
+  expect(host.querySelector("dialog")).not.toBeNull(); // the new dialog is untouched
+  expect(host.querySelector('[role="status"]')!.textContent).toBe("vent_cabin queued for NYX-TA2");
 });

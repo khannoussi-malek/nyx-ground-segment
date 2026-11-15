@@ -78,9 +78,9 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
       console.warn("could not refresh the command list", e);
     }
   }
-  const accepted = (v: string) => {
-    setNote(`Command queued for ${v}`);
-    void refresh(v);
+  const accepted = (r: CommandRequest) => {
+    setNote(`${r.name} queued for ${r.vehicle}`); // names its command: a late answer may belong to an earlier one
+    void refresh(r.vehicle);
   };
   async function send() {
     if (!req || inFlight.current) return;
@@ -91,7 +91,7 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
     const r = await sendCommand(req);
     inFlight.current = false;
     setBusy(false);
-    if (r.kind === "accepted") accepted(req.vehicle);
+    if (r.kind === "accepted") accepted(req);
     else if (r.kind === "confirm") setPending({ req, hazard: r.hazard, token: r.token, expiresInS: r.expiresInS, opener: sendButton.current });
     else {
       setError(rejectedText(r));
@@ -150,10 +150,11 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
             setError(AMBIGUOUS_TEXT);
             void refresh(pending.req.vehicle);
           }}
-          onCancel={() => setPending(null)}
+          // only this dialog's own answer may close it: a late one from an abandoned dialog must not close the next
+          onCancel={() => setPending((p) => (p?.token === pending.token ? null : p))}
           onSent={() => {
-            accepted(pending.req.vehicle);
-            setPending(null);
+            accepted(pending.req);
+            setPending((p) => (p?.token === pending.token ? null : p));
           }}
         />
       )}

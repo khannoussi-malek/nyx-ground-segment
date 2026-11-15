@@ -204,9 +204,11 @@ def read_without_ack(v: str, consumer: str) -> list[tuple[str, dict[bytes, bytes
 
 
 def ui_tm(v: str) -> list[str]:
-    """Raw `data` of every ui:events entry for vehicle v."""
+    """Raw `data` of every ui:events tm entry for vehicle v (resync also has a top-level
+    vehicle, P-pf31)."""
     entries: Any = client("admin").xrange("ui:events")
-    return [f["data"] for _, f in entries if json.loads(f["data"]).get("vehicle") == v]
+    msgs = [(f["data"], json.loads(f["data"])) for _, f in entries]
+    return [d for d, m in msgs if m.get("kind") == "tm" and m.get("vehicle") == v]
 
 
 def ui_tm_count(v: str) -> int:

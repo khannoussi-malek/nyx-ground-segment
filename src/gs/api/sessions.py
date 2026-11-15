@@ -1,5 +1,6 @@
 """Test sessions and their frozen report (route stubs; Track D Tasks 21-22)."""
 
+from datetime import UTC, datetime
 from http import HTTPStatus
 from typing import Any
 
@@ -8,7 +9,8 @@ from fastapi import APIRouter, Request, Response
 
 from gs.api.bodies import ReportConflict, SessionReport, SessionStart, SessionView
 from gs.api.dbguard import connect, db_503
-from gs.api.deps import ApiError, User, errors, vehicles
+from gs.api.deps import ApiError, User, errors, mission, vehicles
+from gs.api.report import frozen_report, stored_csv
 from gs.common.audit import audit
 
 router = APIRouter()
@@ -90,9 +92,24 @@ async def list_sessions(request: Request, user: User) -> list[SessionView]:
             return [_view(r) for r in await cur.fetchall()]
 
 
+async def _report(request: Request, session_id: int, want_csv: bool = False) -> SessionReport | str:
+    with db_503(request):
+        async with connect(request) as conn, conn.transaction():
+            got = await frozen_report(conn, session_id, mission(request), datetime.now(UTC))
+            if isinstance(got, SessionReport) and want_csv:
+                return await stored_csv(conn, session_id)
+    if got is None:
+        raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"no session {session_id}")
+    if isinstance(got, ReportConflict):
+        raise ApiError(HTTPStatus.CONFLICT, got.error, got.message, body=got)
+    return got
+
+
 @router.get("/api/sessions/{session_id}/report", responses=REPORT_ERRORS)
 async def get_report(session_id: int, request: Request, user: User) -> SessionReport:
-    raise _todo("GET /api/sessions/{session_id}/report")
+    got = await _report(request, session_id)
+    assert isinstance(got, SessionReport)
+    return got
 
 
 @router.get(
@@ -101,4 +118,4 @@ async def get_report(session_id: int, request: Request, user: User) -> SessionRe
     responses={200: {"content": {"text/csv": {}}}, **REPORT_ERRORS},
 )
 async def get_report_csv(session_id: int, request: Request, user: User) -> Response:
-    raise _todo("GET /api/sessions/{session_id}/report.csv")
+    return Response(str(await _report(request, session_id, want_csv=True)), media_type="text/csv")

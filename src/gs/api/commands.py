@@ -74,6 +74,8 @@ def not_sent(e: BaseException) -> bool:
     closed connections and write errors got no reply: ambiguous, the row stays SENT."""
     if isinstance(e, PreSendError):
         return True
+    if isinstance(e, redis.exceptions.ResponseError) and "Wrong number of response items" in str(e):
+        return False  # redis-py's own check after EXEC replied: the transaction ran
     # BusyLoadingError and ExternalAuthProviderError subclass ConnectionError, not ResponseError
     if isinstance(
         e,
@@ -108,8 +110,12 @@ async def send_locked(r: redis.asyncio.Redis, key: str, owner: str, stream: str,
         pipe.xadd(stream, {"data": data})
         try:
             await pipe.execute()
-        except redis.exceptions.WatchError:  # the key expired or was taken after our GET
-            return False
+        except redis.exceptions.WatchError as e:
+            # redis-py 8.1 turns a connection error or timeout on the EXEC read into a
+            # WatchError while WATCHing: no EXEC reply, the XADD may have landed (G30)
+            if isinstance(e.__context__, redis.exceptions.RedisError):
+                raise e.__context__ from e
+            return False  # EXEC returned nil: the lock changed after our GET, nothing applied
     return True
 
 

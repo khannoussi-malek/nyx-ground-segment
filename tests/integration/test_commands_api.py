@@ -15,6 +15,7 @@ import httpx
 import psycopg
 import pytest
 import redis.asyncio
+import redis.asyncio.client
 import redis.exceptions
 from fastapi import FastAPI
 from jsonschema import Draft202012Validator
@@ -280,6 +281,23 @@ async def test_error_reply_is_send_error(
     assert lock_value(api) is None
 
 
+def lose_exec_reply(monkeypatch: pytest.MonkeyPatch, err: Exception) -> None:
+    """The real pipeline: Redis applies MULTI XADD EXEC, then reading the EXEC reply fails
+    (G30). redis-py, still WATCHing, turns that into a WatchError with `err` as its context."""
+    real = redis.asyncio.client.Pipeline.parse_response
+    calls = [0]
+
+    async def parse(self: Any, conn: Any, command_name: Any, **options: Any) -> Any:
+        got = await real(self, conn, command_name, **options)
+        if command_name == "_":  # MULTI, XADD (QUEUED), EXEC: the third is EXEC's reply
+            calls[0] += 1
+            if calls[0] == 3:
+                raise err
+        return got
+
+    monkeypatch.setattr(redis.asyncio.client.Pipeline, "parse_response", parse)
+
+
 @pytest.mark.parametrize(
     "err",
     [
@@ -290,18 +308,38 @@ async def test_error_reply_is_send_error(
 async def test_timed_out_xadd_leaves_row_sent(
     api: Api, monkeypatch: pytest.MonkeyPatch, err: Exception
 ) -> None:  # P-pf12: it may have landed (G30); the tracker judges by evidence
-    async def boom(*a: Any) -> bool:
-        raise err
-
-    monkeypatch.setattr(commands_mod, "send_locked", boom)
+    lose_exec_reply(monkeypatch, err)
     r = await api.fc1.post("/api/commands", json=api.iso())
     assert r.status_code == 503 and r.json()["error"] == "BROKER_DOWN"
     assert "may have been sent" in r.json()["message"]
     [row] = commands_for(api.v)
     assert (row["state"], row["failure_reason"]) == ("SENT", None)
+    assert [tc["cmd_id"] for tc in api.tc()] == [str(row["cmd_id"])]  # it did land
     assert lock_value(api) is not None  # kept: a retry within 2 s is a duplicate
+    monkeypatch.undo()
     dup = await api.fc2.post("/api/commands", json=api.iso())
     assert dup.status_code == 409 and dup.json()["error"] == "DUPLICATE_COMMAND"
+
+
+async def test_lock_changed_before_exec_is_not_sent(
+    api: Api, monkeypatch: pytest.MonkeyPatch
+) -> None:  # EXEC returns nil: the watched lock changed, nothing was applied
+    real = redis.asyncio.client.Pipeline.parse_response
+
+    async def parse(self: Any, conn: Any, command_name: Any, **options: Any) -> Any:
+        got = await real(self, conn, command_name, **options)
+        if command_name == "GET" and str(got).endswith("|fc1"):  # send_locked's own check
+            keys = client("admin").keys(f"cmdlock:{api.v}:*")
+            client("admin").set(keys[0], "other|fc2", px=2000)  # between GET and EXEC
+        return got
+
+    monkeypatch.setattr(redis.asyncio.client.Pipeline, "parse_response", parse)
+    r = await api.fc1.post("/api/commands", json=api.iso())
+    assert r.status_code == 503 and "safe to retry" in r.json()["message"]
+    [row] = commands_for(api.v)
+    assert (row["state"], row["failure_reason"]) == ("FAILED", "SEND_ERROR")
+    assert api.tc() == []
+    assert lock_value(api) == "other|fc2"  # not ours: left alone
 
 
 def test_not_sent_allow_list() -> None:
@@ -321,6 +359,10 @@ def test_not_sent_allow_list() -> None:
     assert not not_sent(redis.exceptions.ConnectionError("Error while writing to socket"))
     assert not not_sent(redis.exceptions.ConnectionError("Connection closed by server."))
     assert not not_sent(chained(OSError("Multiple exceptions: ...")))  # errno unknown
+    # redis-py's own check after EXEC replied: the transaction ran, so it may have landed
+    assert not not_sent(
+        redis.exceptions.ResponseError("Wrong number of response items from pipeline execution")
+    )
 
 
 async def test_queued_then_sent_before_xadd(api: Api, monkeypatch: pytest.MonkeyPatch) -> None:

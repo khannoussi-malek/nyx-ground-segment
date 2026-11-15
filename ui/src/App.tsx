@@ -6,10 +6,12 @@ import { AlarmList } from "./AlarmList";
 import { ChartPanel } from "./Chart";
 import { CommandPanel } from "./CommandPanel";
 import { EventStrip } from "./EventStrip";
+import { SessionPanel } from "./SessionPanel";
 import { LiveTable } from "./LiveTable";
 import { Login } from "./Login";
 import { bootUser, checkSession, loadMission, safeLogout } from "./session";
 import { connectEvents } from "./sse";
+import { probe } from "./probe";
 import { createStore, ingest, type Store } from "./store";
 
 /** Beeps once per new RED alert key and sounds one tone at each loss-of-monitoring onset (D-UI-08, D-UI-21).
@@ -87,7 +89,7 @@ function SoundBadge({ ctx, running, onArm }: { ctx: AudioContext | null; running
 
 function Console({ user, audio, onLogout }: { user: string; audio: AudioContext | null; onLogout: () => void }) {
   const [ctx, setCtx] = useState(audio);
-  const [store] = useState(createStore);
+  const [store] = useState(() => createStore(undefined, undefined, probe));
   const [mission, setMission] = useState<MissionDb | null>(null);
   useEffect(() => {
     let mounted = true; // a logout before the answer must not set state on an unmounted console
@@ -121,9 +123,10 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
         <button onClick={() => void safeLogout(logout).then(onLogout)}>Log out</button>
       </header>
       <AlarmList store={store} mission={mission} user={user} />
+      <SessionPanel store={store} />
       <CommandPanel store={store} mission={mission} />
       <main>
-        <LiveTable store={store} mission={mission} />
+        <LiveTable store={store} mission={mission} probe={probe} />
       </main>
       <ChartPanel store={store} mission={mission} />
       <EventStrip store={store} />

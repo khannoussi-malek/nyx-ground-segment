@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { ackAlarm, fetchBuckets, listCommands, login, logout, me, missionDb, sendCommand } from "./api";
+import { ackAlarm, fetchBuckets, getReport, listCommands, listSessions, login, logout, me, missionDb, reportCsvUrl, sendCommand, startSession, stopSession } from "./api";
 
 const stub = (status: number, body?: unknown) => {
   const f = vi.fn(async () => new Response(body === undefined ? null : JSON.stringify(body), { status }));
@@ -149,4 +149,48 @@ test("sendCommand: only a network failure or a 5xx is ambiguous; a 4xx refusal i
   expect(await sendCommand(REQ)).toMatchObject({ ambiguous: false });
   vi.stubGlobal("fetch", vi.fn(async () => new Response("<html>", { status: 202 }))); // an unreadable 202 body: unknown outcome
   expect(await sendCommand(REQ)).toMatchObject({ error: "NETWORK", ambiguous: true });
+});
+
+test("startSession and stopSession: POST, the session back; refusals keep their words; network and 5xx are ambiguous", async () => {
+  const s = { id: 3, name: "n", vehicle: "NYX-TA1", conductor: "fc1", started_at: "2026-11-14T10:00:00Z", ended_at: null, ended_by: null };
+  const f = stub(201, s);
+  expect(await startSession("NYX-TA1", "n")).toEqual({ ok: true, session: s });
+  expect(f).toHaveBeenCalledWith("/api/sessions", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-GS-Client": "console" },
+    body: JSON.stringify({ vehicle: "NYX-TA1", name: "n" }),
+  });
+  const g = stub(200, s);
+  expect(await stopSession(3)).toEqual({ ok: true, session: s });
+  expect(g).toHaveBeenCalledWith("/api/sessions/3/stop", { method: "POST", credentials: "same-origin", headers: { "X-GS-Client": "console" } });
+  stub(409, { error: "SESSION_ACTIVE", message: "NYX-TA1 already has an active session" });
+  expect(await startSession("NYX-TA1", "n")).toEqual({ ok: false, error: "SESSION_ACTIVE", message: "NYX-TA1 already has an active session", ambiguous: false });
+  stub(503, { error: "DB_DOWN", message: "x" });
+  expect(await stopSession(3)).toMatchObject({ ok: false, ambiguous: true });
+  stub(502);
+  expect(await stopSession(3)).toMatchObject({ error: "HTTP_502", ambiguous: true });
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
+  expect(await stopSession(3)).toMatchObject({ error: "NETWORK", ambiguous: true });
+});
+
+test("listSessions, getReport (ready, pending, running) and the CSV url", async () => {
+  const f = stub(200, [{ id: 1 }]);
+  expect(await listSessions()).toEqual([{ id: 1 }]);
+  expect(f).toHaveBeenCalledWith("/api/sessions", { credentials: "same-origin" });
+  stub(503);
+  await expect(listSessions()).rejects.toThrow("503");
+  stub(200, { frames: 1 });
+  expect(await getReport(1)).toEqual({ kind: "ready", report: { frames: 1 } });
+  stub(409, { error: "REPORT_PENDING", message: "m", frames: 90, expected: 100 });
+  expect(await getReport(1)).toEqual({ kind: "pending", frames: 90, expected: 100 });
+  stub(409, { error: "REPORT_PENDING", message: "m" });
+  expect(await getReport(1)).toEqual({ kind: "pending", frames: null, expected: null });
+  stub(409, { error: "SESSION_RUNNING", message: "m" });
+  expect(await getReport(1)).toEqual({ kind: "running" });
+  stub(409, { error: "OTHER", message: "m" });
+  await expect(getReport(1)).rejects.toThrow("409");
+  stub(404);
+  await expect(getReport(1)).rejects.toThrow("404");
+  expect(reportCsvUrl(7)).toBe("/api/sessions/7/report.csv");
 });

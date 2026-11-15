@@ -120,3 +120,52 @@ export async function fetchBuckets(vehicle: string, param: string, fromIso: stri
   if (!r.ok) throw fail("telemetry", r);
   return (await r.json()) as Bucket[];
 }
+
+export type SessionView = components["schemas"]["SessionView"];
+export type SessionReport = components["schemas"]["SessionReport"];
+type ReportConflict = components["schemas"]["ReportConflict"];
+export type SessionResult =
+  | { ok: true; session: SessionView }
+  | { ok: false; error: string; message: string; ambiguous: boolean };
+export type ReportResult =
+  | { kind: "ready"; report: SessionReport }
+  | { kind: "pending"; frames: number | null; expected: number | null }
+  | { kind: "running" };
+
+async function sessionCall(path: string, body?: unknown): Promise<SessionResult> {
+  try {
+    const r = await fetch(path, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { ...(body === undefined ? {} : { "Content-Type": "application/json" }), ...CLIENT },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
+    if (r.ok) return { ok: true, session: (await r.json()) as SessionView };
+    const b = (await r.json().catch(() => null)) as Partial<ErrorBody> | null;
+    return { ok: false, error: b?.error ?? `HTTP_${r.status}`, message: b?.message ?? `Request failed (${r.status})`, ambiguous: r.status >= 500 };
+  } catch {
+    return { ok: false, error: "NETWORK", message: "Could not reach the ground segment", ambiguous: true };
+  }
+}
+
+export const startSession = (vehicle: string, name: string): Promise<SessionResult> =>
+  sessionCall("/api/sessions", { vehicle, name });
+export const stopSession = (id: number): Promise<SessionResult> => sessionCall(`/api/sessions/${id}/stop`);
+
+export async function listSessions(): Promise<SessionView[]> {
+  const r = await fetch("/api/sessions", { credentials: "same-origin" });
+  if (!r.ok) throw fail("sessions", r);
+  return (await r.json()) as SessionView[];
+}
+
+/** The frozen report (D-DB-10): ready, still waiting for in-flight frames (409 REPORT_PENDING) or the session still runs. */
+export async function getReport(id: number): Promise<ReportResult> {
+  const r = await fetch(`/api/sessions/${id}/report`, { credentials: "same-origin" });
+  if (r.ok) return { kind: "ready", report: (await r.json()) as SessionReport };
+  const b = r.status === 409 ? ((await r.json().catch(() => null)) as Partial<ReportConflict> | null) : null;
+  if (b?.error === "REPORT_PENDING") return { kind: "pending", frames: b.frames ?? null, expected: b.expected ?? null };
+  if (b?.error === "SESSION_RUNNING") return { kind: "running" };
+  throw fail("report", r);
+}
+
+export const reportCsvUrl = (id: number): string => `/api/sessions/${id}/report.csv`;

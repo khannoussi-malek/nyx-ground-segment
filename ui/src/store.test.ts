@@ -285,3 +285,12 @@ test("recheck after a throttled background tab: silence over 3 s is noticed with
   s.recheck();
   expect(s.link().connected).toBe(false);
 });
+
+test("the latency probe gets a receipt for every accepted tm, with its server age, and none for a dropped one", () => {
+  const got: unknown[][] = [];
+  const s = createStore(undefined, undefined, { receipt: (...a) => void got.push(a) });
+  s.applyTm(tm(1, "2026-11-14T10:00:00.100000Z"));
+  s.applyTm(tm(1, "2026-11-14T10:00:00.100000Z")); // dropped
+  s.applyTm(tm(2, "2026-11-14T10:00:00.200000Z", "NYX-TA2"));
+  expect(got).toEqual([["NYX-TA1", 1, 5], ["NYX-TA2", 2, 5]]);
+});

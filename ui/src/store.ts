@@ -18,6 +18,7 @@ export const EVENTS_KEPT = 200;
 export function createStore(
   clock: () => number = () => performance.now(),
   timers = { setTimeout: globalThis.setTimeout, clearTimeout: globalThis.clearTimeout },
+  probe?: { receipt(vehicle: string, seq: number, ageMs: number | null): void },
 ) {
   // bare calls: a browser's setTimeout throws "Illegal invocation" when called as timers.setTimeout(...)
   const { setTimeout, clearTimeout } = timers;
@@ -62,6 +63,7 @@ export function createStore(
       // string compare is valid: the server always sends fixed-width YYYY-MM-DDTHH:MM:SS.ffffffZ
       if (shown && tm.t_onboard <= shown.t_onboard) return false;
       stamps = { ...stamps, [tm.vehicle]: clock() };
+      probe?.receipt(tm.vehicle, tm.seq, tm.age_ms); // the latency probe's receipt stamp (D-UI-14)
       set({ ...rows, [tm.vehicle]: tm });
       return true;
     },

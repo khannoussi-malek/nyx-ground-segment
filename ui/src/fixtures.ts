@@ -44,3 +44,25 @@ export const commandView = (over: Partial<CommandView> = {}): CommandView => ({
 export const eventView = (key: string, over: Partial<EventView> = {}): EventView => ({
   details: {}, key, kind: "k", t_onboard: null, vehicle: null, ...over,
 });
+
+import type { SessionReport, SessionView } from "./api";
+
+export const sessionView = (over: Partial<SessionView> = {}): SessionView => ({
+  conductor: "fc1", ended_at: null, ended_by: null, id: 1, name: "TA1 vent test",
+  started_at: "2026-11-14T10:00:00Z", vehicle: "NYX-TA1", ...over,
+});
+
+export const sessionReport = (over: Partial<SessionReport> = {}): SessionReport => ({
+  alarms: [{ alarm_id: "a1", param: "cabin_pressure_kpa", transition: alarmView().last }],
+  commands: [commandView()],
+  complete: true,
+  duration_s: 600,
+  expected: 6000,
+  frames: 6000,
+  frozen_at: "2026-11-14T10:10:05Z",
+  link_events: [eventView("LOS/NYX-TA1/e/7", { kind: "LOS", vehicle: "NYX-TA1", t_onboard: "2026-11-14T10:05:00Z" })],
+  note: null,
+  parameters: { cabin_pressure_kpa: { avg: 101.3, max: 107, min: 94.2, n: 6000, unit: "kPa" } },
+  session: sessionView({ ended_at: "2026-11-14T10:10:00Z" }),
+  ...over,
+});

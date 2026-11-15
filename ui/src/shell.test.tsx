@@ -91,6 +91,7 @@ test("App: logged in shows the console, opens the event stream and loads the mis
   expect(host.querySelector('section[aria-label="Commands"]')).not.toBeNull();
   expect(host.querySelector('section[aria-label="Events"]')).not.toBeNull();
   expect(host.querySelector('section[aria-label="Chart"]')).not.toBeNull();
+  expect(host.querySelector('section[aria-label="Sessions"]')).not.toBeNull();
   expect(FakeEventSource.opened).toEqual(["/api/events"]);
   expect(f).toHaveBeenCalledWith("/api/mission-db", { credentials: "same-origin" });
 });
@@ -384,4 +385,14 @@ test("a browser-suspended context that resumes by itself (statechange to running
   change("running"); // the browser resumed it, no click
   expect(played).toEqual([880]);
   expect(button("SOUND OFF – click to enable")).toBeUndefined();
+});
+
+test("App: each live tm frame leaves a latency sample after the second animation frame (D-UI-14)", async () => {
+  vi.stubGlobal("requestAnimationFrame", (cb: () => void) => (cb(), 0));
+  window.__nyxLatency = [];
+  const es = await liveConsole();
+  es.emit("snapshot", snapshot());
+  es.emit("tm", { ...tmFrame, seq: 2, t_onboard: "2026-11-14T10:00:01.000000Z", age_ms: 10 });
+  expect(window.__nyxLatency).toEqual([expect.objectContaining({ vehicle: "NYX-TA1", seq: 2, age_ms: 10 })]);
+  expect(typeof window.__nyxLatency![0]!.paint_ms).toBe("number");
 });

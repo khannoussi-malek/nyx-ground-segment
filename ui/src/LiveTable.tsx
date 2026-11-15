@@ -3,6 +3,7 @@ import type { MissionDb } from "./api";
 import { conditionFor } from "./banners";
 import { ageAt } from "./format";
 import { paramViews } from "./params";
+import type { Probe } from "./probe";
 import { paramState } from "./states";
 import type { Store } from "./store";
 import { VehicleCard } from "./VehicleCard";
@@ -18,7 +19,7 @@ function useTick(ms: number): void {
   }, [ms]);
 }
 
-function Vehicle({ store, v, mission, clock }: { store: Store; v: string; mission: MissionDb | null; clock: () => number }) {
+function Vehicle({ store, v, mission, clock, probe }: { store: Store; v: string; mission: MissionDb | null; clock: () => number; probe: Probe | undefined }) {
   const tm = useSyncExternalStore(store.subscribe, () => store.vehicle(v), () => store.vehicle(v));
   const link = useSyncExternalStore(store.subscribe, store.link, store.link);
   useSyncExternalStore(store.subscribe, store.alarms, store.alarms); // re-render on alarm changes
@@ -43,17 +44,18 @@ function Vehicle({ store, v, mission, clock }: { store: Store; v: string; missio
       params={params}
       banner={banner}
       statesWired={wired}
+      onCommit={probe && (() => probe.painted(v, tm.seq))}
     />
   );
 }
 
 /** `clock` must be the store's clock: receipt stamps and the age clock share one time base. */
-export function LiveTable({ store, mission, clock = () => performance.now() }: { store: Store; mission: MissionDb | null; clock?: () => number }) {
+export function LiveTable({ store, mission, clock = () => performance.now(), probe }: { store: Store; mission: MissionDb | null; clock?: () => number; probe?: Probe }) {
   const vehicles = useSyncExternalStore(store.subscribe, store.vehicles, store.vehicles);
   return (
     <>
       {vehicles.map((v) => (
-        <Vehicle key={v} store={store} v={v} mission={mission} clock={clock} />
+        <Vehicle key={v} store={store} v={v} mission={mission} clock={clock} probe={probe} />
       ))}
     </>
   );

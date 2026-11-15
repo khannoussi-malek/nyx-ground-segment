@@ -1,10 +1,15 @@
+import subprocess
 from pathlib import Path
+
+import psycopg
+import pytest
 
 from perf.run_n import (
     DURATION_S,
     STEP_EVERY_S,
     STEP_S,
     STEP_VALUE,
+    _guarded,
     _summary,
     step_schedule,
     verdict,
@@ -51,3 +56,57 @@ def test_summary_text_scopes_warmup_and_names_gate_4_items() -> None:
     assert "ingest series only" in text and "D-PERF-10" in text and "D-PERF-07" in text
     assert "Gate 4" in text and "INCOMPLETE" not in text
     assert "INCOMPLETE RUN: boom" in _summary(Path("r"), ctx, [], 3, "boom")
+
+
+class FakePopen:
+    def __init__(self, running: bool = True, hangs: bool = False) -> None:
+        self.running, self.hangs, self.calls = running, hangs, []  # type: ignore[var-annotated]
+
+    def poll(self) -> int | None:
+        return None if self.running else 0
+
+    def terminate(self) -> None:
+        self.calls.append("terminate")
+
+    def kill(self) -> None:
+        self.calls.append("kill")
+        self.running = False
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.calls.append(f"wait({timeout})")
+        if self.hangs and timeout is not None:
+            raise subprocess.TimeoutExpired("npx", timeout)
+        self.running = False
+        return 0
+
+
+def _guard(ui: FakePopen, body):  # type: ignore[no-untyped-def]
+    return _guarded(ui, body)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    "exc", [OSError("sim down"), AssertionError("status"), psycopg.OperationalError("db")]
+)
+def test_a_failure_after_the_spawn_stops_the_browser_and_reports(exc: Exception) -> None:
+    def body() -> None:
+        raise exc
+
+    ui = FakePopen()
+    result, error = _guard(ui, body)
+    assert result is None and error is not None and type(exc).__name__ in error
+    assert ui.calls[:2] == ["terminate", "wait(30)"]
+
+
+def test_success_still_cleans_up_a_browser_that_is_running() -> None:
+    ui = FakePopen()
+    result, error = _guard(ui, lambda: 42)
+    assert (result, error) == (42, None) and "terminate" in ui.calls
+    done = FakePopen(running=False)
+    _guard(done, lambda: 1)
+    assert done.calls == []  # an exited browser is left alone
+
+
+def test_a_browser_that_ignores_terminate_is_killed() -> None:
+    ui = FakePopen(hangs=True)
+    _guard(ui, lambda: None)
+    assert ui.calls == ["terminate", "wait(30)", "kill", "wait(None)"]

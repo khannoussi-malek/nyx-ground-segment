@@ -20,7 +20,7 @@ Request models are strict. A UUID or datetime field that arrives as a JSON strin
 
 ## Run the tests
 - Unit, integration and meta: `make up`, then `uv run pytest` (80 % coverage gate; `-m spike` runs the Schemathesis spike).
-- Static: `uv run ruff check`, `uv run ruff format --check`, `uv run mypy --strict src tests scripts`, `make gen && git diff --exit-code -- interfaces ui/src/api`.
+- Static: `uv run ruff check`, `uv run ruff format --check`, `uv run mypy --strict src tests scripts perf`, `make gen && git diff --exit-code -- interfaces ui/src/api`.
 - System (Docker; stops and starts containers, one run at a time): `uv run pytest tests/system`.
 - End to end: `make e2e` (Playwright, browser). UI unit tests: `cd ui && npx vitest run`.
 - Performance run N (10 minutes, writes `docs/perf/run-n-<UTC date>/`): `make perf`.

@@ -12,9 +12,10 @@ import subprocess
 import sys
 import time
 import urllib.request
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import NamedTuple
 
 import psycopg
 
@@ -193,6 +194,35 @@ def _summary(
     )
 
 
+class Collected(NamedTuple):
+    ui_rc: int
+    queries: list[tuple[datetime, float]]
+    ingest: list[tuple[datetime, float]]
+    alarm: list[tuple[datetime, float]]
+
+
+RUN_ERRORS = (OSError, AssertionError, psycopg.Error)  # sim POST, REST login/queries, database
+
+
+def _guarded[T](ui: subprocess.Popen[bytes], body: Callable[[], T]) -> tuple[T | None, str | None]:
+    """Run `body`; whatever happens the browser run is stopped (terminate, 30 s, then kill)
+    so it cannot outlive the driver. A failure comes back as text for the INCOMPLETE summary."""
+    result, error = None, None
+    try:
+        result = body()
+    except RUN_ERRORS as e:
+        error = f"{type(e).__name__}: {e}"
+    finally:
+        if ui.poll() is None:
+            ui.terminate()
+            try:
+                ui.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                ui.kill()
+                ui.wait()
+    return result, error
+
+
 def main() -> None:
     env = _env()
     dsn = f"postgresql://gs_app:{env['GS_APP_PASSWORD']}@127.0.0.1:{env['DB_HOST_PORT']}/gs"
@@ -205,45 +235,38 @@ def main() -> None:
             ["npx", "--prefix", "e2e", "playwright", "test", "-c", "perf/playwright.config.ts"],
             cwd=REPO, env={**os.environ, "PERF_OUT": str(out), "PERF_DURATION_S": str(DURATION_S)},
         )  # fmt: skip
-        error: str | None = None
-        try:
-            _drive_steps(env["SIM_HOST_PORT"])
-        except (
-            OSError,
-            AssertionError,
-        ) as e:  # a partial summary is still written, marked INCOMPLETE
-            error = f"{type(e).__name__}: {e}"
-        finally:
-            if error is not None and ui.poll() is None:
-                ui.terminate()  # the browser must not keep running after the driver failed
-                try:
-                    ui.wait(timeout=30)
-                except subprocess.TimeoutExpired:
-                    ui.kill()
-                    ui.wait()
-        ui_rc = ui.wait()
-        end = _clock(db)
-        queries = _query_times(env, end)
-        ingest = _samples(db, INGEST_SQL, (list(VEHICLES), t0, end))
-        alarm = _samples(db, ALARM_SQL, (STEP_VEHICLE, STEP_PARAM, t0))
-    ctx["load_after"] = _load()
 
-    write_csv(out / "ingest.csv", ["t_onboard", "latency_ms"], ingest)
-    write_csv(out / "alarm.csv", ["processed_at", "latency_ms"], alarm)
-    write_csv(out / "query.csv", ["at", "ms"], queries)
-    ing = after_warmup(ingest, t0)
-    ms = [v for _, v in alarm]
+        def collect() -> Collected:
+            _drive_steps(env["SIM_HOST_PORT"])
+            rc = ui.wait()  # the spec ends with the run
+            end = _clock(db)
+            return Collected(
+                rc,
+                _query_times(env, end),
+                _samples(db, INGEST_SQL, (list(VEHICLES), t0, end)),
+                _samples(db, ALARM_SQL, (STEP_VEHICLE, STEP_PARAM, t0)),
+            )
+
+        got, error = _guarded(ui, collect)
+    ctx["load_after"] = _load()
+    got = got or Collected(ui.poll() or 1, [], [], [])
+    if error is None and got.ui_rc != 0:
+        error = f"ui latency spec failed (exit {got.ui_rc})"
+
+    write_csv(out / "ingest.csv", ["t_onboard", "latency_ms"], got.ingest)
+    write_csv(out / "alarm.csv", ["processed_at", "latency_ms"], got.alarm)
+    write_csv(out / "query.csv", ["at", "ms"], got.queries)
+    ing = after_warmup(got.ingest, t0)
+    ms = [v for _, v in got.alarm]
     results = [
         verdict("ingest ING-09 (both vehicles pooled)", [v for _, v in ing],
-                LIMITS_MS["ingest"], excluded=len(ingest) - len(ing)),
+                LIMITS_MS["ingest"], excluded=len(got.ingest) - len(ing)),
         verdict("alarm ALM-05, first 20", ms[:20], LIMITS_MS["alarm"]),
         verdict("alarm ALM-05, all steps", ms, LIMITS_MS["alarm"], expected_n=N_STEPS),
         verdict("screen UI-01 (age + paint)", _ui_total_ms(out / "ui.csv"), LIMITS_MS["ui"]),
-        verdict("query DAT-03 (1 h range)", [v for _, v in queries], LIMITS_MS["query"]),
+        verdict("query DAT-03 (1 h range)", [v for _, v in got.queries], LIMITS_MS["query"]),
     ]  # fmt: skip
-    if error is None and ui_rc != 0:
-        error = f"ui latency spec failed (exit {ui_rc})"
-    (out / "summary.md").write_text(_summary(out, ctx, results, len(alarm), error))
+    (out / "summary.md").write_text(_summary(out, ctx, results, len(got.alarm), error))
     print((out / "summary.md").read_text())
     if error is not None:
         sys.exit(f"run N INCOMPLETE: {error}")

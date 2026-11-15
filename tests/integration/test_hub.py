@@ -83,7 +83,10 @@ async def test_slow_client_overflow_closes_then_snapshot(live_api: LiveApi) -> N
         for seq in range(20):
             publish_tm(v, 100 + seq)
         for seq in range(20):
-            assert (await tm_of(fast, v))["seq"] == 100 + seq  # the others keep going
+            # the worker's own tm (seq 0..9) can still be in the hub's read when `fast` connects
+            while (got := await tm_of(fast, v))["seq"] < 100:
+                pass
+            assert got["seq"] == 100 + seq  # the others keep going
     assert slow.closed.is_set() and slow not in h.clients and slow.queue.qsize() == 5
     async with sse(live_api) as again:  # the closed client's watchdog reconnects
         _, snap = await again.next_of("snapshot")

@@ -12,7 +12,7 @@ ACL_TEMPLATE = """\
 user default off resetkeys resetchannels -@all
 user health on #{health} resetkeys resetchannels -@all +ping
 user api on #{api} resetkeys resetchannels -@all +ping +client|setinfo +multi +exec +unwatch (~tc:NYX-* +xadd) (~cmdlock:* +set +get +del +watch) (~confirm:* +set +getdel) (~sess:* +set +get +del) (%R~ui:events %R~hb:* +xread +xrange +xrevrange +get +mget) (~tm:dlq +xadd)
-user sim on #{sim} resetkeys resetchannels -@all +ping +client|setinfo (%R~tc:NYX-* +xread +xrange) (~tc:NYX-* +xreadgroup +xack +xgroup|create) (~tm:NYX-* ~tcack:NYX-* +xadd)
+user sim on #{sim} resetkeys resetchannels -@all +ping +client|setinfo (%R~tc:NYX-* +xread +xrange) (~tc:NYX-* +xreadgroup +xack +xgroup|create +xgroup|setid) (~tm:NYX-* ~tcack:NYX-* +xadd)
 user ingest on #{ingest} resetkeys resetchannels -@all +ping +client|setinfo +multi +exec +info (~tm:NYX-* ~tcack:NYX-* +xreadgroup +xack +xautoclaim +xclaim +xpending +xgroup|create +xinfo|stream +xinfo|groups +xinfo|consumers) (~tm:dlq ~ui:events +xadd) (~hb:* +set +get)
 user admin on #{admin} ~* &* +@all
 """  # noqa: E501

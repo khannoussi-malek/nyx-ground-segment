@@ -61,12 +61,18 @@ def load_allowlist(text: str) -> set[str]:
 
 
 def unexecuted(src: Sequence[Path], executed: Mapping[str, set[int]], allow: set[str]) -> list[str]:
-    return [
+    """Handlers never executed and not allowlisted, plus allowlist keys matching no handler.
+
+    Key = path::qualname::exception, so two handlers of the same exception type in one function
+    share a key: one allowlist line covers both."""
+    every = [h for p in src for h in handlers(p)]
+    bad = [
         h.key
-        for p in src
-        for h in handlers(p)
-        if h.first_line not in executed.get(str(p), set()) and h.key not in allow
+        for h in every
+        if h.first_line not in executed.get(str(h.path), set()) and h.key not in allow
     ]
+    stale = sorted(allow - {h.key for h in every})
+    return [*bad, *(f"stale allowlist entry: {k}" for k in stale)]
 
 
 # ---- the checker's own tests (negative control on a fixture module)
@@ -94,6 +100,14 @@ def test_allowlisted_handler_passes() -> None:
     fx = FIXTURES / "one_unexecuted.py"
     allow = load_allowlist(f"# header\n\n{fx}::g::ValueError  # only a hostile client reaches it\n")
     assert unexecuted([fx], {str(fx): lines_of_first_handler(fx)}, allow) == []
+
+
+def test_stale_allowlist_entry_fails() -> None:
+    fx = FIXTURES / "one_unexecuted.py"
+    every = {h.first_line for h in handlers(fx)}
+    assert unexecuted([fx], {str(fx): every}, {"gone.py::x::E"}) == [
+        "stale allowlist entry: gone.py::x::E"
+    ]
 
 
 @pytest.mark.parametrize("line", ["a.py::f::E", "a.py::f::E  #", "a.py::f::E  #   "])
@@ -126,6 +140,7 @@ def test_every_handler_executed() -> None:
     src = sorted(
         p.relative_to(ROOT) for pkg in PACKAGES for p in (ROOT / "src/gs" / pkg).rglob("*.py")
     )
+    assert src, "no source files found under src/gs/{ingest,archiver,api}: a package was renamed?"
     missing = unexecuted(src, executed, load_allowlist(ALLOWLIST.read_text()))
     assert not missing, (
         "handlers never executed (test them or allowlist with a reason):\n" + "\n".join(missing)

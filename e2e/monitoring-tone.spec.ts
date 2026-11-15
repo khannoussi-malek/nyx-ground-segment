@@ -9,7 +9,9 @@ import {
 } from "./helpers";
 
 const DETECT_MS = 10_000; // hb TTL 3 s + the hub's 1 s hb + the console's tick, with margin
-const SPARE = "e2e_spare_pct";
+// unique per run: a parameter id another run already used would find its column (and rows) waiting. The nullable
+// telemetry column stays after restoreParameters(): migrate only adds columns, never drops one.
+const SPARE = `e2e_spare_${Date.now().toString(36)}_pct`;
 
 test.afterEach(async () => {
   restoreParameters();

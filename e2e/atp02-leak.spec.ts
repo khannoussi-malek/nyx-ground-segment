@@ -8,6 +8,7 @@ import { ackLeftovers, beeps, clearFault, commandItem, editLimits, fault, login,
 const V = "NYX-TA1";
 const LIMITS = new URL("../mission/limits.yaml", import.meta.url);
 const ACK_PROPAGATION_MS = 2_500; // P-pf42b: an ACK within 2 s of an escalation is superseded
+const ACK_MS = 1_000; // click to ACKNOWLEDGED (ATP-02 brief); an overshoot is reported, never loosened
 
 test.afterEach(async () => {
   restoreLimits();
@@ -44,8 +45,10 @@ test("leak → yellow → red → ack → isolate → verified → clear", async
   const t = Date.now();
   await dialog.getByRole("button", { name: "ACK" }).click();
   await expect(alarm).toContainText(/ACK PENDING \(by fc1\)|ACKNOWLEDGED/);
-  await expect(alarm).toContainText("ACKNOWLEDGED", { timeout: 2_000 });
-  console.log(`ACK applied after ${Date.now() - t} ms`);
+  await expect(alarm).toContainText("ACKNOWLEDGED", { timeout: ACK_MS }); // the brief: ACKED within 1 s
+  const ackMs = Date.now() - t;
+  console.log(`ACK applied after ${ackMs} ms`);
+  expect(ackMs, "click to ACKNOWLEDGED").toBeLessThanOrEqual(ACK_MS);
 
   await sendCommand(page, V, "isolate_valve", { valve: "A" });
   const item = commandItem(page, V, "isolate_valve (valve = A)");

@@ -2,7 +2,7 @@
 // and the CSV downloaded with every time in UTC with Z (D-DB-10/11, D-ENG-18).
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { fault, login, VEHICLES } from "./helpers";
+import { cell, fault, login, VEHICLES } from "./helpers";
 
 const RUN_MS = 120_000;
 const panel = (page: Page) => page.getByRole("region", { name: "Sessions" });
@@ -34,7 +34,9 @@ test("two 2-minute sessions: report pending, then ready; CSV times end in Z", as
     // dropout ends, so its report is deterministically pending first (D-DB-10 watermark)
     if (v === "NYX-TA2") {
       await fault(v, "dropout", { duration_s: 4 });
-      await page.waitForTimeout(500);
+      // in effect once the newest frame the console shows is older than two 100 ms ticks
+      const newest = async () => Date.now() - Date.parse((await cell(page, v, "cabin_pressure_kpa").getAttribute("data-t-onboard")) ?? "");
+      await expect.poll(newest, { timeout: 3_000, intervals: [50] }).toBeGreaterThan(200);
     }
     await panel(page).getByRole("button", { name: `Stop ${name}` }).click();
     const pending = panel(page).getByText(/^Report pending/);

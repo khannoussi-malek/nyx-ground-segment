@@ -3,6 +3,7 @@ leaves the console without that alarm only until the next owner's resync: its fr
 carries the alarm with alert true (CRASH_AT=after_commit_before_publish, D-ENG-16)."""
 
 import asyncio
+import json
 import time
 from datetime import datetime
 from typing import Any
@@ -13,14 +14,22 @@ from tests.support.compose import compose, recreate, restart_count
 from tests.support.env import now, wait_until
 from tests.support.ingest import FAST_ENV, INGEST, LIVE, wait_drained
 from tests.support.pg import lock_holder
+from tests.support.redisx import client
 from tests.support.sim import delete_fault, post_fault
 from tests.support.sse import collecting, live_stack, wait_seen
 
 V, PARAM, RED = "NYX-TA1", "bus_voltage_v", 33.0  # red_high 32; nominal 28
 # held red past the crash (a 2 s step would RAISE and RTN in the same backlog batch, and the
-# snapshot's last transition would be the RTN); DELETEd at the end. The backlog stays inside
-# the first batch's 100 frames.
-STEP_S, BACKLOG_S = 60.0, 3.0
+# snapshot's last transition would be the RTN); DELETEd at the end. The backlog (RED_QUEUED red
+# frames, then whatever the recreate adds) stays inside the first batch's 100 frames.
+STEP_S, RED_QUEUED = 60.0, 10
+
+
+def red_queued(since_ms: int) -> bool:
+    """RED_QUEUED frames with the step's value are in tm:V since `since_ms` (nobody reads it)."""
+    entries: Any = client("admin").xrange(f"tm:{V}", min=str(since_ms))
+    reds = [f for _, f in entries if json.loads(f["data"])["values"].get(PARAM) == RED]
+    return len(reds) >= RED_QUEUED
 
 
 def crash_on_the_step() -> None:
@@ -28,8 +37,9 @@ def crash_on_the_step() -> None:
     its first commit (the backlog, step included) is followed by exit 99 before the publish."""
     wait_until(lambda: lock_holder(V) == "ingest-1", 30)
     compose("stop", *INGEST)
+    since_ms = int(time.time() * 1000)
     assert post_fault(V, "step", param=PARAM, value=RED, duration_s=STEP_S) == 204
-    time.sleep(BACKLOG_S)
+    wait_until(lambda: red_queued(since_ms), 10)
     recreate(["ingest-1"], {**FAST_ENV, "CRASH_AT": "after_commit_before_publish"}, wait=False)
     wait_until(lambda: restart_count("ingest-1") >= 1, 30)
 

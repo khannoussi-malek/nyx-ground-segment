@@ -129,12 +129,15 @@ export async function ackLeftovers(page: Page, rows: ReturnType<Page["locator"]>
   for (let i = 0; i < 5 && (await rows.count()) > 0; i++) {
     const button = rows.first().getByRole("button", { name: /^Acknowledge / });
     if ((await button.count()) === 0) break; // ACKED and still violating: nothing to do
+    const id = await rows.first().getAttribute("data-alarm-id");
     await button.click();
     const dialog = page.getByRole("dialog", { name: "Acknowledge alarm" });
     await dialog.getByLabel("Note (required)").fill(note);
     await dialog.getByRole("button", { name: "ACK" }).click();
     await expect(dialog).toBeHidden();
-    await page.waitForTimeout(1500);
+    // applied: the row is ACKED (no ACK button) or CLEARED (gone); superseded keeps it, and the loop asks again
+    const acked = page.locator(`tr[data-alarm-id="${id}"]`).getByRole("button", { name: /^Acknowledge / });
+    await expect(acked).toHaveCount(0, { timeout: 5_000 }).catch(() => {});
   }
   await expect(rows).toHaveCount(0, { timeout: 5_000 });
 }

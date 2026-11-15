@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from tests.support.compose import compose
+from tests.support.env import REPO
 from tests.support.http import CLIENT_HEADERS
 from tests.support.sim import post_fault
 from tests.support.sse import collecting, live_stack, validate, wait_seen
@@ -30,15 +31,25 @@ def broker_outage() -> None:
         compose("start", "redis")
 
 
+def mine(a: dict[str, Any]) -> bool:
+    return bool(a["vehicle"] == V and a["param"] == "cabin_temp_c" and a["severity"] == "RED")
+
+
+def test_validate_reads_one_exported_schema_per_kind() -> None:
+    sse = REPO / "interfaces" / "schemas" / "sse"  # validate() loads <kind>.schema.json from here
+    assert {p.name.removesuffix(".schema.json") for p in sse.glob("*.schema.json")} == KINDS
+
+
 async def test_every_sse_kind_matches_schema() -> None:
     live = live_stack()
     async with collecting(live) as s:
         await wait_seen(s, kind_is("snapshot"), 5)
+        mark = len(s.seen)  # this test's alarm: RED cabin_temp_c from its own step, seen after it
         red = functools.partial(
             post_fault, V, "step", param="cabin_temp_c", value=31.0, duration_s=2
         )
         assert await asyncio.to_thread(red) == 204
-        await wait_seen(s, lambda k, d: k == "alarm" and d["alarm"]["vehicle"] == V, 10)
+        await wait_seen(s, lambda k, d: k == "alarm" and mine(d["alarm"]), 10, mark)
         async with httpx.AsyncClient(
             base_url=live.url, cookies={"session": live.cookie}, headers=CLIENT_HEADERS
         ) as c:

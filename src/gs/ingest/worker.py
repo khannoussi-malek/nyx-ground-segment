@@ -392,19 +392,18 @@ async def load_state(
 
 
 async def _silence(
-    ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, vs: VehicleState
-) -> VehicleState:
-    """LOS after STALE_S without a new frame: LOS and engine_state in one small transaction,
-    then its `link`. Returns `vs` unchanged when no LOS was due; a Redis error after the commit
-    leaves `vs` unchanged too, so the next pass writes (ON CONFLICT) and publishes it again."""
+    conn: psycopg.AsyncConnection, vehicle: str, vs: VehicleState
+) -> tuple[VehicleState, list[Link]]:
+    """LOS after STALE_S without a new frame: LOS and engine_state in one small transaction.
+    Returns the committed state (LOS open) and its `link` for the caller to publish; `vs`
+    unchanged and no link when no LOS was due."""
     ls, ev = on_silence(vs.link, vehicle, vs.seq)
     if not ev:
-        return vs
+        return vs, []
     nvs = replace(vs, link=ls)
     async with conn.transaction():
         await write_outcome(conn, vehicle, nvs, Outcome((), ev, 0))
-    await publish_ui(ctx.redis, _links(ev, nvs))
-    return nvs
+    return nvs, _links(ev, nvs)
 
 
 async def _ensure_group(r: redis.asyncio.Redis, stream: str) -> None:
@@ -446,7 +445,8 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
     stream = f"tm:{vehicle}"
     home = ctx.homes.get(vehicle)
     vs, reset = await load_state(ctx, conn, vehicle)
-    greet: list[UiMessage] = [Resync(vehicle=vehicle), *_links(reset, vs)]  # D-UI-18
+    # committed but not yet published; kept across a Redis error (P-pf9). Starts with D-UI-18
+    unsent: list[UiMessage] = [Resync(vehicle=vehicle), *_links(reset, vs)]
     ready, backoff, was_down = False, BACKOFF_START_S, False
     claim_idle: int | None = 0  # XAUTOCLAIM min-idle while draining; None = read new entries
     cursor = "0-0"
@@ -463,9 +463,9 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
                 now + ctx.timing.reclaim_s,
             )
         try:
-            if greet:  # first pass after load_state; retried after a Redis error (P-pf9)
-                await publish_ui(ctx.redis, greet)
-                greet = []
+            if unsent:  # the first pass after load_state, or a pass after a Redis error
+                await publish_ui(ctx.redis, unsent)
+                unsent = []
             if not ready:
                 await _ensure_group(ctx.redis, stream)
                 ready = True
@@ -491,7 +491,10 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
                 last_new = time.monotonic()
             vs = nvs
             if time.monotonic() - last_new > ctx.timing.los_s:
-                vs = await _silence(ctx, conn, vehicle, vs)
+                vs, links = await _silence(conn, vehicle, vs)
+                unsent = [*links]
+                await publish_ui(ctx.redis, unsent)
+                unsent = []
             backoff = BACKOFF_START_S
             if was_down:  # R2-23: start the steal hold-off
                 ctx.reconnected_at[0], was_down = time.monotonic(), False

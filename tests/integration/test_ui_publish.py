@@ -1,22 +1,29 @@
 """Worker → ui:events: alarm, link, resync and tm.frozen (Task 8, D-ING-22, D-UI-18, P-pf9)."""
 
+import asyncio
 import json
 import logging
 from datetime import timedelta
-from typing import Any
+from pathlib import Path
+from typing import Any, NoReturn
 
 import psycopg
 import pytest
+import redis.exceptions
 
+from gs.common.hooks import Hooks
 from gs.common.interfaces import FrameHeader
+from gs.common.interfaces.sse import Link
+from gs.common.uievents import publish_ui
+from gs.common.views import alarm_views
 from gs.ingest import worker as worker_mod
-from gs.ingest.events import applied_key, reset_key, seq_key
+from gs.ingest.events import applied_key, link_key, reset_key, seq_key
 from gs.ingest.store import insert_frames
 from gs.ingest.worker import Timing
 from gs.simulator.frames import build_frame
 from tests.support.env import now, until, vid
 from tests.support.ingest import worker
-from tests.support.pg import admin_dsn, alarm_events_for, events_for
+from tests.support.pg import admin_dsn, alarm_events_for, app_dsn, events_for
 from tests.support.redisx import (
     NOMINAL,
     alarm_msgs,
@@ -166,3 +173,51 @@ async def test_ground_events_logged_with_vehicle_and_seq(caplog: pytest.LogCaptu
             await until(lambda: drained(v), 5)
     (rec,) = [r for r in caplog.records if "SEQ_JUMP" in r.getMessage()]
     assert (rec.__dict__["vehicle"], rec.__dict__["seq"]) == (v, 1005)
+
+
+async def test_los_link_republished_after_publish_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A Redis error after the LOS commit: the committed LOS is published on the next pass and
+    the vehicle is in LOS, so a frame arriving meanwhile gives its AOS (review of 3197b60)."""
+    v, base = vid(), now() - timedelta(minutes=1)
+    produce_values(v, {"cabin_temp_c": [22.0] * 5}, base=base)
+    failed: list[bool] = []
+
+    async def lose_first_los(r: Any, msgs: Any) -> None:
+        if not failed and any(isinstance(m, Link) and m.event.kind == "LOS" for m in msgs):
+            failed.append(True)  # a frame lands in the backoff window, 100 ms after seq 4
+            xadd_raw(v, build_frame(v, 5, base + timedelta(milliseconds=500), NOMINAL))
+            raise redis.exceptions.ConnectionError("test: publish lost")
+        await publish_ui(r, msgs)
+
+    monkeypatch.setattr(worker_mod, "publish_ui", lose_first_los)
+    los, aos = link_key("LOS", v, base, 4), link_key("AOS", v, base, 4)
+    async with worker([v], timing=Timing(los_s=0.5)):
+        await until(lambda: bool(failed) and {los, aos} <= set(link_keys(v)), 5)
+    assert aos in {e["key"] for e in events_for(v, "AOS")}
+
+
+async def test_crash_after_commit_before_publish_resync_covers(tmp_path: Path) -> None:
+    """D-UI-18: a crash between COMMIT and publish leaves no alarm or link message; the
+    restart's resync tells clients to reload, and the reloaded view holds the alarm."""
+    v = vid()
+    produce_values(v, RED_STEP)
+    hooks = Hooks(crash_at="after_commit_before_publish", marker_dir=tmp_path, exit=_crash)
+    with pytest.raises(_Crash):
+        async with worker([v], hooks=hooks) as w:
+            await asyncio.wait_for(w.tasks[0], 5)
+    assert [m["kind"] for m in msgs_for(v)] == ["resync"]  # the first start's only
+    async with worker([v]):
+        await until(lambda: drained(v), 5)
+    kinds = [m["kind"] for m in msgs_for(v)]
+    assert kinds.count("resync") == 2 and "alarm" not in kinds  # the redelivery is a duplicate
+    async with await psycopg.AsyncConnection.connect(app_dsn("gs")) as c:
+        (a,) = await alarm_views(c, vehicle=v)
+    assert (a.severity, a.state, a.last.alert, a.value) == ("RED", "UNACK", True, 31.0)
+
+
+class _Crash(BaseException):
+    pass
+
+
+def _crash(_: int) -> NoReturn:
+    raise _Crash

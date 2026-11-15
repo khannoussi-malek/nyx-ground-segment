@@ -659,3 +659,17 @@ async def test_command_during_dropout(live: Live) -> None:  # OPS-3, R2-26
     await until(lambda: live.row(cmd_id)["late_verified_at"] is not None, 8)  # after AOS
     assert live.row(cmd_id)["late_ack_at"] is None  # the tcack was lost with the link
     assert await live.outcome(cmd_id) == "EXECUTED_LATE"
+
+
+async def test_text_postgres_rejects_is_422_before_any_side_effect(api: Api) -> None:
+    # was 503 after the confirm token was spent (Task 27b item 9): checked with the body now
+    r = await api.fc1.post("/api/commands", json={**api.iso(), "reason": "a\x00b"})
+    assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR"), r.text
+    token = await confirm_token(api.fc1, api.vent())
+    body = {**api.vent(), "confirm_token": token}
+    r = await api.fc1.post("/api/commands", json={**body, "reason": "venting \x00 for the test"})
+    assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR"), r.text
+    assert commands_for(api.v) == [] and api.tc() == []
+    assert client("admin").keys(f"cmdlock:{api.v}:*") == []
+    ok = await api.fc1.post("/api/commands", json={**body, "reason": REASON})
+    assert ok.status_code == 202, ok.text  # the token was not spent by the refused body

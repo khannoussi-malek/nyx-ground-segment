@@ -2,6 +2,7 @@ import asyncio
 import csv
 import dataclasses
 import io
+import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
@@ -404,3 +405,14 @@ def test_session_view_converts_to_utc() -> None:
     tokyo = timezone(timedelta(hours=9))
     row = (1, "NYX-TA1", "n", "fc1", T0.astimezone(tokyo), None, None)
     assert _view(row).started_at.utcoffset() == timedelta(0)
+
+
+@pytest.mark.parametrize("name", ["a\x00b", "lone \ud800 surrogate"])
+async def test_text_postgres_rejects_is_422(
+    sess: tuple[httpx.AsyncClient, str, str], name: str
+) -> None:  # was 503 "database unreachable" (Task 27b item 9)
+    c, a, _ = sess
+    body = json.dumps({"vehicle": a, "name": name})  # ASCII escapes: httpx can't encode \ud800
+    r = await c.post("/api/sessions", content=body, headers={"Content-Type": "application/json"})
+    assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR"), r.text
+    assert all(s["vehicle"] != a for s in (await c.get("/api/sessions")).json())

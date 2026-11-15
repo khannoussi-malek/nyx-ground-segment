@@ -1,6 +1,7 @@
 """GET /api/alarms and POST /api/alarms/{alarm_id}/ack (D-ALM-14, Task 10)."""
 
 import asyncio
+import json
 import uuid
 from datetime import timedelta
 from pathlib import Path
@@ -263,3 +264,20 @@ async def test_seen_key_bounds_are_422(app: Any) -> None:  # P-pf43b: 1..200 cha
             r = await ack(c, aid, seen_key=key)
             assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR")
         assert (await ack(c, aid, seen_key="k" * 200)).status_code == 202
+
+
+async def test_text_postgres_rejects_is_422(app: Any) -> None:  # was a 500 (Task 27b item 9)
+    v = vid()
+    aid = await alarm_of(v, 31.0)
+    async with authed(app) as c:
+        for r in (
+            await ack(c, aid, note="seen \x00 it"),
+            await c.post(  # ASCII escapes: httpx itself can't encode a lone surrogate
+                f"/api/alarms/{aid}/ack",
+                content=json.dumps({"request_id": str(uuid.uuid4()), "note": "lone \ud800"}),
+                headers={"Content-Type": "application/json"},
+            ),
+            await ack(c, aid, seen_key="k\x00"),
+        ):
+            assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR"), r.text
+    assert rows("select count(*) as n from alarm_ack_request where alarm_id=%s", aid)[0]["n"] == 0

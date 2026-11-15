@@ -1,9 +1,9 @@
 """REST request/response bodies (frozen for the day-3 tracks; generated into schema.d.ts)."""
 
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from uuid import UUID
 
-from pydantic import ConfigDict, Field
+from pydantic import ConfigDict, Field, field_validator
 
 from gs.common.interfaces.base import StrictModel, UtcTime, VehicleId
 from gs.common.interfaces.sse import CommandView, EventView, TransitionView
@@ -12,6 +12,23 @@ from gs.common.interfaces.streams import ArgValue
 
 class _Body(StrictModel):
     model_config = ConfigDict(extra="forbid")
+
+    # every REST body, before any side effect: text Postgres refuses (NUL, or a lone surrogate
+    # from a JSON \ud800 escape, which has no UTF-8 form) is a 422 VALIDATION_ERROR, never a 500
+    # or a 503 after a confirm token was spent (Task 27b).
+    # ponytail: top-level str fields only; the one dict (command args) is checked against the
+    # mission db before anything is stored.
+    @field_validator("*")
+    @classmethod
+    def _postgres_text(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            if "\x00" in v:
+                raise ValueError("text must not contain NUL (\\u0000)")
+            try:
+                v.encode()
+            except UnicodeEncodeError as e:
+                raise ValueError("text must be valid UTF-8 (no unpaired surrogates)") from e
+        return v
 
 
 class ErrorBody(_Body):

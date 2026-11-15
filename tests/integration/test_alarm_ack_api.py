@@ -1,5 +1,8 @@
 """ACK requests applied by the owner (D-ALM-14), requests inserted as the API would."""
 
+import asyncio
+import logging
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -11,10 +14,10 @@ import pytest
 import redis.exceptions
 from psycopg import sql
 
-from gs.common.interfaces.sse import Alarm
+from gs.common.interfaces.sse import Alarm, Tm
 from gs.common.uievents import publish_ui
 from gs.ingest import worker as worker_mod
-from gs.ingest.acks import pending_acks
+from gs.ingest.acks import ACK_PROPAGATION_S, CHANGED, pending_acks
 from gs.ingest.worker import Timing, load_state, process_batch
 from tests.support.env import now, until, vid
 from tests.support.ingest import make_ctx, worker
@@ -29,7 +32,7 @@ from tests.support.pg import (
     rows,
     stored,
 )
-from tests.support.redisx import alarm_msgs, drained, produce_values, read_without_ack
+from tests.support.redisx import alarm_msgs, drained, pending, produce_values, read_without_ack
 
 TEMP = "cabin_temp_c"
 RED_STEP = {TEMP: [22.0] * 5 + [31.0] * 5}  # RAISE at seq 7, last frame seq 9
@@ -37,12 +40,14 @@ NOMINAL5 = {TEMP: [22.0] * 5}
 
 
 async def red_alarm(v: str, base: datetime) -> uuid.UUID:
-    """A RED cabin_temp_c alarm raised and committed by a worker that has stopped again."""
+    """A RED cabin_temp_c alarm raised and committed by a worker that has stopped again, and
+    on screen long enough to be acknowledged (P-pf42b)."""
     produce_values(v, RED_STEP, base=base)
     async with worker([v]):
         await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
     a = open_alarm(v, TEMP)
     assert a is not None
+    await asyncio.sleep(ACK_PROPAGATION_S)
     return uuid.UUID(str(a["alarm_id"]))
 
 
@@ -223,6 +228,7 @@ async def test_ack_applies_during_los() -> None:  # Review Focus 2: no frame to 
         await until(lambda: open_alarm(v, TEMP) is not None and bool(events_for(v, "LOS")), 5)
         a = open_alarm(v, TEMP)
         assert a is not None
+        await asyncio.sleep(ACK_PROPAGATION_S)  # seen on screen first (P-pf42b)
         rid = request(v, uuid.UUID(str(a["alarm_id"])))
         await until(lambda: status(v).get(rid, ("",))[0] == "applied", 1.5)
     (ack,) = [r for r in alarm_events_for(v) if r["kind"] == "ACK"]
@@ -236,6 +242,7 @@ async def test_ack_published_as_alarm_message() -> None:
         await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
         a = open_alarm(v, TEMP)
         assert a is not None
+        await asyncio.sleep(ACK_PROPAGATION_S)  # seen on screen first (P-pf42b)
         rid = request(v, uuid.UUID(str(a["alarm_id"])))
         await until(lambda: any(m["alarm"]["state"] == "ACKED" for m in alarm_msgs(v)), 3)
     (m,) = [m for m in alarm_msgs(v) if m["alarm"]["state"] == "ACKED"]
@@ -337,3 +344,103 @@ async def test_acked_state_kept_after_publish_error(monkeypatch: pytest.MonkeyPa
         await until(lambda: drained(v) and ("CLEAR", "system") in kinds(v), 5)
         await until(lambda: any(m["alarm"]["state"] == "ACKED" for m in alarm_msgs(v)), 3)
     assert failed and kinds(v) == [("RAISE", "system"), ("ACK", "fc1"), ("CLEAR", "system")]
+
+
+async def yellow_alarm(v: str, base: datetime) -> uuid.UUID:
+    produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
+    await drain(v)
+    a = open_alarm(v, TEMP)
+    assert a is not None and a["severity"] == "YELLOW"
+    return uuid.UUID(str(a["alarm_id"]))
+
+
+async def test_escalation_just_before_request_superseded() -> None:  # P-pf42b rule 1
+    v, base = vid(), now() - timedelta(minutes=1)
+    aid = await yellow_alarm(v, base)
+    produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
+    await drain(v)
+    (esc,) = rows(
+        "select processed_at from alarm_events where alarm_id=%s and kind='ESCALATE'", aid
+    )
+    rid = request(v, aid, requested_at=esc["processed_at"] + timedelta(seconds=1))
+    await drain(v)
+    assert status(v) == {rid: ("superseded", CHANGED)}
+
+
+async def test_ack_during_held_escalation_superseded(monkeypatch: pytest.MonkeyPatch) -> None:
+    v, base = vid(), now() - timedelta(minutes=1)  # P-pf42b rule 2
+    produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
+    held: list[float] = []  # monotonic end of the outage, from the ESCALATE's publish on
+
+    async def hold_escalation(r: Any, msgs: Any) -> None:
+        esc = any(isinstance(m, Alarm) and m.alarm.last.kind == "ESCALATE" for m in msgs)
+        if esc and not held:
+            held.append(time.monotonic() + 3.0)
+        if held and time.monotonic() < held[0]:
+            raise redis.exceptions.ConnectionError("test: broker down")
+        await publish_ui(r, msgs)
+
+    monkeypatch.setattr(worker_mod, "publish_ui", hold_escalation)
+    async with worker([v]):
+        await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
+        a = open_alarm(v, TEMP)
+        assert a is not None
+        produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
+        await until(lambda: bool(held), 5)  # ESCALATE committed, nobody has seen it
+        await asyncio.sleep(2.5)  # past rule 1's margin from its processed_at
+        rid = request(v, uuid.UUID(str(a["alarm_id"])))
+        await until(lambda: status(v)[rid][0] != "pending", 10)
+    assert status(v) == {rid: ("superseded", CHANGED)}  # measured from the late publish
+
+
+async def test_whitespace_note_rejected_not_isolated() -> None:  # P-pf42b item 4
+    v, base = vid(), now() - timedelta(minutes=1)
+    aid = await red_alarm(v, base)
+    rid = request(v, aid, note="\t\n")  # trim() keeps it, Python's strip() does not
+    produce_values(v, NOMINAL5, base=base, start_seq=10)
+    await one_batch(v)
+    st, why = status(v)[rid]
+    assert st == "rejected" and (why or "").startswith("ValueError: an ACK needs a note")
+    assert stored(v) == 15 and [k for k, _ in kinds(v)] == ["RAISE", "RTN"]
+
+
+async def test_stuck_rejection_logged_once(caplog: pytest.LogCaptureFixture) -> None:
+    v, base = vid(), now() - timedelta(minutes=1)  # P-pf42b item 3
+    note = f"stuck {v}"
+    aid = await red_alarm(v, base)
+    request(v, aid, note=note)
+    with (
+        raising_on("alarm_events", "note", note),
+        raising_on("audit_log", "reason", note),
+        caplog.at_level(logging.ERROR, logger="gs.ingest.acks"),
+    ):
+        async with worker([v]):
+            await asyncio.sleep(3.5)  # several loop passes, each retrying the request
+    stuck = [r for r in caplog.records if "could not be rejected" in r.getMessage()]
+    assert len(stuck) == 1
+
+
+async def test_frame_batch_with_ack_survives_publish_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # P-pf42b item 5: the frame path of Unpublished
+    v, base = vid(), now() - timedelta(minutes=1)
+    aid = await red_alarm(v, base)
+    request(v, aid)
+    produce_values(v, NOMINAL5, base=base, start_seq=10)
+    consumer = f"c-{v}"
+    assert len(read_without_ack(v, consumer)) == 5  # in its PEL: the first pass claims one
+    failed: list[bool] = []
+
+    async def lose_first_batch(r: Any, msgs: Any) -> None:
+        tm = any(isinstance(m, Tm) for m in msgs)
+        if not failed and tm and any(isinstance(m, Alarm) for m in msgs):
+            failed.append(True)  # one frame and the ACK, committed together
+            raise redis.exceptions.ConnectionError("test: publish lost after the commit")
+        await publish_ui(r, msgs)
+
+    monkeypatch.setattr(worker_mod, "publish_ui", lose_first_batch)
+    async with worker([v], consumer=consumer):
+        await until(lambda: drained(v) and ("CLEAR", "system") in kinds(v), 8)
+    assert failed and pending(v) == 0
+    assert kinds(v) == [("RAISE", "system"), ("ACK", "fc1"), ("CLEAR", "system")]
+    assert len([r for r in alarm_events_for(v) if r["kind"] == "ACK"]) == 1

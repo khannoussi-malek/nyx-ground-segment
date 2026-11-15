@@ -11,6 +11,7 @@ import pytest
 
 from gs.api import alarms
 from gs.api.app import create_app
+from gs.ingest.acks import ACK_PROPAGATION_S
 from tests.support.env import dotenv, now, until, vid
 from tests.support.http import CLIENT_HEADERS, FC2_PW, api_settings, authed, get_json
 from tests.support.ingest import worker
@@ -30,6 +31,7 @@ async def alarm_of(v: str, value: float, nominal_after: int = 0) -> str:
             lambda: drained(v) and bool(rows("select 1 from alarms where vehicle=%s", v)), 5
         )
     (a,) = rows("select alarm_id from alarms where vehicle=%s", v)
+    await asyncio.sleep(ACK_PROPAGATION_S)  # on screen long enough to be acknowledged
     return str(a["alarm_id"])
 
 
@@ -56,6 +58,7 @@ async def test_ack_202_pending_then_applied(app: Any) -> None:
         await until(lambda: open_alarm(v, TEMP) is not None and drained(v), 5)
         a = open_alarm(v, TEMP)
         assert a is not None
+        await asyncio.sleep(ACK_PROPAGATION_S)
         rid = str(uuid.uuid4())
         r = await ack(c, str(a["alarm_id"]), rid=rid)
         assert (r.status_code, r.json()) == (202, {"request_id": rid, "status": "pending"})

@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import psycopg
 import redis.asyncio
@@ -27,7 +28,7 @@ from gs.common.interfaces.ui_event import Resync, UiMessage
 from gs.common.missiondb import MissionDb, MissionDbError
 from gs.common.uievents import publish_ui
 from gs.common.views import alarm_views
-from gs.ingest.acks import AckReq, apply_acks, pending_acks
+from gs.ingest.acks import AckReq, apply_acks, db_now, pending_acks
 from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
 from gs.ingest.events import GroundEvent, details_json, poison_key, reset_key
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
@@ -159,6 +160,12 @@ def _links(events: Sequence[GroundEvent], vs: VehicleState) -> list[Link]:
         view = EventView(key=e.key, vehicle=e.vehicle, kind=e.kind, t_onboard=t, details=details)
         out.append(Link(event=view))
     return out
+
+
+def _raised(msgs: Sequence[UiMessage]) -> set[UUID]:
+    """Alarms whose newest transition in `msgs` raises or escalates them."""
+    kinds = ("RAISE", "ESCALATE")
+    return {m.alarm.alarm_id for m in msgs if isinstance(m, Alarm) and m.alarm.last.kind in kinds}
 
 
 async def _ui(
@@ -475,6 +482,8 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
     vs, reset = await load_state(ctx, conn, vehicle)
     # committed but not yet published; kept across a Redis error (P-pf9). Starts with D-UI-18
     unsent: list[UiMessage] = [Resync(vehicle=vehicle), *_links(reset, vs)]
+    # ponytail: never pruned; an entry per alarm whose RAISE/ESCALATE was published late
+    shown: dict[UUID, datetime] = {}  # alarm -> late publish time, database clock (P-pf42b)
     ready, backoff, was_down = False, BACKOFF_START_S, False
     claim_idle: int | None = 0  # XAUTOCLAIM min-idle while draining; None = read new entries
     cursor = "0-0"
@@ -493,7 +502,9 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
         try:
             if unsent:  # the first pass after load_state, or a pass after a Redis error
                 await publish_ui(ctx.redis, unsent)
-                unsent = []
+                late, unsent = _raised(unsent), []
+                if late:  # their operators could see them only now: ACKs measure from here
+                    shown |= dict.fromkeys(late, await db_now(conn))
             if not ready:
                 await _ensure_group(ctx.redis, stream)
                 ready = True
@@ -514,8 +525,9 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
                 claimed = res[0][1] if res else []
                 caught_up = len(claimed) < COUNT
             entries: list[Entry] = [(eid.decode(), f or {}) for eid, f in claimed]
-            # after the read: a request waits at most one BLOCK_MS (D-ALM-14: <= 1 s)
-            acks = await pending_acks(conn, vehicle)
+            # after the read: a request waits at most one BLOCK_MS (D-ALM-14: <= 1 s); only
+            # after the flush above succeeded (a held message blocks this pass, P-pf42b)
+            acks = await pending_acks(conn, vehicle, shown)
             nvs, _ = await process_batch(ctx, conn, stream, entries, vs, acks)
             if nvs.seq != vs.seq:  # a new frame advanced the tracker
                 last_new = time.monotonic()

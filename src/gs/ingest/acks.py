@@ -5,9 +5,9 @@ and applies them at the start of its next frame transaction, before that batch's
 in a SAVEPOINT, so one bad request can't block frames (R2-01)."""
 
 import logging
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
@@ -20,12 +20,17 @@ from gs.common.audit import audit
 from gs.ingest.seq import SeqState
 
 log = logging.getLogger(__name__)
+# ponytail: never pruned; one id per request that can't even be rejected (none in normal runs)
+_STUCK: set[UUID] = set()
 Result = Literal["applied", "superseded"]
 # P-pf40: 22 data, 23 integrity, P0 PL/pgSQL RAISE (a trigger) reject one request; a request
 # that can never apply must not exit ingest into a restart loop. Every other class propagates.
 REJECT_CLASSES = ("22", "23", "P0")
 NOT_OPEN = "alarm no longer open"  # ruling R-w
 CHANGED = "alarm changed since the request"  # ruling P-pf42
+# P-pf42b: commit -> publish -> SSE -> screen takes time; a RAISE/ESCALATE this close before
+# the request (or before the late publish of a held one) may not have been on the screen
+ACK_PROPAGATION_S = 2.0
 ALREADY_ACKED = "already acked"
 
 
@@ -36,22 +41,41 @@ class AckReq:
     param: str
     by_user: str
     note: str
-    changed: bool = False  # a RAISE/ESCALATE row was committed after the request (P-pf42)
+    changed: bool = False  # raised/escalated too late for the operator to have seen it
 
 
-async def pending_acks(conn: psycopg.AsyncConnection, vehicle: str) -> list[AckReq]:
-    """Pending requests of `vehicle`, oldest first, each with whether its alarm was raised again
-    or escalated after the operator asked (the ACK would cover what they did not see)."""
+async def pending_acks(
+    conn: psycopg.AsyncConnection, vehicle: str, shown: Mapping[UUID, datetime] | None = None
+) -> list[AckReq]:
+    """Pending requests of `vehicle`, oldest first, each with whether the ACK may cover what the
+    operator did not see (P-pf42/42b): a RAISE/ESCALATE processed later than ACK_PROPAGATION_S
+    before the request, or `shown` (alarm -> when its held RAISE/ESCALATE message was finally
+    published, database clock) later than that."""
     cur = await conn.execute(
-        "SELECT q.request_id, q.alarm_id, a.param, q.by_user, q.note,"
+        "SELECT q.request_id, q.alarm_id, a.param, q.by_user, q.note, q.requested_at,"
         " EXISTS (SELECT 1 FROM alarm_events e WHERE e.alarm_id = q.alarm_id"
-        "         AND e.kind IN ('RAISE', 'ESCALATE') AND e.processed_at > q.requested_at)"
+        "         AND e.kind IN ('RAISE', 'ESCALATE')"
+        "         AND e.processed_at > q.requested_at - make_interval(secs => %s))"
         " FROM alarm_ack_request q JOIN alarms a USING (alarm_id)"
         " WHERE q.vehicle = %s AND q.status = 'pending'"
         " ORDER BY q.requested_at, q.request_id",
-        (vehicle,),
+        (ACK_PROPAGATION_S, vehicle),
     )
-    return [AckReq(*row) for row in await cur.fetchall()]
+    margin, out = timedelta(seconds=ACK_PROPAGATION_S), []
+    for rid, aid, param, user, note, asked, changed in await cur.fetchall():
+        at = (shown or {}).get(aid)
+        late = at is not None and asked < at + margin
+        out.append(AckReq(rid, aid, param, user, note, changed or late))
+    return out
+
+
+async def db_now(conn: psycopg.AsyncConnection) -> datetime:
+    """The database clock (requested_at and processed_at come from it, not the host's)."""
+    cur = await conn.execute("SELECT clock_timestamp()")
+    row = await cur.fetchone()
+    assert row is not None
+    t: datetime = row[0]
+    return t
 
 
 def apply_ack(
@@ -138,7 +162,11 @@ async def apply_acks(
     engine keeps its pre-ACK state; if even that fails it stays pending (logged) so the frames
     still commit. Any other error propagates (operational, D-ING-24)."""
     for req in reqs:
-        new, tr, result, reason = apply_ack(state, req, vehicle, datetime.now(UTC))
+        try:
+            new, tr, result, reason = apply_ack(state, req, vehicle, datetime.now(UTC))
+        except ValueError as e:  # e.g. a note blank to Python but not to the DB's trim()
+            await _reject(conn, vehicle, req, f"ValueError: {e}")
+            continue
         try:
             await write_ack(conn, vehicle, req, result, reason, tr, after)
         except psycopg.Error as e:
@@ -160,5 +188,8 @@ async def _reject(conn: psycopg.AsyncConnection, vehicle: str, req: AckReq, why:
             await _settle(conn, vehicle, req, "rejected", why)
     except psycopg.Error as e:
         _rejectable(e)
+        if req.request_id in _STUCK:  # retried every pass: say it once (P-pf42b)
+            return
+        _STUCK.add(req.request_id)
         log.error("ACK request %s could not be rejected (%s: %s); left pending",
                   req.request_id, e.sqlstate, e, extra={"vehicle": vehicle})  # fmt: skip

@@ -6,12 +6,13 @@ import signal
 import sys
 import time
 from collections import Counter
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
 import psycopg
 import redis.asyncio
+import redis.exceptions
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
@@ -19,13 +20,14 @@ from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import serve_health
 from gs.common.hooks import Hooks
 from gs.common.logs import setup_logging
+from gs.common.uievents import publish_ui
 from gs.ingest.errors import OperationalDbError
-from gs.ingest.events import insert_events
+from gs.ingest.events import GroundEvent, insert_events
 from gs.ingest.liveness import ingest_status, refresh_memory, run_ticks
-from gs.ingest.mission import MissionWatcher, start_set
+from gs.ingest.mission import MissionWatcher, OnEvents, start_set
 from gs.ingest.owner import parse_homes
 from gs.ingest.validate import FieldStats
-from gs.ingest.worker import SOCKET_TIMEOUT_S, Ctx, run_vehicle
+from gs.ingest.worker import SOCKET_TIMEOUT_S, Ctx, run_vehicle, to_link
 
 
 @dataclass(frozen=True)
@@ -58,17 +60,33 @@ class IngestSettings:
         )
 
 
+def publish_events(r: redis.asyncio.Redis) -> OnEvents:
+    """A rejected mission-db set reaches the console's event strip as `link` (D-UI-19). A Redis
+    error is logged, never raised into the watcher: the event row is already written and every
+    snapshot carries it."""
+
+    async def publish(events: Sequence[GroundEvent]) -> None:
+        try:
+            await publish_ui(r, [to_link(e) for e in events])
+        except redis.exceptions.RedisError as e:
+            log.warning("rejected set not published (%s: %s)", type(e).__name__, e)
+
+    return publish
+
+
 async def run(s: IngestSettings, stop: asyncio.Event) -> None:
     async with await psycopg.AsyncConnection.connect(s.database_url, autocommit=True) as conn:
         # stores the set (engine_state.set_sha256 references it) or falls back (D-ALM-12)
         mdb, rejected = await start_set(conn, Path(s.mission_db))
         await insert_events(conn, rejected)
-    watcher = MissionWatcher(Path(s.mission_db), s.database_url, s.consumer_name, mdb)
     # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
     # no client-side retry: every connection error must reach run_vehicle's backoff loop, which
     # re-reads our PEL and never re-sends a non-idempotent XADD behind our back (D-ING-03/08)
     r = redis.asyncio.Redis.from_url(
         s.redis_url, socket_timeout=SOCKET_TIMEOUT_S, retry=Retry(NoBackoff(), 0)
+    )
+    watcher = MissionWatcher(
+        Path(s.mission_db), s.database_url, s.consumer_name, mdb, on_events=publish_events(r)
     )
     seen: dict[str, float] = {}  # a standby task (lock not granted) is not a stale loop
     ctx = Ctx(

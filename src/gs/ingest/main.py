@@ -15,6 +15,7 @@ import redis.asyncio
 import redis.exceptions
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
+from redis.maint_notifications import MaintNotificationsConfig
 
 from gs.common.config import require, require_int, vehicle_list
 from gs.common.health import serve_health
@@ -82,8 +83,13 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
     # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
     # no client-side retry: every connection error must reach run_vehicle's backoff loop, which
     # re-reads our PEL and never re-sends a non-idempotent XADD behind our back (D-ING-03/08)
+    # maintenance notifications off: a pooled connection the server closed is reconnected at
+    # checkout instead of failing the pass into the backoff loop (P-pf47, see the api)
     r = redis.asyncio.Redis.from_url(
-        s.redis_url, socket_timeout=SOCKET_TIMEOUT_S, retry=Retry(NoBackoff(), 0)
+        s.redis_url,
+        socket_timeout=SOCKET_TIMEOUT_S,
+        retry=Retry(NoBackoff(), 0),
+        maint_notifications_config=MaintNotificationsConfig(enabled=False),
     )
     publish = publish_events(r)
     if won:  # only when our insert won, like the watcher (P-pf9): a restart does not repeat it

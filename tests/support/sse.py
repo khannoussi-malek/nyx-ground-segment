@@ -16,7 +16,7 @@ import psycopg
 
 from gs.common.interfaces import Tm
 from tests.support.compose import api_url
-from tests.support.env import REPO, dotenv, wait_until
+from tests.support.env import REPO, dotenv
 from tests.support.http import CLIENT_HEADERS
 from tests.support.mission import MISSION_DIR
 from tests.support.pg import app_dsn
@@ -118,27 +118,15 @@ class LiveStack:
 
 
 def live_stack(user: str = "fc1") -> LiveStack:
-    """Logs in, retrying a 503 for up to 60 s: an earlier system test may have just restarted
-    Redis, and each pooled API connection from before the restart fails once (retry off, R28)
-    even after /healthz is green again (HEADS-UP in the Task 27 report)."""
-    got: list[httpx.Response] = []
-
-    def logged_in() -> bool:
-        try:
-            r = httpx.post(
-                f"{api_url()}/api/login",
-                json={"user": user, "password": dotenv()[f"DEMO_PW_{user.upper()}"]},
-                headers=CLIENT_HEADERS,
-                timeout=5,
-            )
-        except httpx.HTTPError:
-            return False
-        got.append(r)
-        assert r.status_code in (204, 503), r.text
-        return r.status_code == 204
-
-    wait_until(logged_in, 60)
-    return LiveStack(api_url(), got[-1].cookies["session"])
+    """Logs in once: the first request after a Redis restart succeeds (P-pf47)."""
+    r = httpx.post(
+        f"{api_url()}/api/login",
+        json={"user": user, "password": dotenv()[f"DEMO_PW_{user.upper()}"]},
+        headers=CLIENT_HEADERS,
+        timeout=5,
+    )
+    assert r.status_code == 204, r.text
+    return LiveStack(api_url(), r.cookies["session"])
 
 
 @asynccontextmanager

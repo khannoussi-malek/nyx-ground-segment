@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from psycopg_pool import AsyncConnectionPool
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
+from redis.maint_notifications import MaintNotificationsConfig
 from starlette.exceptions import HTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
@@ -179,12 +180,15 @@ def create_app(settings: Settings) -> FastAPI:
         mdb = await _start_set(settings)
         app.state.vehicles = settings.vehicles
         # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
-        # no client-side retry: connection errors reach our own handling (R28)
+        # no client-side retry: connection errors reach our own handling (R28). Maintenance
+        # notifications off: while on (8.1's default) the pool skips its checkout check, so a
+        # connection the server closed (a Redis restart) failed the next request (P-pf47)
         app.state.redis = redis.asyncio.Redis.from_url(
             settings.redis_url,
             socket_timeout=SOCKET_TIMEOUT_S,
             retry=Retry(NoBackoff(), 0),
             decode_responses=True,
+            maint_notifications_config=MaintNotificationsConfig(enabled=False),
         )
         pool = AsyncConnectionPool(settings.database_url, min_size=1, max_size=8, open=False)
         await pool.open(wait=False)

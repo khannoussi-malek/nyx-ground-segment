@@ -8,6 +8,7 @@ from typing import Any, NoReturn
 
 import psycopg
 import pyarrow as pa
+import pyarrow.compute as pc
 import pyarrow.parquet as pq
 import pytest
 from minio.error import S3Error
@@ -451,12 +452,21 @@ async def test_v1_needs_a_superset_of_the_old_version() -> None:
         assert v0 is not None
         await c.execute("delete from telemetry where vehicle=%s and seq=0", (v,))  # min moves up
         assert await archive_hour(ctx, c, v, H, version=1) is None
-        late_row(v, H + timedelta(milliseconds=1), 8888)
+    assert archive_rows(v)[0]["version"] == 0  # the old version stays the recorded one
+
+
+async def test_v1_refused_when_the_latest_row_is_gone() -> None:
+    v = vid()
+    hot_hour(v, H, n=300)
+    ctx = archiver_ctx()
+    async with app_conn() as c:
+        assert await archive_hour(ctx, c, v, H) is not None
         await c.execute(
             "delete from telemetry where vehicle=%s and seq=299", (v,)
         )  # max moves down
         late_row(v, H + timedelta(seconds=29, milliseconds=990), 8889)
-    assert archive_rows(v)[0]["version"] == 0  # the old version stays the recorded one
+        assert await archive_hour(ctx, c, v, H, version=1) is None
+    assert archive_rows(v)[0]["version"] == 0
 
 
 async def test_v1_swap_inside_the_range_is_refused() -> None:
@@ -763,4 +773,111 @@ async def test_delete_and_merge_need_an_autocommit_connection() -> None:
         with pytest.raises(AssertionError, match="autocommit"):
             await merge_late(archiver_ctx(), plain, row)
     assert stored_in(v, H) == 10
+    _drop_vehicle(v)
+
+
+# ---- Task 4 fix round 1 -------------------------------------------------------------------
+
+COL = "g4_added_col"  # test-only parameter column, dropped again
+
+
+async def test_merge_late_keeps_a_column_added_after_v0() -> None:
+    v = vid()
+    hot_hour(v, H, n=100)
+    ctx = archiver_ctx()
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as a:
+        try:
+            async with app_conn() as c:
+                row = await archive_hour(ctx, c, v, H)
+                assert row is not None and await delete_hot(ctx, c, row, hour_bounds(v, H))
+                a.execute(f"alter table telemetry add column if not exists {COL} double precision")
+                insert_rows(v, [{"t_onboard": H + timedelta(minutes=30), "seq": 7000, COL: 42.5}])
+                merged = await merge_late(ctx, c, archive_row(v))
+            assert merged is not None and merged.version == 1 and hot_n(v) == 0
+            t = pq.read_table(io.BytesIO(object_bytes(object_key(v, H, 1))))
+            got = t.filter(pc.equal(t["seq"], 7000))[COL].to_pylist()
+            assert got == [42.5]
+        finally:
+            a.execute(f"alter table telemetry drop column if exists {COL}")
+    _drop_vehicle(v)
+
+
+async def test_delete_hot_rolls_back_when_the_archive_row_changed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gs.archiver import job
+
+    v = vid()
+    hot_hour(v, H, n=50)
+    ctx = archiver_ctx()
+    real = job._recorded_table
+
+    async def racing(c: Any, r: Any) -> Any:
+        t = await real(c, r)
+        with psycopg.connect(admin_dsn("gs"), autocommit=True) as a:  # row changes after the check
+            a.execute("update archive_object set sha256 = %s where vehicle = %s", ("f" * 64, v))
+        return t
+
+    async with app_conn() as c:
+        row = await archive_hour(ctx, c, v, H)
+        assert row is not None
+        monkeypatch.setattr(job, "_recorded_table", racing)
+        assert not await delete_hot(ctx, c, row, hour_bounds(v, H))
+    assert stored_in(v, H) == 50 and archive_rows(v)[0]["hot_deleted_at"] is None
+    assert (v, H) in ctx.refused
+    _drop_vehicle(v)
+
+
+async def test_upsert_never_overwrites_a_row_that_appeared_during_the_archive() -> None:
+    from dataclasses import dataclass
+
+    v = vid()
+    hot_hour(v, H, n=50)
+
+    @dataclass(frozen=True)
+    class Racer(Hooks):
+        def fire(self, point: str) -> None:
+            if point == "archive:after_reread":
+                with psycopg.connect(admin_dsn("gs"), autocommit=True) as a:
+                    a.execute(
+                        "insert into archive_object (vehicle, hour, sha256, rows, t_min, t_max,"
+                        " verified_at, hot_deleted_at) values (%s, %s, 'other', 1, %s, %s, now(),"
+                        " now())", (v, H, H, H),
+                    )  # fmt: skip
+
+    async with app_conn() as c:
+        assert await archive_hour(archiver_ctx(hooks=Racer()), c, v, H) is None
+    assert [(r["sha256"], r["version"]) for r in archive_rows(v)] == [("other", 0)]
+    _drop_vehicle(v)
+
+
+async def test_merge_warns_when_a_duplicate_key_differs(caplog: pytest.LogCaptureFixture) -> None:
+    v = vid()
+    hot_hour(v, H, n=100)
+    ctx = archiver_ctx()
+    async with app_conn() as c:
+        row = await archive_hour(ctx, c, v, H)
+        assert row is not None and await delete_hot(ctx, c, row, hour_bounds(v, H))
+        late_row(v, H + timedelta(seconds=0.5), 5)  # archived row 5 has values, this one has none
+        with caplog.at_level(logging.WARNING, logger="gs.archiver.job"):
+            assert await merge_late(ctx, c, archive_row(v)) is not None
+    assert any("differ" in r.getMessage() for r in caplog.records)
+    _drop_vehicle(v)
+
+
+async def test_merge_refusal_names_a_changed_archive_row(caplog: pytest.LogCaptureFixture) -> None:
+    v = vid()
+    hot_hour(v, H, n=100)
+    ctx = archiver_ctx()
+    async with app_conn() as c:
+        row = await archive_hour(ctx, c, v, H)
+        assert row is not None and await delete_hot(ctx, c, row, hour_bounds(v, H))
+        late_row(v, H + timedelta(minutes=1), 7001)
+        stale = archive_row(v)  # the row changes after it was read: the guarded UPDATE matches none
+        with psycopg.connect(admin_dsn("gs"), autocommit=True) as a:
+            a.execute("update archive_object set sha256 = 'z' where vehicle=%s", (v,))
+        assert await merge_late(ctx, c, stale) is None
+    refusal = [r.getMessage() for r in caplog.records if "refused" in r.getMessage()]
+    assert refusal and "archive row changed" in refusal[-1]
+    assert hot_n(v) == 1
     _drop_vehicle(v)

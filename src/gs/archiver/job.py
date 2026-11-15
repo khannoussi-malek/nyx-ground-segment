@@ -35,6 +35,7 @@ values (%s, %s, %s, %s, %s, %s, %s, now())
 on conflict (vehicle, hour) do update set version = excluded.version, sha256 = excluded.sha256,
   rows = excluded.rows, t_min = excluded.t_min, t_max = excluded.t_max,
   verified_at = excluded.verified_at, last_checked_at = null
+  where archive_object.version < excluded.version and archive_object.hot_deleted_at is null
 returning vehicle, hour, sha256, rows, t_min, t_max, version, verified_at, hot_deleted_at,
   last_checked_at
 """
@@ -87,7 +88,9 @@ async def archive_hour(
     t_min, t_max = table["t_onboard"][0].as_py(), table["t_onboard"][-1].as_py()  # sorted
     cur = await conn.execute(UPSERT, (vehicle, w.start, sha, table.num_rows, t_min, t_max, version))
     row = await cur.fetchone()
-    assert row is not None
+    if row is None:  # the row moved on (newer version, or hot-deleted) since the pre-PUT check
+        _fail(vehicle, w.start, f"{key} not recorded: the archive row changed during the archive")
+        return None
     return ArchiveRow(*row)
 
 
@@ -186,32 +189,43 @@ async def delete_hot(
     if archived.num_rows != row.rows:
         return _refuse(ctx, *key, f"object has {archived.num_rows} rows, row says {row.rows}")
     want = (row.rows, row.t_min, row.t_max, fingerprint(archived))
-    got: tuple[int, datetime | None, datetime | None, str] | None = None
+    why: str | None = None
     async with conn.transaction():
         got = await _delete_window(conn, w)
         if got != want:
+            why = f"deleted rows {got[:3]} / {got[3][:12]} != archive {want[:3]}"
+        else:
+            cur = await conn.execute(
+                "update archive_object set hot_deleted_at = clock_timestamp()"
+                " where vehicle = %s and hour = %s and version = %s and sha256 = %s",
+                (*key, row.version, row.sha256),
+            )
+            if cur.rowcount != 1:
+                why = "the archive row changed (version or sha256) during the delete"
+        if why is not None:
             raise psycopg.Rollback()  # ends the transaction: the delete is undone
-        await conn.execute(
-            "update archive_object set hot_deleted_at = clock_timestamp()"
-            " where vehicle = %s and hour = %s", key,
-        )  # fmt: skip
-        got = None  # committed
-    if got is not None:
-        return _refuse(ctx, *key, f"deleted rows {got[:3]} / {got[3][:12]} != archive {want[:3]}")
+    if why is not None:
+        return _refuse(ctx, *key, why)
     ctx.refused.discard(key)
     return True
 
 
 def _dedupe_sorted(t: pa.Table) -> pa.Table:
     s = sort_rows(t)
-    seen: set[tuple[Any, Any, Any]] = set()
-    keep = []
+    first: dict[tuple[Any, Any, Any], int] = {}
+    keep, differing = [], 0
     for i, k in enumerate(
         zip(s["vehicle"].to_pylist(), s["t_onboard"].to_pylist(), s["seq"].to_pylist(), strict=True)
     ):
-        if k not in seen:
-            seen.add(k)
+        if k not in first:
+            first[k] = i
             keep.append(i)
+        elif repr(s.slice(i, 1).to_pylist()) != repr(s.slice(first[k], 1).to_pylist()):
+            differing += 1
+    if differing:
+        log.warning(
+            "%d late row(s) share a key with an archived row but differ; dropped", differing
+        )
     return s.take(keep)
 
 
@@ -227,7 +241,7 @@ async def merge_late(
     if prev is None:
         return None
     w = hour_bounds(row.vehicle, row.hour)
-    late = await hot_table(conn, w, prev.schema)
+    late = await hot_table(conn, w, await hot_schema(conn))  # columns added since v0 included
     if late.num_rows == 0:
         return None
     expected = _dedupe_sorted(pa.concat_tables([prev, late], promote_options="default"))
@@ -251,7 +265,7 @@ async def merge_late(
         fingerprint(late),
     )
     merged: ArchiveRow | None = None
-    got: tuple[int, datetime | None, datetime | None, str] | None = None
+    why = ""
     async with conn.transaction():
         cur = await conn.execute(
             "update archive_object set version = %s, sha256 = %s, rows = %s, t_min = %s,"
@@ -274,11 +288,15 @@ async def merge_late(
         )
         updated = await cur.fetchone()
         got = await _delete_window(conn, w)
-        if updated is None or got != want:
+        if updated is None:
+            why = "the archive row changed (version or sha256) before the merge committed"
+            raise psycopg.Rollback()
+        if got != want:
+            why = f"late rows changed during the merge: {got}"
             raise psycopg.Rollback()  # both the row update and the delete are undone
         merged = ArchiveRow(*updated)
     if merged is None:
-        _refuse(ctx, row.vehicle, row.hour, f"late rows changed during the merge: {got}")
+        _refuse(ctx, row.vehicle, row.hour, why)
         return None
     ctx.refused.discard((row.vehicle, row.hour))
     return merged

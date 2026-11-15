@@ -75,3 +75,42 @@ def test_false_raises_only_with_a_fault_log() -> None:
     assert quality(evs, None).false_raises is None
     assert quality(evs, []).false_raises == 3
     assert quality(evs, [leak]).false_raises == 2
+
+
+KEY = f"{V}/{P}"
+
+
+def test_peak_window_is_half_open() -> None:
+    assert quality(raises([0, 600]), None).peak_10min == {"all": 1, V: 1}
+    assert quality(raises([0, 599.99]), None).peak_10min == {"all": 2, V: 2}
+
+
+def test_flood_expiry_before_raise_at_the_same_instant() -> None:
+    # 9 RAISEs, the first at 0; the 10th at exactly 600 sees the first one expire first
+    q = quality(raises([0, 60, 120, 180, 240, 300, 360, 420, 480, 600]), None)
+    assert q.time_in_flood_s == 0
+
+
+def test_escalate_is_not_a_raise() -> None:
+    evs = [*raises([0, 1]), ev("ESCALATE", 2), ev("DEESCALATE", 3)]
+    q = quality(evs, [])
+    assert q.raises == 2 and q.false_raises == 2 and q.peak_10min == {"all": 2, V: 2}
+    assert quality([*raises([0] * 9), ev("ESCALATE", 0)], None).time_in_flood_s == 0
+
+
+def test_short_alarm_boundary_is_twenty_seconds() -> None:
+    assert quality([ev("RAISE", 0), ev("RTN", 19.99)], None).short_t1 == 1
+    assert quality([ev("RAISE", 0), ev("RTN", 20)], None).short_t1 == 0
+    gap = [ev("RAISE", 0), ev("RTN", 100)]
+    assert quality([*gap, ev("RAISE", 119.99)], None).short_t0 == 1
+    assert quality([*gap, ev("RAISE", 120)], None).short_t0 == 0
+
+
+def test_psi_exactly_at_the_flag_is_flagged() -> None:
+    q = quality(raises([0, 20, 40]), None)  # runs 20 s -> 1/20
+    assert q.psi[KEY] == 0.05 and q.chattering == (KEY,)
+
+
+def test_simultaneous_raises_do_not_divide_by_zero() -> None:
+    q = quality(raises([0, 0, 10]), None)
+    assert q.psi[KEY] == pytest.approx(0.5 / 10)

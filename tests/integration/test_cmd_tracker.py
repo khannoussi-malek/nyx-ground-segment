@@ -18,7 +18,7 @@ from gs.commanding.tracker import LATE_WINDOW_S, TCACK_COUNT, apply_change, trac
 from gs.common.interfaces.render import schema_sha12
 from gs.common.interfaces.streams import Tc, TcAck
 from gs.common.views import command_views
-from gs.ingest.events import mismatch_key
+from gs.ingest.events import late_key, mismatch_key
 from gs.ingest.liveness import ingest_status
 from gs.ingest.worker import Ctx
 from tests.support.env import until, vid
@@ -278,6 +278,28 @@ async def test_cmd_messages_published() -> None:
     assert [m["command"]["state"] for m in mine] == ["RECEIVED"]  # one per change
     for m in mine:
         validate_ui_event(m)
+
+
+async def test_late_verification_publishes_link() -> None:  # P-pf9, Task 27b
+    v = vid()
+    sent = now() - timedelta(seconds=8)
+    cmd_id = insert_cmd(
+        v, state="FAILED", sent_at=sent, queued_at=sent - timedelta(seconds=0.1),
+        failure_reason="NOT_RECEIVED", failed_at=sent + timedelta(seconds=5),
+    )  # fmt: skip
+    produce_values(v, {"cabin_temp_c": [22.0] * 5}, last_cmd_id=cmd_id, base=now())  # the echo
+
+    def links() -> list[dict[str, Any]]:
+        msgs = [json.loads(f["data"]) for _, f in stream_entries("ui:events")]
+        return [m for m in msgs if m["kind"] == "link" and m["event"]["key"] == late_key(cmd_id)]
+
+    async with worker([v]):
+        await until(lambda: bool(links()), 5)
+    [m] = links()
+    validate_ui_event(m)
+    assert (m["event"]["kind"], m["event"]["vehicle"]) == ("LATE_VERIFICATION", v)
+    assert m["event"]["details"]["cmd_id"] == str(cmd_id)
+    assert row_of(v, cmd_id)["late_verified_at"] is not None  # committed before the publish
 
 
 async def test_guard_lost_writes_no_audits() -> None:  # a concurrent change won the row

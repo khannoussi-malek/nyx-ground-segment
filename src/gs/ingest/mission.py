@@ -217,7 +217,8 @@ class MissionWatcher:
             ev = _rejected(raw, e, self._by)
             won = await insert_events(conn, [ev])  # key dedups across workers and the API
             fresh = rej is None or rej[0] != hashes  # not a 10 s revalidation of the same files
-            self._rejected, self._refused = (hashes, time.monotonic()), refused
+            # only an applied set or reverted files end a refusal: ingest still runs the newer set
+            self._rejected, self._refused = (hashes, time.monotonic()), refused or self._refused
             if fresh and won and self._on_events is not None:  # one link per stored rejection
                 await self._on_events([ev])
             return

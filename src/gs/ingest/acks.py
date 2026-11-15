@@ -43,7 +43,7 @@ class AckReq:
     by_user: str
     note: str
     changed: bool = False  # raised/escalated too late for the operator to have seen it
-    seen_key: str | None = None  # the event key the console showed (P-pf43); None: margins
+    seen_key: str | None = None  # the event key the console showed (P-pf43); None: no check
     last_key: str | None = None  # the alarm's newest alarm_events key when the pass read it
 
 
@@ -54,8 +54,8 @@ async def pending_acks(
     operator did not see (P-pf42/42b): a RAISE/ESCALATE processed later than ACK_PROPAGATION_S
     before the request, or `shown` (alarm -> when a RAISE/ESCALATE, or any held or post-takeover
     state, of it was last published; database clock) later than that. Each also carries its
-    seen_key and the alarm's newest alarm_events key, which decide instead when the request has
-    a seen_key (P-pf43)."""
+    seen_key and the alarm's newest alarm_events key; with a seen_key both must pass (P-pf43,
+    P-pf43b)."""
     cur = await conn.execute(
         "SELECT q.request_id, q.alarm_id, a.param, q.by_user, q.note, q.requested_at,"
         " EXISTS (SELECT 1 FROM alarm_events e WHERE e.alarm_id = q.alarm_id"
@@ -92,10 +92,9 @@ def apply_ack(
     a = state.alarms.get(req.param)
     if a is None or a.alarm_id != req.alarm_id:
         return state, None, "superseded", NOT_OPEN
-    if req.seen_key is not None:  # exact: what the operator saw is the newest event, or not
-        if req.seen_key != req.last_key:
-            return state, None, "superseded", UNSEEN
-    elif req.changed:  # no key (old clients, scripts): the margins
+    if req.seen_key is not None and req.seen_key != req.last_key:  # P-pf43
+        return state, None, "superseded", UNSEEN
+    if req.changed:  # the P-pf42/42b margins apply with or without a key (P-pf43b)
         return state, None, "superseded", CHANGED
     if a.state == "ACKED":
         return state, None, "superseded", ALREADY_ACKED

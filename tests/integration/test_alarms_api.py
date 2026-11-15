@@ -253,3 +253,13 @@ async def test_seen_key_stored_and_part_of_the_request(app: Any) -> None:  # P-p
     q = "select seen_key from alarm_ack_request where request_id=%s"
     assert rows(q, rid) == [{"seen_key": "k-raise"}]
     assert len(ack_audits(rid)) == 1
+
+
+async def test_seen_key_bounds_are_422(app: Any) -> None:  # P-pf43b: 1..200 characters
+    v = vid()
+    aid = await alarm_of(v, 31.0)
+    async with authed(app) as c:
+        for key in ("", "k" * 201):
+            r = await ack(c, aid, seen_key=key)
+            assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR")
+        assert (await ack(c, aid, seen_key="k" * 200)).status_code == 202

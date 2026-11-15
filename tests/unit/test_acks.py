@@ -70,12 +70,15 @@ def test_changed_since_request_is_superseded() -> None:  # P-pf42
     assert apply_ack(st, r, V, T) == (st, None, "superseded", "alarm changed since the request")
 
 
-def test_seen_key_decides_over_the_margins() -> None:  # P-pf43
+def test_seen_key_and_the_margins_both_must_pass() -> None:  # P-pf43, P-pf43b
     st = red_state()
     base = req(st.alarms[TEMP].alarm_id)
-    seen = replace(base, seen_key="k1", last_key="k1", changed=True)  # margin says changed
+    seen = replace(base, seen_key="k1", last_key="k1")
     assert apply_ack(st, seen, V, T)[2:] == ("applied", None)
-    stale = replace(base, seen_key="k1", last_key="k2")
+    in_margin = replace(seen, changed=True)  # a match never skips the margins
+    assert apply_ack(st, in_margin, V, T)[2:] == ("superseded", "alarm changed since the request")
+    stale = replace(base, seen_key="k1", last_key="k2", changed=True)
     assert apply_ack(st, stale, V, T)[1:] == (None, "superseded", "alarm changed since you saw it")
     absent = replace(base, last_key="k2", changed=True)  # no key: the margins (P-pf42/42b)
     assert apply_ack(st, absent, V, T)[2:] == ("superseded", "alarm changed since the request")
+    assert apply_ack(st, replace(base, last_key="k2"), V, T)[2:] == ("applied", None)

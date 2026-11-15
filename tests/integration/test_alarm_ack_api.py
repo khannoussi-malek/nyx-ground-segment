@@ -392,8 +392,13 @@ async def test_escalation_just_before_request_superseded() -> None:  # P-pf42b r
 
 
 async def test_seen_key_of_the_current_state_applies() -> None:  # P-pf43
-    v, rid = await ack_after_escalation(1.0, seen="ESCALATE")  # inside the margin: key decides
+    v, rid = await ack_after_escalation(2.5, seen="ESCALATE")
     assert status(v) == {rid: ("applied", None)}
+
+
+async def test_matching_seen_key_keeps_the_margins() -> None:  # P-pf43b
+    v, rid = await ack_after_escalation(1.0, seen="ESCALATE")
+    assert status(v) == {rid: ("superseded", CHANGED)}
 
 
 async def test_seen_key_stale_after_escalation_superseded() -> None:  # P-pf43

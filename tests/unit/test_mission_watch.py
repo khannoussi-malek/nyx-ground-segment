@@ -213,6 +213,18 @@ async def test_refused_while_the_check_refuses_the_files(tmp_path: Path) -> None
     assert not w.refused
 
 
+async def test_refused_survives_later_invalid_files(tmp_path: Path) -> None:  # P-pf46 review
+    m = mission_copy(tmp_path)  # ingest runs the downgrade; invalid files don't change that
+    w, conn, _ = watched(m, check=HazardGuard(load_dir(m)), by="api")
+    await ticks(w, conn)
+    edit(m / "commands.yaml", "hazardous: true", "hazardous: false")
+    await ticks(w, conn)
+    assert w.refused
+    edit(m / "limits.yaml", "hysteresis_pct: 15", "hysteresis_pct: -1")
+    await ticks(w, conn)
+    assert w.refused
+
+
 async def test_run_survives_any_tick_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

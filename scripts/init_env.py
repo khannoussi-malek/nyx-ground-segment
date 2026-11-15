@@ -12,7 +12,7 @@ ACL_TEMPLATE = """\
 user default off resetkeys resetchannels -@all
 user health on #{health} resetkeys resetchannels -@all +ping
 user api on #{api} resetkeys resetchannels -@all +ping +client|setinfo +multi +exec +unwatch (~tc:NYX-* +xadd) (~cmdlock:* +set +get +del +watch) (~confirm:* +set +getdel) (~sess:* +set +get +del) (%R~ui:events %R~hb:* +xread +xrange +xrevrange +get +mget) (~tm:dlq +xadd)
-user sim on #{sim} resetkeys resetchannels -@all +ping +client|setinfo (%R~tc:NYX-* +xread +xrange) (~tc:NYX-* +xreadgroup +xack +xgroup|create +xgroup|setid) (~tm:NYX-* ~tcack:NYX-* +xadd)
+user sim on #{sim} resetkeys resetchannels -@all +ping +client|setinfo (%R~tc:NYX-* +xread +xrange) (~tc:NYX-* +xreadgroup +xack +xgroup|create +xgroup|setid) (~tm:NYX-* ~tcack:NYX-* +xadd) (%R~tm:NYX-* +xinfo|groups)
 user ingest on #{ingest} resetkeys resetchannels -@all +ping +client|setinfo +multi +exec +info (~tm:NYX-* ~tcack:NYX-* +xreadgroup +xack +xautoclaim +xclaim +xpending +xgroup|create +xinfo|stream +xinfo|groups +xinfo|consumers) (~tm:dlq ~ui:events +xadd) (~hb:* +set +get)
 user admin on #{admin} ~* &* +@all
 """  # noqa: E501
@@ -59,6 +59,15 @@ def main(argv: list[str] | None = None) -> int:
         shown = " ".join(f"{name}={env[key]}" for name, key in DEMO_KEYS.items())
         print(f"demo users (shown once): {shown}")
     env = _read_env(env_path)
+    missing = [(k, v) for k, v in _example_pairs(root / ".env.example") if k not in env]
+    if (
+        missing
+    ):  # a worktree's older .env gains new keys without `make reset`; no existing line is touched
+        text = env_path.read_text()
+        with env_path.open("a") as f:
+            f.write("" if text.endswith("\n") or not text else "\n")
+            f.write("".join(f"{k}={v or secrets.token_hex(24)}\n" for k, v in missing))
+        env = _read_env(env_path)
 
     # users.yaml and redis/users.acl stay 0644: the containers (uid 10001, redis uid 999) read
     # these bind mounts as other users on Linux. They hold only scrypt/sha256 hashes.

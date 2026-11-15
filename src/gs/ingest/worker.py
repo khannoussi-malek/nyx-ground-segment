@@ -93,6 +93,15 @@ class Ctx:
     counters: Counter[str] = field(default_factory=Counter)
 
 
+class Unpublished(redis.exceptions.ConnectionError):
+    """A Redis error after the batch COMMIT: carries the committed state (an applied ACK is
+    never redelivered, so the loop must keep it) and the messages not yet published."""
+
+    def __init__(self, vs: VehicleState, msgs: list[UiMessage]) -> None:
+        super().__init__("redis error after the commit")
+        self.vs, self.msgs = vs, msgs
+
+
 # ponytail: one model per parameter list ever seen, never evicted (same handful)
 _frame_model = functools.cache(build_frame_model)
 
@@ -250,19 +259,24 @@ async def _process(
             ctx, conn, b, stream, items, vs, events, acks, now
         )
         dlq += bad
+    ctx.dup_or_late[vehicle] += sum(o.dup_or_late for o in outs)
     ctx.hooks.fire("after_commit_before_publish")
     # tm only for what this commit stored (a redelivery publishes none); links and alarms may
     # repeat on a redelivery
-    await publish_ui(ctx.redis, await _ui(conn, nvs, inserted, outs, params))
-    ctx.hooks.fire("after_publish_before_ack")
-    if entries:  # an ACK-only pass has nothing to ack
-        ack = ctx.redis.pipeline(transaction=True)  # one MULTI: DLQ records + XACK
-        for rec in dlq:
-            ack.xadd(DLQ, {"data": rec.model_dump_json()})
-        ack.xack(stream, GROUP, *(eid for eid, _ in entries))
-        await ack.execute()
+    msgs = await _ui(conn, nvs, inserted, outs, params)
+    try:
+        await publish_ui(ctx.redis, msgs)
+        msgs = []
+        ctx.hooks.fire("after_publish_before_ack")
+        if entries:  # an ACK-only pass has nothing to ack
+            ack = ctx.redis.pipeline(transaction=True)  # one MULTI: DLQ records + XACK
+            for rec in dlq:
+                ack.xadd(DLQ, {"data": rec.model_dump_json()})
+            ack.xack(stream, GROUP, *(eid for eid, _ in entries))
+            await ack.execute()
+    except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
+        raise Unpublished(nvs, msgs) from e  # the entries stay pending and are re-read
     ctx.hooks.fire("after_xack")
-    ctx.dup_or_late[vehicle] += sum(o.dup_or_late for o in outs)
     return nvs, len(inserted)
 
 
@@ -516,6 +530,8 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
                 ctx.reconnected_at[0], was_down = time.monotonic(), False
         except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
             log.warning("redis unavailable for %s (%s); retry in %.1fs", stream, e, backoff)
+            if isinstance(e, Unpublished):  # committed: keep that state, publish next pass
+                vs, unsent = e.vs, [*unsent, *e.msgs]
             # D-ING-08: re-read every pending entry after reconnect
             claim_idle, ready, cursor, was_down, caught_up = 0, False, "0-0", True, False
             with contextlib.suppress(TimeoutError):

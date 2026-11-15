@@ -62,3 +62,9 @@ def test_rtn_unack_ack_clears() -> None:  # ACK of a returned alarm closes it at
     new, tr, result, _ = apply_ack(rtn, req(a.alarm_id), V, T)
     assert result == "applied" and tr is not None
     assert (tr.alarm_state, tr.closed_at) == ("CLEARED", T) and TEMP not in new.alarms
+
+
+def test_changed_since_request_is_superseded() -> None:  # P-pf42
+    st = red_state()
+    r = replace(req(st.alarms[TEMP].alarm_id), changed=True)
+    assert apply_ack(st, r, V, T) == (st, None, "superseded", "alarm changed since the request")

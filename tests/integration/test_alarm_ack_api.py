@@ -8,8 +8,12 @@ from typing import Any
 
 import psycopg
 import pytest
+import redis.exceptions
 from psycopg import sql
 
+from gs.common.interfaces.sse import Alarm
+from gs.common.uievents import publish_ui
+from gs.ingest import worker as worker_mod
 from gs.ingest.acks import pending_acks
 from gs.ingest.worker import Timing, load_state, process_batch
 from tests.support.env import now, until, vid
@@ -42,16 +46,36 @@ async def red_alarm(v: str, base: datetime) -> uuid.UUID:
     return uuid.UUID(str(a["alarm_id"]))
 
 
-def request(v: str, alarm_id: uuid.UUID, note: str = "seen, venting", user: str = "fc1") -> str:
-    """INSERT the way the API does (D-ALM-14); returns the request_id as text."""
+def request(
+    v: str,
+    alarm_id: uuid.UUID,
+    note: str = "seen, venting",
+    user: str = "fc1",
+    requested_at: datetime | None = None,
+) -> str:
+    """INSERT the way the API does (D-ALM-14); returns the request_id as text. `requested_at`
+    back-dates the request (submitted before something the owner then committed first)."""
     rid = uuid.uuid4()
     with psycopg.connect(app_dsn("gs")) as c:
         c.execute(
-            "insert into alarm_ack_request (request_id, alarm_id, vehicle, by_user, note)"
-            " values (%s, %s, %s, %s, %s)",
-            (rid, alarm_id, v, user, note),
+            "insert into alarm_ack_request (request_id, alarm_id, vehicle, by_user, note,"
+            " requested_at) values (%s, %s, %s, %s, %s, coalesce(%s, clock_timestamp()))",
+            (rid, alarm_id, v, user, note, requested_at),
         )
     return str(rid)
+
+
+def db_now() -> datetime:
+    """The database clock: processed_at comes from it, the host clock may differ (VM skew)."""
+    (r,) = rows("select clock_timestamp() as t")
+    t: datetime = r["t"]
+    return t
+
+
+async def drain(v: str, **kw: Any) -> None:
+    """Run a worker until tm:<v> is drained and no request of v is pending."""
+    async with worker([v], **kw):
+        await until(lambda: drained(v) and "pending" not in {s for s, _ in status(v).values()}, 5)
 
 
 async def one_batch(v: str) -> None:
@@ -222,3 +246,94 @@ async def test_ack_published_as_alarm_message() -> None:
         "status_reason": None,
     }
     assert (m["alarm"]["last"]["kind"], m["alarm"]["value"]) == ("ACK", 31.0)  # P-pf4
+
+
+async def test_escalated_after_request_superseded() -> None:  # P-pf42
+    v, base = vid(), now() - timedelta(minutes=1)
+    produce_values(v, {TEMP: [22.0] * 5 + [28.0] * 5}, base=base)
+    await drain(v)  # YELLOW UNACK
+    a = open_alarm(v, TEMP)
+    assert a is not None and a["severity"] == "YELLOW"
+    asked = db_now()  # the operator saw YELLOW and sent the ACK ...
+    produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=10)
+    await drain(v)  # ... the owner escalated to RED before applying it
+    rid = request(v, uuid.UUID(str(a["alarm_id"])), requested_at=asked)
+    await drain(v)
+    assert status(v) == {rid: ("superseded", "alarm changed since the request")}
+    b = open_alarm(v, TEMP)
+    assert b is not None and (b["state"], b["severity"]) == ("UNACK", "RED")
+    assert ("ACK", "fc1") not in kinds(v)
+
+
+async def test_reraised_after_request_superseded() -> None:  # P-pf42
+    v, base = vid(), now() - timedelta(minutes=1)
+    produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5 + [22.0] * 5}, base=base)
+    await drain(v)  # RAISE, RTN: RTN_UNACK
+    a = open_alarm(v, TEMP)
+    assert a is not None and a["state"] == "RTN_UNACK"
+    asked = db_now()
+    produce_values(v, {TEMP: [31.0] * 5}, base=base, start_seq=15)
+    await drain(v)  # raised again on the same alarm
+    rid = request(v, uuid.UUID(str(a["alarm_id"])), requested_at=asked)
+    await drain(v)
+    assert status(v) == {rid: ("superseded", "alarm changed since the request")}
+    b = open_alarm(v, TEMP)
+    assert b is not None and b["state"] == "UNACK"
+    assert [k for k, _ in kinds(v)] == ["RAISE", "RTN", "RAISE"]
+
+
+@contextmanager
+def raising_on(table: str, column: str, value: str) -> Iterator[None]:
+    """BEFORE INSERT trigger on `table`: SQLSTATE 22023 when NEW.<column> = value."""
+    name = "t_" + uuid.uuid4().hex[:12]
+    fn, trg = sql.Identifier(name), sql.Identifier(name + "_trg")
+    with psycopg.connect(owner_dsn("gs"), autocommit=True) as c:
+        c.execute(
+            sql.SQL(
+                "CREATE FUNCTION {}() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN"
+                " IF NEW.{} = {} THEN RAISE EXCEPTION 'test boom' USING ERRCODE = '22023';"
+                " END IF; RETURN NEW; END $$"
+            ).format(fn, sql.Identifier(column), sql.Literal(value))
+        )
+        c.execute(
+            sql.SQL("CREATE TRIGGER {} BEFORE INSERT ON {} FOR EACH ROW EXECUTE FUNCTION {}()")
+            .format(trg, sql.Identifier(table), fn)
+        )  # fmt: skip
+    try:
+        yield
+    finally:
+        with psycopg.connect(owner_dsn("gs"), autocommit=True) as c:
+            c.execute(sql.SQL("DROP TRIGGER {} ON {}").format(trg, sql.Identifier(table)))
+            c.execute(sql.SQL("DROP FUNCTION {}()").format(fn))
+
+
+async def test_failed_reject_leaves_request_pending() -> None:  # fix round 1, item 3
+    v, base = vid(), now() - timedelta(minutes=1)
+    note = f"double boom {v}"
+    aid = await red_alarm(v, base)
+    rid = request(v, aid, note=note)
+    produce_values(v, NOMINAL5, base=base, start_seq=10)
+    with raising_on("alarm_events", "note", note), raising_on("audit_log", "reason", note):
+        await one_batch(v)  # the ACK fails, and so does writing its rejection
+    assert status(v) == {rid: ("pending", None)} and not applied_audits({rid})
+    assert stored(v) == 15  # the frames still committed
+
+
+async def test_acked_state_kept_after_publish_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    v, base = vid(), now() - timedelta(minutes=1)  # fix round 1, item 1
+    aid = await red_alarm(v, base)
+    request(v, aid)
+    produce_values(v, NOMINAL5, base=base, start_seq=10)
+    failed: list[bool] = []
+
+    async def lose_acked(r: Any, msgs: Any) -> None:
+        if not failed and any(isinstance(m, Alarm) and m.alarm.state == "ACKED" for m in msgs):
+            failed.append(True)
+            raise redis.exceptions.ConnectionError("test: publish lost after the ACK commit")
+        await publish_ui(r, msgs)
+
+    monkeypatch.setattr(worker_mod, "publish_ui", lose_acked)
+    async with worker([v]):
+        await until(lambda: drained(v) and ("CLEAR", "system") in kinds(v), 5)
+        await until(lambda: any(m["alarm"]["state"] == "ACKED" for m in alarm_msgs(v)), 3)
+    assert failed and kinds(v) == [("RAISE", "system"), ("ACK", "fc1"), ("CLEAR", "system")]

@@ -1,10 +1,12 @@
 import asyncio
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import httpx
+import psycopg
 import pytest
 import yaml
 from fastapi.routing import APIRoute
@@ -212,12 +214,83 @@ async def test_window_passes(
     lone: tuple[httpx.AsyncClient, str, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     c, a, _ = lone
-    monkeypatch.setattr(auth, "LOGIN_WINDOW_S", 1)
+    monkeypatch.setattr(auth, "LOGIN_WINDOW_S", 5)  # 5 scrypt logins fit with room to spare
     for _ in range(5):
         await login(c, a, "wrong")
     assert (await login(c, a, PW)).status_code == 429
-    await asyncio.sleep(1.1)
+    await asyncio.sleep(5.3)
     assert (await login(c, a, PW)).status_code == 204
+
+
+async def test_lockout_ends_while_hammering_429_path(
+    lone: tuple[httpx.AsyncClient, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Fails if the rate_limited filter is dropped: refused attempts must not extend the lock."""
+    c, a, _ = lone
+    monkeypatch.setattr(auth, "LOGIN_WINDOW_S", 3)
+    for _ in range(5):
+        await login(c, a, "wrong")
+    codes: list[int] = []
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline and (not codes or codes[-1] == 429):
+        await asyncio.sleep(0.4)
+        codes.append((await login(c, a, PW)).status_code)
+    assert codes[0] == 429 and codes[-1] == 204, codes
+
+
+async def test_concurrent_failures_stop_at_the_limit(
+    lone: tuple[httpx.AsyncClient, str, str],
+) -> None:
+    c, a, _ = lone
+    got = await asyncio.gather(*(login(c, a, "wrong") for _ in range(8)))
+    assert sorted(r.status_code for r in got) == [401] * 5 + [429] * 3
+    counted = [r for r in audit_rows(action="LOGIN_FAILED", actor=a) if not r["details"]]
+    assert len(counted) == 5
+
+
+async def test_login_audit_reasons(lone: tuple[httpx.AsyncClient, str, str]) -> None:
+    c, a, _ = lone
+    for _ in range(6):
+        await login(c, a, "wrong")
+    await login(c, "nobody-" + vid(), "x")
+    reasons = [r["reason"] for r in audit_rows(action="LOGIN_FAILED", actor=a)]
+    assert reasons == ["bad credentials"] * 5 + ["rate limited"]
+
+
+async def test_nul_or_huge_user_is_422_not_503(lone: tuple[httpx.AsyncClient, str, str]) -> None:
+    c, _, _ = lone
+    for bad in ("a\x00b", "u" * 300):
+        r = await login(c, bad, "x")
+        assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR")
+
+
+async def test_no_session_without_audit_row(
+    lone: tuple[httpx.AsyncClient, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, a, _ = lone
+
+    async def boom(*_: object, **__: object) -> None:
+        raise psycopg.OperationalError("audit write failed")
+
+    monkeypatch.setattr(auth, "audit", boom)
+    assert (await login(c, a, PW)).status_code == 503
+    assert (await c.get("/api/me")).status_code == 401  # no session was created
+
+
+async def test_unknown_user_still_runs_a_password_hash(
+    lone: tuple[httpx.AsyncClient, str, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, _, _ = lone
+    calls: list[str] = []
+    real = auth.verify_password
+
+    def spy(p: str, h: str) -> bool:
+        calls.append(h)
+        return real(p, h)
+
+    monkeypatch.setattr(auth, "verify_password", spy)
+    await login(c, "nobody-" + vid(), "x")
+    assert len(calls) == 1
 
 
 async def test_login_logout_audited(lone: tuple[httpx.AsyncClient, str, str]) -> None:

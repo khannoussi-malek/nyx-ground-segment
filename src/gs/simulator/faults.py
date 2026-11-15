@@ -11,7 +11,16 @@ from gs.common.interfaces import VehicleId
 from gs.simulator.nominals import NOMINALS
 
 FaultName = Literal[
-    "leak", "overheat", "dropout", "freeze", "seq_jump", "duplicate", "malformed", "step"
+    "leak",
+    "overheat",
+    "dropout",
+    "freeze",
+    "seq_jump",
+    "duplicate",
+    "malformed",
+    "step",
+    "pause",
+    "hold_exec",
 ]
 LEAK_KPA_PER_S, OVERHEAT_C_PER_S = -0.4, 0.5
 ONE_SHOT = frozenset({"seq_jump", "duplicate", "malformed"})
@@ -26,7 +35,7 @@ class _Timed(_Params):
     duration_s: Duration | None = None  # absent = until DELETE
 
 
-class _Dropout(_Params):
+class _Duration(_Params):  # required: dropout, pause, hold_exec
     duration_s: Duration
 
 
@@ -52,7 +61,9 @@ _PARAMS: dict[str, type[_Params]] = {
     "leak": _Timed,
     "overheat": _Timed,
     "freeze": _Timed,
-    "dropout": _Dropout,
+    "dropout": _Duration,
+    "pause": _Duration,  # commands neither acked nor executed (D-SIM-07)
+    "hold_exec": _Duration,  # acked at once, executed duration_s later
     "seq_jump": _SeqJump,
     "duplicate": _Duplicate,
     "malformed": _Malformed,

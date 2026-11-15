@@ -6,20 +6,23 @@ import random
 import socket
 import urllib.error
 import urllib.request
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Mapping
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import UUID, uuid4
 
 import redis.exceptions
 
+from gs.common.interfaces.streams import ArgValue, Tc
 from gs.simulator.buffer import FrameBuffer, send_loop
+from gs.simulator.commands import CommandBox
 from gs.simulator.faults import FaultBoard, FaultRequest
 from gs.simulator.frames import tick_loop
 from gs.simulator.main import SimSettings, run
 from tests.support.env import dotenv
 from tests.support.mission import MISSION_DIR
-from tests.support.redisx import HOST, client
+from tests.support.redisx import HOST, client, stream_entries
 
 EPOCH = datetime(2026, 11, 14, 10, tzinfo=UTC)
 
@@ -121,11 +124,13 @@ async def run_sim_with(
     return [str(f["data"]) for _, f in entries]
 
 
-def tick_entries(
-    n: int, act: Callable[[int, FaultBoard, float], None] = lambda *_: None
-) -> list[str]:
+def tick_pairs(
+    n: int,
+    act: Callable[[int, FaultBoard, float], None] = lambda *_: None,
+    box: CommandBox | None = None,
+) -> list[tuple[str, str]]:
     """Run tick_loop for `n` ticks on a fake clock; `act(k, board, mono)` runs just before tick k.
-    The raw entries the loop appended."""
+    The (stream, data) pairs the loop appended, in buffer order."""
     clock, buf, stop, board, ticks = [0.0], FrameBuffer(), asyncio.Event(), FaultBoard(), [0]
 
     async def sleep(d: float) -> None:
@@ -140,10 +145,50 @@ def tick_entries(
 
     asyncio.run(
         tick_loop(
-            "NYX-TA1", buf, random.Random("1:NYX-TA1"), stop, lambda: clock[0], sleep, now, board
+            "NYX-TA1",
+            buf,
+            random.Random("1:NYX-TA1"),
+            stop,
+            lambda: clock[0],
+            sleep,
+            now,
+            board,
+            box,
         )
     )
-    return [d for _, d in buf._q]
+    return list(buf._q)
+
+
+def tick_entries(
+    n: int, act: Callable[[int, FaultBoard, float], None] = lambda *_: None
+) -> list[str]:
+    """The raw entries tick_loop appended over `n` fake-clock ticks (see tick_pairs)."""
+    return [d for _, d in tick_pairs(n, act)]
+
+
+def tc(name: str, cmd_id: UUID | None = None, **args: ArgValue) -> Tc:
+    return Tc(
+        cmd_id=cmd_id or uuid4(),
+        name=name,
+        args=args,
+        issued_by="fc1",
+        issued_at=datetime.now(UTC),
+        reason=None,
+    )
+
+
+def send_tc(
+    vehicle: str, name: str, args: Mapping[str, ArgValue], cmd_id: UUID | None = None
+) -> UUID:
+    """XADD a valid Tc to tc:<vehicle> as the `api` ACL user; returns its cmd_id."""
+    t = tc(name, cmd_id, **args)
+    client("api").xadd(f"tc:{vehicle}", {"data": t.model_dump_json()})
+    return t.cmd_id
+
+
+def tcacks(vehicle: str) -> list[dict[str, Any]]:
+    """Every tcack:<vehicle> entry, decoded, oldest first."""
+    return [json.loads(f["data"]) for _, f in stream_entries(f"tcack:{vehicle}")]
 
 
 def at_tick(k: int, *reqs: FaultRequest) -> Callable[[int, FaultBoard, float], None]:

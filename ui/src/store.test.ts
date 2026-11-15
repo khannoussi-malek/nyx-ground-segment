@@ -324,3 +324,27 @@ test("the latency probe gets a receipt for every accepted tm, with its server ag
   s.applyTm(tm(2, "2026-11-14T10:00:00.200000Z", "NYX-TA2"));
   expect(got).toEqual([["NYX-TA1", 1, 5], ["NYX-TA2", 2, 5]]);
 });
+
+test("healthySince: an owner word back after the hb went silent (unknown -> true) is a recovery too", () => {
+  let now = 1000;
+  const fire: (() => void)[] = [];
+  const s = createStore(() => now, { setTimeout: ((fn: () => void) => fire.push(fn)) as never, clearTimeout: () => {} });
+  s.setProcessing({ "NYX-TA1": true });
+  fire.at(-1)!(); // no hb for SILENCE_MS: the map is forgotten
+  expect(s.link().processing).toEqual({});
+  now = 7000;
+  s.setProcessing({ "NYX-TA1": true });
+  expect(s.healthySince("NYX-TA1")).toBe(7000);
+});
+
+test("healthySince is null while the vehicle's LOS is open: a loss from before an outage gets no grace", () => {
+  let now = 1000;
+  const s = createStore(() => now, { setTimeout: (() => 1) as never, clearTimeout: () => {} });
+  s.applyLink(eventView("los:1", { kind: "LOS", vehicle: "NYX-TA1" }));
+  s.setGround("down");
+  now = 5000;
+  s.setGround("up");
+  expect(s.healthySince("NYX-TA1")).toBeNull();
+  s.applyLink(eventView("aos:1", { kind: "AOS", vehicle: "NYX-TA1" }));
+  expect(s.healthySince("NYX-TA1")).toBe(5000);
+});

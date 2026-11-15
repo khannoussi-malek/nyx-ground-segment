@@ -50,6 +50,7 @@ export function createStore(
     notify();
   };
   const trim = (list: readonly EventView[]) => list.slice(0, EVENTS_KEPT);
+  const lastLink = (v: string) => events.find((e) => e.vehicle === v && (e.kind === "LOS" || e.kind === "AOS"));
   return {
     applySnapshot(s: Snapshot): void {
       const now = clock();
@@ -106,7 +107,7 @@ export function createStore(
         hbSilence = undefined;
         setLink({ processing: {} });
       }, SILENCE_MS);
-      const back = Object.keys(p).filter((v) => p[v] && link.processing[v] === false);
+      const back = Object.keys(p).filter((v) => p[v] && link.processing[v] !== true); // down or unknown (no hb) -> up
       if (back.length > 0) ownerUpAt = { ...ownerUpAt, ...Object.fromEntries(back.map((v) => [v, clock()])) };
       setLink({ processing: { ...p } });
     },
@@ -141,8 +142,12 @@ export function createStore(
     commands: (): readonly CommandView[] => commands,
     events: (): readonly EventView[] => events,
     link: (): Link => link,
-    /** When the broker and this vehicle's owner were last both back after an outage; null if neither ever was down. */
+    /** The vehicle's newest LOS or AOS event: a LOS here is open on the server. */
+    lastLink: (v: string): EventView | undefined => lastLink(v),
+    /** When the broker and this vehicle's owner were last both back after an outage; null if neither ever was down,
+     *  or if the vehicle's LOS is open (it was lost before the outage: no grace hides it). */
     healthySince(v: string): number | null {
+      if (lastLink(v)?.kind === "LOS") return null;
       const ts = [brokerUpAt, ownerUpAt[v] ?? null].filter((t): t is number => t !== null);
       return ts.length > 0 ? Math.max(...ts) : null;
     },

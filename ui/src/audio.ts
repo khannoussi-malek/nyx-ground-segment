@@ -69,7 +69,7 @@ export function toneActive(store: Store): Record<string, string> {
       active[`${v}|GPD`] = "GPD";
       continue;
     }
-    const lastLink = events.find((e) => e.vehicle === v && (e.kind === "LOS" || e.kind === "AOS"));
+    const lastLink = store.lastLink(v);
     if (lastLink?.kind === "LOS") active[lastLink.key] = "LOS";
     else if (store.vehicle(v)?.frozen) {
       const f = events.find((e) => e.vehicle === v && e.kind === "FROZEN");

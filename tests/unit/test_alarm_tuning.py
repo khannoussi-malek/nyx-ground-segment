@@ -82,3 +82,8 @@ def test_shipped_cell_meets_acceptance() -> None:
     assert c.spike_rejected and c.roc_margin_s >= 5
     assert c.rtn_after_isolate_s == pytest.approx(13.5, abs=0.5)
     assert not run_cell("deadband", 1, 15, "1", hours=0.02).spike_rejected
+
+
+def test_persistence_delay_is_n_minus_one_frames() -> None:
+    assert run_cell("deadband", 3, 15, "1", hours=0.02).leak_delay_s == pytest.approx(0.2)
+    assert run_cell("deadband", 2, 15, "1", hours=0.02).leak_delay_s == pytest.approx(0.1)

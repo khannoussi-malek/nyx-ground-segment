@@ -262,8 +262,18 @@ _MARGIN_HEAD = (
 )
 
 
-def _grid_row(c: Cell, d_floor: float, span: float) -> str:
-    ok = "n/a" if c.kind == "roc" else ("yes" if c.value / 100 * span >= d_floor else "no")
+def _loadable(pct: float) -> bool:
+    """The D-ALM-02 floor for the cabin-pressure limit check."""
+    span = _BOUNDS["red_high"] - _BOUNDS["red_low"]
+    return pct / 100 * span >= floor(_limit_cfg(_BOUNDS, 1))
+
+
+def _tag(c: Cell) -> str:
+    return "" if _loadable(c.value) else " (below the D-ALM-02 floor: measured, not loadable)"
+
+
+def _grid_row(c: Cell) -> str:
+    ok = "n/a" if c.kind == "roc" else ("yes" if _loadable(c.value) else "no")
     return (
         f"| {c.kind} | {c.n} | {c.value:g} | {c.false_per_h:.3g} | {c.psi:.3g} "
         f"| {c.leak_delay_s:.2f} | {c.overheat_delay_s:.2f} | {c.roc_margin_s:.2f} "
@@ -287,7 +297,8 @@ def _acceptance(cells: list[Cell], m3: Margin) -> list[str]:
             ship.roc_margin_s >= MIN_ROC_MARGIN_S,
         ),
         (
-            f"on-delay {ship.leak_delay_s:.2f} s inside the ALM-05 budget {ALM05_S} s",
+            f"persistence delay {ship.leak_delay_s:.2f} s (N-1 frame periods; R20 counts "
+            f"N x 0.1 s = {ship.n * PERIOD_S:.1f} s, exactly the {ALM05_S} s limit at N = 3)",
             ship.leak_delay_s <= ALM05_S + 1e-9,
         ),
         (f"false raises per hour at nominal {ship.false_per_h:.3g}", ship.false_per_h == 0),
@@ -305,12 +316,12 @@ def _acceptance(cells: list[Cell], m3: Margin) -> list[str]:
         "",
         "Grid values that dominate N = 3 / 15 % on (false/h, leak delay, RTN after isolate) among "
         "the cells that reject the spike. They raise assumption A-R20-3; nothing is changed "
-        "silently. N = 3 is the spec's value and doubles the noise margin (R20 F2); deadbands "
-        "below 14.5 % are under the D-ALM-02 floor (never loadable):",
+        "silently. N = 3 is the spec's value and doubles the noise margin (R20 F2). Only "
+        "N = 2 / 15 % is loadable; every other line is below the D-ALM-02 floor:",
         "",
         *[
             f"- {c.kind} N={c.n} value {c.value:g}: delay {c.leak_delay_s:.2f} s, "
-            f"RTN {c.rtn_after_isolate_s:.2f} s"
+            f"RTN {c.rtn_after_isolate_s:.2f} s{_tag(c)}"
             for c in dom
         ],
     ]
@@ -318,8 +329,6 @@ def _acceptance(cells: list[Cell], m3: Margin) -> list[str]:
 
 def render(cells: list[Cell], margs: dict[str, Margin]) -> str:
     dcells = [c for c in cells if c.kind == "deadband" and c.spike_rejected]
-    span = _BOUNDS["red_high"] - _BOUNDS["red_low"]
-    d_floor = floor(_limit_cfg(_BOUNDS, 1))
     front = frontier([(c.false_per_h, c.leak_delay_s) for c in dcells])
     return "\n".join(
         [
@@ -331,6 +340,15 @@ def render(cells: list[Cell], margs: dict[str, Margin]) -> str:
             "ICD-B-06; d >= 2.2 σ and yellow distance >= 2.3 σ; autocorrelation check, Wang "
             "2019).**",
             "",
+            "Delay definition: the persistence delay from the first raw frame beyond the limit "
+            "to the RAISE, N-1 frame periods (0.2 s at N = 3). R20 counts N x 0.1 s: 0.3 s at "
+            "N = 3, exactly the 300 ms ALM-05 limit, with N = 4 and 5 over it. ALM-05 latency is "
+            "measured from the triggering frame (`perf/alarm_latency.py`), so this figure is a "
+            "proxy, not the ALM-05 result.",
+            "",
+            "Single seed: delays are noise-dominated and a 0.2 s difference is one frame, so do "
+            "not read small delay differences as a ranking.",
+            "",
             "Limit checks are analytic (Xu 2012 chain); the ROC check and the fault profiles are "
             "Monte Carlo through the real engine, seeded.",
             "",
@@ -338,7 +356,7 @@ def render(cells: list[Cell], margs: dict[str, Margin]) -> str:
             "",
             _GRID_HEAD,
             "|---|---|---|---|---|---|---|---|---|---|---|",
-            *[_grid_row(c, d_floor, span) for c in cells],
+            *[_grid_row(c) for c in cells],
             "",
             "## Noise margins (R20 F2; N = 3, at most 1 nuisance event per 8 h, i.i.d., 10 Hz)",
             "",
@@ -352,7 +370,7 @@ def render(cells: list[Cell], margs: dict[str, Margin]) -> str:
             "",
             "## Frontier (spike-rejecting deadband cells; false/h and leak delay, minimised)",
             "",
-            *[f"- N={dcells[i].n}, {dcells[i].value:g} %" for i in front],
+            *[f"- N={dcells[i].n}, {dcells[i].value:g} %{_tag(dcells[i])}" for i in front],
             "",
             "## Plots",
             "",

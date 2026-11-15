@@ -42,7 +42,7 @@ async def test_run_wires_tc_loop_and_send_loop(monkeypatch: pytest.MonkeyPatch) 
     for v, tick, tcl in zip(vs, calls["tick"], calls["tc"], strict=True):
         box = tick[-1]["box"]
         assert isinstance(box, CommandBox) and tcl[2] is box  # the same box per vehicle
-        assert tick[1] is buf and tcl[3] is buf  # acks and frames share the ordered buffer
+        assert tick[1] is buf  # acks leave through step(), in the frames' ordered buffer
         assert tcl[1] == v
     assert set(box.commands) == {"isolate_valve", "vent_cabin"}  # MISSION_DB loaded at start
     assert status[0]()[0] == "ok"

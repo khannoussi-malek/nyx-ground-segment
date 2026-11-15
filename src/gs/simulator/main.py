@@ -86,7 +86,7 @@ async def run(s: SimSettings, stop: asyncio.Event) -> None:
             for v in s.vehicles:
                 rng = random.Random(f"{s.seed}:{v}")
                 tg.create_task(tick_loop(v, buf, rng, stop, faults=board, box=boxes[v]))
-                tg.create_task(tc_loop(r, v, boxes[v], buf, stop))
+                tg.create_task(tc_loop(r, v, boxes[v], stop))
             tg.create_task(send_loop(buf, lambda st, d: xadd_tm(r, st, d), stop))
     finally:
         server.close()

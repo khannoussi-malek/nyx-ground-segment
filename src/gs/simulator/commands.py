@@ -1,7 +1,8 @@
 """Simulator command path: read tc:<v>, ack on tcack:<v>, run <= 1 per tick (D-SIM-06, D-SIM-10).
 
-The tick loop owns the per-vehicle CommandBox; tc_loop only parses and queues. Acks go through the
-same ordered FrameBuffer as frames, so a dropout or a Redis outage treats them the same way.
+The tick loop owns the per-vehicle CommandBox; tc_loop only parses and queues (schema rejects too).
+step() emits every ack on the tick clock, through the same ordered FrameBuffer as the frames, so
+pause, dropout and a Redis outage treat acks and frames the same way.
 """
 
 import asyncio
@@ -9,7 +10,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from typing import Any
 from uuid import UUID
 
@@ -20,9 +21,10 @@ from pydantic import ValidationError
 from gs.commanding.args import check_args
 from gs.common.interfaces.streams import ACK_INVALID_ARGS, ACK_OK, ACK_SCHEMA, Tc, TcAck
 from gs.common.missiondb import Command
-from gs.simulator.buffer import FrameBuffer
+from gs.simulator.nominals import NOMINALS
 
 ISOLATE_KPA_PER_S, VENT_KPA_PER_S = 0.5, -2.0
+FLOOR_KPA = -NOMINALS["cabin_pressure_kpa"][0]  # a vented cabin stops at 0 kPa absolute
 GROUP = "sim"
 RETRY_S = 1.0
 _EPS = 1e-9  # ponytail: float slack so a 0.1 s grid hits sums like 0.2 + 1.6 exactly
@@ -58,7 +60,7 @@ def cabin_tick(c: Cabin, dt: float, now: float) -> Cabin:
         return Cabin() if offset >= -_EPS else replace(c, offset_kpa=offset)
     if c.rate < 0 and c.until is not None:
         span = max(0.0, min(now, c.until) - (now - dt))
-        offset = c.offset_kpa + c.rate * span
+        offset = max(FLOOR_KPA, c.offset_kpa + c.rate * span)
         return Cabin(offset) if now >= c.until - _EPS else replace(c, offset_kpa=offset)
     return c
 
@@ -77,7 +79,8 @@ class CommandBox:
 
     def __init__(self, commands: Mapping[str, Command]) -> None:
         self.commands = commands
-        self.inbox: asyncio.Queue[Tc] = asyncio.Queue()
+        # a Tc, or (cmd_id, message) of a schema-rejected entry: answered SCHEMA by step()
+        self.inbox: asyncio.Queue[Tc | tuple[UUID, str]] = asyncio.Queue()
         self.held: tuple[tuple[float, Tc], ...] = ()  # (execute at, tc) under hold_exec
         self.last_cmd_id: UUID | None = None
         self.schema_errors = 0
@@ -100,6 +103,9 @@ class CommandBox:
             tc = self.inbox.get_nowait()
         except asyncio.QueueEmpty:
             return [], None
+        if isinstance(tc, tuple):  # D-ING-27: the tracker records REJECTED
+            nack = TcAck(cmd_id=tc[0], accepted=False, code=ACK_SCHEMA, reason=tc[1], t_onboard=t)
+            return ([] if dropout else [nack]), None
         err = check_args(self.commands.get(tc.name), tc.args)
         ack = TcAck(
             cmd_id=tc.cmd_id,
@@ -117,33 +123,38 @@ class CommandBox:
         return acks, self._run(tc)
 
 
-async def _ensure_group(r: redis.asyncio.Redis, stream: str) -> None:
-    try:  # "$": commands written before the simulator listened are never executed
+async def _ensure_group(r: redis.asyncio.Redis, stream: str, at_start: bool) -> None:
+    """Commands written while the simulator was not listening are never executed (P-pf29)."""
+    try:
         await r.xgroup_create(stream, GROUP, id="$", mkstream=True)
     except redis.exceptions.ResponseError as e:
         if "BUSYGROUP" not in str(e):
             raise
+        if at_start:  # a restart: skip what queued up while down (the tracker said NOT_RECEIVED)
+            await r.xgroup_setid(stream, GROUP, id="$")
 
 
 async def tc_loop(
     r: redis.asyncio.Redis,
     vehicle: str,
     box: CommandBox,
-    buf: FrameBuffer,
     stop: asyncio.Event,
     sleep: Callable[[float], Awaitable[object]] = asyncio.sleep,
 ) -> None:
-    """Read tc:<v> one entry at a time; valid → inbox, invalid → SCHEMA tcack; XACK either way."""
-    stream, need_group = f"tc:{vehicle}", True
+    """Read tc:<v> one entry at a time into the box (valid or schema-rejected); XACK either way.
+
+    A reconnect after a Redis error keeps the group's place; only a start moves it to the end.
+    """
+    stream, need_group, at_start = f"tc:{vehicle}", True, True
     while not stop.is_set():
         try:
             if need_group:
-                await _ensure_group(r, stream)
-                need_group = False
+                await _ensure_group(r, stream, at_start)
+                need_group = at_start = False
             resp: Any = await r.xreadgroup(GROUP, GROUP, {stream: ">"}, count=1, block=1000)
             for _, entries in resp or []:
                 for entry_id, fields in entries:
-                    _take(vehicle, box, buf, fields.get(b"data", b""), entry_id)
+                    _take(vehicle, box, fields.get(b"data", b""), entry_id)
                     await r.xack(stream, GROUP, entry_id)
         except redis.exceptions.RedisError as e:  # down, wiped (NOGROUP) or ACL: retry
             log.warning("tc read failed for %s: %s", vehicle, e, extra={"vehicle": vehicle})
@@ -151,7 +162,7 @@ async def tc_loop(
             await sleep(RETRY_S)
 
 
-def _take(vehicle: str, box: CommandBox, buf: FrameBuffer, data: bytes, entry_id: object) -> None:
+def _take(vehicle: str, box: CommandBox, data: bytes, entry_id: object) -> None:
     got = parse_tc(data.decode("utf-8", errors="replace"))
     if isinstance(got, Tc):
         box.inbox.put_nowait(got)
@@ -164,8 +175,5 @@ def _take(vehicle: str, box: CommandBox, buf: FrameBuffer, data: bytes, entry_id
         msg,
         extra={"vehicle": vehicle, "cmd_id": str(cmd_id) if cmd_id else None},
     )
-    if cmd_id is not None:
-        ack = TcAck(
-            cmd_id=cmd_id, accepted=False, code=ACK_SCHEMA, reason=msg, t_onboard=datetime.now(UTC)
-        )
-        buf.append(f"tcack:{vehicle}", ack.model_dump_json())
+    if cmd_id is not None:  # unreadable: no tcack, the command times out NOT_RECEIVED
+        box.inbox.put_nowait((cmd_id, msg))

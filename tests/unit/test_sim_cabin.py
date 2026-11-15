@@ -49,5 +49,14 @@ def test_vent_stops_inside_a_tick() -> None:
     assert abs(c.offset_kpa - -2.0) < 1e-9
 
 
+def test_vents_never_go_below_zero_absolute() -> None:
+    c = Cabin()
+    for k in range(6):  # 6 x 10 s x -2 kPa/s = -120 kPa from a 101.3 kPa nominal
+        c = execute(tc("vent_cabin", duration_s=10), c, leak_offset=None, now=10.0 * k)
+        c = cabin_tick(c, 10.0, 10.0 * (k + 1))
+        assert c.offset_kpa >= -101.3
+    assert c.offset_kpa == -101.3
+
+
 def test_idle_cabin_is_unchanged() -> None:
     assert cabin_tick(Cabin(-3.0), 0.1, 5.0) == Cabin(-3.0)

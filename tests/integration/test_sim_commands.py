@@ -78,3 +78,17 @@ async def test_tcack_entries_match_schema() -> None:
     for _, f in stream_entries(f"tcack:{v}"):
         assert set(f) == {"data"}  # D-SIM-04
         validator.validate(json.loads(f["data"]))
+
+
+async def test_command_written_while_down_never_runs() -> None:  # P-pf29
+    v = vid()
+    async with running_sim(v):
+        pass  # the sim group exists from now on
+    cmd_id = await asyncio.to_thread(send_tc, v, "vent_cabin", {"duration_s": 5})
+    async with running_sim(v):  # restart: BUSYGROUP, the group is moved to the stream end
+        await asyncio.sleep(0.6)
+        later = await asyncio.to_thread(send_tc, v, "isolate_valve", {"valve": "A"})
+        await _until(lambda: tcacks(v), 1.0)
+        await _until(lambda: _echoed(v, later), 1.0)
+    assert [a["cmd_id"] for a in tcacks(v)] == [str(later)]  # no tcack for the old vent
+    assert not _echoed(v, cmd_id)  # and never executed

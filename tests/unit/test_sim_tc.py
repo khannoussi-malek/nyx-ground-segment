@@ -6,10 +6,10 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
+import redis.exceptions
 
 from gs.common.interfaces.streams import Tc, TcAck
 from gs.common.missiondb import load_dir
-from gs.simulator.buffer import FrameBuffer
 from gs.simulator.commands import CommandBox, parse_tc, tc_loop
 from gs.simulator.faults import FaultBoard
 from tests.support.mission import MISSION_DIR
@@ -78,13 +78,25 @@ def test_tc_without_cmd_id_is_unreadable(raw: str) -> None:
 
 # ---- tc_loop against a fake Redis
 class FakeRedis:
-    def __init__(self, entries: list[tuple[str, dict[bytes, bytes]]], stop: asyncio.Event) -> None:
-        self.entries, self.stop = entries, stop
+    def __init__(
+        self,
+        entries: list[tuple[str, dict[bytes, bytes]]],
+        stop: asyncio.Event,
+        group_exists: bool = False,
+    ) -> None:
+        self.entries, self.stop, self.exists = entries, stop, group_exists
         self.groups: list[tuple[str, str, str, bool]] = []
+        self.setids: list[tuple[str, str, str]] = []
         self.acked: list[str] = []
 
     async def xgroup_create(self, stream: str, group: str, id: str, mkstream: bool) -> None:
         self.groups.append((stream, group, id, mkstream))
+        if self.exists:
+            raise redis.exceptions.ResponseError("BUSYGROUP Consumer Group name already exists")
+        self.exists = True
+
+    async def xgroup_setid(self, stream: str, group: str, id: str) -> None:
+        self.setids.append((stream, group, id))
 
     async def xreadgroup(
         self, group: str, consumer: str, streams: dict[str, str], count: int, block: int
@@ -100,16 +112,16 @@ class FakeRedis:
         self.acked.append(entry_id)
 
 
-def run_tc_loop(raws: list[bytes]) -> tuple[FakeRedis, CommandBox, FrameBuffer]:
-    stop, box, buf = asyncio.Event(), CommandBox(COMMANDS), FrameBuffer()
-    r = FakeRedis([(f"{i}-0", {b"data": raw}) for i, raw in enumerate(raws)], stop)
-    asyncio.run(tc_loop(r, V, box, buf, stop))  # type: ignore[arg-type]
-    return r, box, buf
+def run_tc_loop(raws: list[bytes], group_exists: bool = False) -> tuple[FakeRedis, CommandBox]:
+    stop, box = asyncio.Event(), CommandBox(COMMANDS)
+    r = FakeRedis([(f"{i}-0", {b"data": raw}) for i, raw in enumerate(raws)], stop, group_exists)
+    asyncio.run(tc_loop(r, V, box, stop))  # type: ignore[arg-type]
+    return r, box
 
 
-def test_tc_loop_queues_valid_and_nacks_invalid() -> None:
+def test_tc_loop_queues_valid_and_rejects_invalid() -> None:
     good, bad = tc("isolate_valve", valve="A"), uuid4()
-    r, box, buf = run_tc_loop(
+    r, box = run_tc_loop(
         [
             good.model_dump_json().encode(),
             json.dumps({"cmd_id": str(bad), "name": "vent_cabin"}).encode(),
@@ -117,19 +129,23 @@ def test_tc_loop_queues_valid_and_nacks_invalid() -> None:
         ]
     )
     assert r.groups == [(f"tc:{V}", "sim", "$", True)]  # MKSTREAM, old commands never run
+    assert r.setids == []  # a new group already starts at the end
     assert r.acked == ["0-0", "1-0", "2-0"]  # XACKed either way
-    assert box.inbox.get_nowait() == good and box.inbox.empty()
-    assert box.schema_errors == 2
-    stream, data = buf.head() or ("", "")
-    ack = TcAck.model_validate_json(data)
-    assert stream == f"tcack:{V}" and len(buf) == 1  # no tcack for the unreadable one
-    assert (ack.cmd_id, ack.accepted, ack.code) == (bad, False, "SCHEMA") and ack.reason
+    assert box.schema_errors == 2  # health degrades at once
+    assert box.inbox.get_nowait() == good
+    rejected = box.inbox.get_nowait()
+    assert isinstance(rejected, tuple) and rejected[0] == bad and rejected[1]
+    assert box.inbox.empty()  # nothing queued for the unreadable one: no tcack
+
+
+def test_tc_loop_moves_an_existing_group_to_the_end() -> None:  # P-pf29
+    r, _ = run_tc_loop([], group_exists=True)
+    assert r.groups == [(f"tc:{V}", "sim", "$", True)]
+    assert r.setids == [(f"tc:{V}", "sim", "$")]  # commands written while down never run
 
 
 def test_tc_loop_survives_redis_errors() -> None:
-    import redis.exceptions
-
-    stop, box, buf, calls = asyncio.Event(), CommandBox(COMMANDS), FrameBuffer(), [0]
+    stop, box, calls = asyncio.Event(), CommandBox(COMMANDS), [0]
 
     class Flaky(FakeRedis):
         async def xreadgroup(self, *a: Any, **k: Any) -> list[Any]:
@@ -143,8 +159,9 @@ def test_tc_loop_survives_redis_errors() -> None:
     async def no_sleep(_: float) -> None:
         return None
 
-    asyncio.run(tc_loop(r, V, box, buf, stop, sleep=no_sleep))  # type: ignore[arg-type]
+    asyncio.run(tc_loop(r, V, box, stop, sleep=no_sleep))  # type: ignore[arg-type]
     assert len(r.groups) == 2  # group re-created after the error (a wiped Redis loses it)
+    assert r.setids == []  # only a start moves the group; a reconnect keeps its place
     assert r.acked == ["0-0"] and box.inbox.qsize() == 1
 
 
@@ -247,3 +264,43 @@ def test_vent_in_the_loop_drops_two_kpa_per_s_for_its_duration() -> None:
         assert p[k] == pytest.approx(base[k] - 0.2 * k)
     for k in range(11, 20):
         assert p[k] == pytest.approx(base[k] - 2.0)
+
+
+def test_pause_holds_a_due_held_command() -> None:
+    c = tc("isolate_valve", valve="A")
+
+    def act(k: int, board: FaultBoard, mono: float) -> None:
+        if k == 0:
+            board.add(fault_req("hold_exec", duration_s=0.2), mono)
+        if k == 1:  # due at 0.2 s, inside the pause [0.1, 0.6)
+            board.add(fault_req("pause", duration_s=0.5), mono)
+
+    frames, acks = frames_and_acks(tick_pairs(10, act, box_with(c)))
+    assert [i for i, _ in acks] == [0]
+    assert first_seen(frames, c.cmd_id) == 7  # executed at tick 6, when the pause ended
+
+
+def schema_rejected() -> tuple[UUID, CommandBox]:
+    u, box = uuid4(), CommandBox(COMMANDS)
+    box.inbox.put_nowait((u, "tc: issued_by missing"))
+    return u, box
+
+
+def test_schema_nack_sent_by_the_tick() -> None:
+    u, box = schema_rejected()
+    frames, acks = frames_and_acks(tick_pairs(3, box=box))
+    [(i, a)] = acks
+    assert (i, a["cmd_id"], a["accepted"], a["code"]) == (0, str(u), False, "SCHEMA")
+    assert a["reason"] == "tc: issued_by missing"
+    assert a["t_onboard"] == frames[0]["t_onboard"]  # the tick clock
+    assert all(f["last_cmd_id"] is None for f in frames)
+
+
+def test_schema_nack_held_by_pause_and_lost_in_dropout() -> None:
+    _, box = schema_rejected()
+    pause = at_tick(0, fault_req("pause", duration_s=0.3))
+    assert [i for i, _ in frames_and_acks(tick_pairs(6, pause, box))[1]] == [3]
+    _, box = schema_rejected()
+    dropout = at_tick(0, fault_req("dropout", duration_s=0.3))
+    assert frames_and_acks(tick_pairs(6, dropout, box))[1] == []
+    assert box.inbox.empty()

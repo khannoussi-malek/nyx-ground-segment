@@ -53,25 +53,54 @@ def test_archiver_cannot_delete() -> None:
         root.remove_object("archive", key)
 
 
-def test_archiver_cannot_use_another_bucket() -> None:
+def test_archiver_can_list_the_archive_bucket() -> None:  # a policy without ListBucket fails here
+    root, c = s3_client("root"), s3_client("archiver")
+    key = f"t/{vid()}.bin"
+    root.put_object("archive", key, io.BytesIO(b"x"), 1)
+    try:
+        assert key in [o.object_name for o in c.list_objects("archive", prefix="t/")]
+    finally:
+        root.remove_object("archive", key)
+
+
+def test_archiver_is_denied_on_a_real_second_bucket() -> None:
     root, c = s3_client("root"), s3_client("archiver")
     bucket = f"t-{vid().lower()}"
     root.make_bucket(bucket)
+    root.put_object(bucket, "x", io.BytesIO(b"x"), 1)
     try:
-        with pytest.raises(S3Error) as e:
-            c.put_object(bucket, "x", io.BytesIO(b"x"), 1)
-        assert e.value.code == "AccessDenied"
+        for op in (
+            lambda: c.put_object(bucket, "y", io.BytesIO(b"y"), 1),
+            lambda: c.get_object(bucket, "x").read(),
+            lambda: list(c.list_objects(bucket)),
+        ):
+            with pytest.raises(S3Error) as e:
+                op()
+            assert e.value.code == "AccessDenied"  # the bucket exists: not NoSuchBucket
     finally:
+        root.remove_object(bucket, "x")
         root.remove_bucket(bucket)
 
 
-def test_archiver_cannot_list_or_touch_other_buckets_and_cannot_admin() -> None:
-    c = s3_client("archiver")
+def test_archiver_cannot_create_buckets() -> None:
     with pytest.raises(S3Error) as e:
-        list(c.list_objects("no-such-or-other-bucket"))
-    assert e.value.code in {"AccessDenied", "NoSuchBucket"}
-    with pytest.raises(S3Error):
-        c.make_bucket(f"t-{vid().lower()}")
+        s3_client("archiver").make_bucket(f"t-{vid().lower()}")
+    assert e.value.code == "AccessDenied"
+
+
+def test_archiver_is_denied_admin_operations() -> None:
+    """`mc admin user list` as the archiver (its own credentials, inside the minio container)."""
+    cmd = (
+        "export MC_CONFIG_DIR=/tmp/mc-arch; "
+        'mc alias set arch http://127.0.0.1:9000 archiver "$ARCH_PW" >/dev/null && '
+        "mc admin user list arch"
+    )
+    r = subprocess.run(
+        ["docker", "compose", "exec", "-T", "-e", f"ARCH_PW={dotenv()['S3_ARCHIVER_SECRET']}",
+         "minio", "bash", "-c", cmd],
+        capture_output=True, text=True,
+    )  # fmt: skip
+    assert r.returncode != 0 and "denied" in (r.stdout + r.stderr).lower()
 
 
 def test_init_rerun_keeps_policy() -> None:

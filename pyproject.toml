@@ -60,3 +60,11 @@ dev = [
     "types-jsonschema==4.26.0.20261006",
     "types-pyyaml==6.0.12.20261113",
 ]
+
+[tool.uv]
+# P-pf41: a package newly added to uv.lock must be at least 14 days old, transitive ones too
+# (checked 2026-11-15). Newest releases that old:
+constraint-dependencies = [
+    "argon2-cffi-bindings==26.1.0",  # 26.2.0 is from 2026-11-13; 26.1.0 from 2026-08-20
+    "pycryptodome==4.2.0",           # 4.4.0 is from 2026-11-07; 4.2.0 from 2026-10-24
+]

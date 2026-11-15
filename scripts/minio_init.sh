@@ -28,6 +28,8 @@ cat > /tmp/nyx-archiver.json <<POLICY
 }
 POLICY
 mc admin policy create s3 nyx-archiver /tmp/nyx-archiver.json
-if ! mc admin policy entities s3 --user archiver | grep -q nyx-archiver; then
+# capture first: `cmd | grep -q` can die of SIGPIPE under pipefail
+entities=$(mc admin policy entities s3 --user archiver)
+if [[ $entities != *nyx-archiver* ]]; then
   mc admin policy attach s3 nyx-archiver --user archiver
 fi

@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
 import redis.asyncio
+import redis.exceptions
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
@@ -30,6 +31,12 @@ VALIDITY_MARGIN = timedelta(hours=1)  # ingest accepts t_onboard up to 7 days ol
 VALIDITY = timedelta(days=7)
 PERIOD_US = round(PERIOD_S * 1_000_000)
 _POLL_S = 0.001
+# XADD ... MAXLEN never trims entries nobody acknowledged, and Redis (noeviction, 512 MB) is shared
+# with the live vehicles: stop producing while the ingest group is more than an hour behind (G4-9)
+CONSUMER_GROUP = "ingest"
+LAG_MAX = 36_000
+LAG_CHECK_TICKS = 1_000  # look every 100 s of virtual time
+LAG_POLL_S = 0.2
 
 
 @dataclass(frozen=True)
@@ -66,6 +73,20 @@ def validate_window(t_from: datetime, t_to: datetime, now: datetime | None = Non
 
 class _WindowDone(Exception):
     pass
+
+
+async def _lag(r: redis.asyncio.Redis, stream: str) -> int:
+    """Entries the ingest group has not been delivered yet (0 when unknown or no group)."""
+    try:
+        groups = await r.execute_command("XINFO", "GROUPS", stream)  # type: ignore[no-untyped-call]
+    except redis.exceptions.ResponseError as e:
+        if "no such key" in str(e):  # nothing sent yet: no stream, no lag
+            return 0
+        raise
+    for g in groups or []:
+        if g.get("name") in (CONSUMER_GROUP, CONSUMER_GROUP.encode()):
+            return int(g.get("lag") or 0)
+    return 0
 
 
 async def backfill(
@@ -106,6 +127,9 @@ async def backfill(
             await resume(tick)
         while len(buf) >= HIGH_WATER:
             await asyncio.sleep(_POLL_S)
+        if tick % LAG_CHECK_TICKS == 0:
+            while await _lag(r, f"tm:{vehicle}") > LAG_MAX:
+                await asyncio.sleep(LAG_POLL_S)
         await asyncio.sleep(0)  # let the sender run
         if tick_us >= total_us:
             raise _WindowDone

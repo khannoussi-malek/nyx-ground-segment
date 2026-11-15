@@ -160,7 +160,7 @@ def test_ingest_defaults(services: dict[str, dict[str, Any]]) -> None:
             "30000",
             "0",
         )
-        assert env["INGEST_HOMES"] == "ingest-1=NYX-TA1,ingest-2=NYX-TA2,ingest-1=NYX-TA9"
+        assert env["INGEST_HOMES"] == "ingest-1=NYX-TA1,ingest-2=NYX-TA2,ingest-2=NYX-TA9"
         assert env["VEHICLES"] == "NYX-TA1,NYX-TA2,NYX-TA9"
         assert env["CONSUMER_NAME"] == svc
 

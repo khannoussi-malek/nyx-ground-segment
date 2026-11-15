@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
+import redis.exceptions
 
 from gs.simulator import backfill as bf
 from gs.simulator.backfill import BACKFILL_VEHICLE, FaultAt, backfill, parse_fault
@@ -12,6 +13,7 @@ from gs.simulator.buffer import BUFFER_MAX, FrameBuffer
 NOW = datetime.now(UTC)
 F = (NOW - timedelta(days=2)).replace(microsecond=0)
 Z = "%Y-%m-%dT%H:%M:%SZ"
+HOUR1 = timedelta(hours=1)
 
 
 class FakeRedis:
@@ -20,8 +22,19 @@ class FakeRedis:
     def __init__(self, delay: float = 0.0) -> None:
         self.entries: list[tuple[str, dict[str, Any]]] = []
         self.delay = delay
+        self.stalled = False  # a consumer that reads nothing: the lag is every entry
+        self.max_lag = 0
 
-    async def execute_command(self, *args: Any) -> str:
+    def lag(self) -> int:
+        lag = len(self.entries) if self.stalled else 0
+        self.max_lag = max(self.max_lag, lag)
+        return lag
+
+    async def execute_command(self, *args: Any) -> Any:
+        if args[0] == "XINFO":  # the ingest group's lag on the stream
+            if not self.entries:
+                raise redis.exceptions.ResponseError("no such key")  # as before the first XADD
+            return [{"name": "ingest", "lag": self.lag()}]
         if self.delay:
             await asyncio.sleep(self.delay)
         self.entries.append((str(args[1]), json.loads(args[-1])))
@@ -50,9 +63,6 @@ def test_cli_rejects_other_vehicles(capsys: pytest.CaptureFixture[str]) -> None:
     assert BACKFILL_VEHICLE == "NYX-TA9"
 
 
-HOUR1 = timedelta(hours=1)
-
-
 def test_cli_rejects_a_bad_window(capsys: pytest.CaptureFixture[str]) -> None:
     old = (NOW - timedelta(days=8)).strftime(Z)
     assert bf.main(["--vehicle", "NYX-TA9", "--from", old, "--to", F.strftime(Z)]) == 2
@@ -65,7 +75,7 @@ async def test_window_outside_validity_rejected() -> None:
     ok_from = NOW - timedelta(days=7) + bf.VALIDITY_MARGIN
     for lo, hi in [
         (ok_from - timedelta(seconds=1), ok_from + HOUR1),  # older than now - 7 d + 1 h
-        (NOW - HOUR1, NOW + timedelta(seconds=5)),  # ends in the future
+        (datetime.now(UTC) - HOUR1, datetime.now(UTC) + timedelta(minutes=5)),  # in the future
         (F, F),  # empty
         (F + HOUR1, F),  # reversed
         (datetime(2026, 1, 1), F),  # naive
@@ -139,3 +149,24 @@ async def test_back_pressure_never_overflows(monkeypatch: pytest.MonkeyPatch) ->
     n = await backfill(r, "NYX-TA9", F, F + timedelta(seconds=frames / 10), "s")  # type: ignore[arg-type]
     assert n == frames and made[0].overflow == 0
     assert [f["seq"] for _, f in r.entries] == list(range(frames))
+
+
+async def test_backfill_pauses_while_the_consumer_lags_then_resumes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(bf, "LAG_MAX", 100)
+    monkeypatch.setattr(bf, "LAG_CHECK_TICKS", 20)
+    monkeypatch.setattr(bf, "LAG_POLL_S", 0.01)
+    r = FakeRedis()
+    r.stalled = True
+    task = asyncio.create_task(
+        backfill(r, "NYX-TA9", F, F + timedelta(seconds=100), "s")  # type: ignore[arg-type]
+    )
+    await asyncio.sleep(0.5)
+    plateau = len(r.entries)
+    assert not task.done() and 100 <= plateau < 1000  # held back near LAG_MAX, not 1000 frames
+    await asyncio.sleep(0.3)
+    assert len(r.entries) == plateau  # still paused: nothing more is sent
+    r.stalled = False  # the consumer catches up
+    assert await asyncio.wait_for(task, 10) == 1000
+    assert [f["seq"] for _, f in r.entries] == list(range(1000))

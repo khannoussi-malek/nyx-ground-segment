@@ -89,7 +89,7 @@ services:
       MISSION_DB: /mission
       BIND_HOST: "0.0.0.0"
       HEALTH_PORT: "8081"
-      INGEST_HOMES: "ingest-1=NYX-TA1,ingest-2=NYX-TA2,ingest-1=NYX-TA9"
+      INGEST_HOMES: "ingest-1=NYX-TA1,ingest-2=NYX-TA2,ingest-2=NYX-TA9"
       STEAL_IDLE_MS: "${STEAL_IDLE_MS:-30000}"
       RECLAIM_IDLE_MS: "${RECLAIM_IDLE_MS:-30000}"
       GS_TEST_HOOKS: "${GS_TEST_HOOKS:-0}"

@@ -52,3 +52,17 @@ def test_acl_log_check_fails_on_denial_then_passes_after_reset() -> None:
     assert run_check_acl_log() == 1
     client("admin").acl_log_reset()
     assert run_check_acl_log() == 0
+
+
+def test_sim_may_read_group_lag_of_tm_streams_only() -> None:  # backfill pacing (G4-9)
+    v = vid()
+    sim, ing = client("sim"), client("ingest")
+    sim.xadd(f"tm:{v}", {"data": "{}"})
+    ing.xgroup_create(f"tm:{v}", "ingest", id="0")
+    groups: Any = sim.xinfo_groups(f"tm:{v}")
+    assert groups[0]["name"] == "ingest" and groups[0]["lag"] == 1
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        sim.xinfo_groups("ui:events")
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        sim.xread({f"tm:{v}": "0"}, count=1)  # the lag permission does not allow reading frames
+    client("admin").delete(f"tm:{v}")

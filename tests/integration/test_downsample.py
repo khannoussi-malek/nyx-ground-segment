@@ -52,7 +52,7 @@ async def _get(
 
 async def test_first_last_per_bucket(app: tuple[httpx.AsyncClient, str]) -> None:
     c, v = app
-    # 100 s of a ramp (value = i), width 10 -> 10 s buckets (100 rows each); one spike at i=55
+    # 100 s of a ramp (value = i), width 100 -> 1 s buckets (10 rows each); one spike at i=55
     _gen(v, 1000, 100, "CASE WHEN i = 55 THEN 9999.0 ELSE i::float8 END")
     r = await _get(c, v, 100, 100)
     assert r.status_code == 200
@@ -99,6 +99,8 @@ async def test_24h_window_is_valid_and_fast(app: tuple[httpx.AsyncClient, str]) 
     assert len(buckets) == 1500
     assert all(0.0 <= b["lo"] <= b["hi"] <= 999.0 for b in buckets)
     assert sum(b["n"] for b in buckets) == 864_000
+    k = 3  # 57.6 s buckets = 576 rows: bucket 3 holds i = 1728..2303
+    assert (buckets[k]["first"], buckets[k]["last"]) == (728.0, 303.0)  # i % 1000
 
 
 @pytest.mark.parametrize(
@@ -139,3 +141,65 @@ async def test_buckets_database_down_is_503(
     finally:
         await bad.close()
     assert (r.status_code, r.json()["error"]) == (503, "UNAVAILABLE")
+
+
+def _rows(v: str, times: list[datetime]) -> None:
+    with psycopg.connect(app_dsn("gs"), autocommit=True) as c:
+        for i, t in enumerate(times):
+            c.execute(
+                f"INSERT INTO telemetry (t_onboard, vehicle, seq, mode, {P})"  # noqa: S608
+                " VALUES (%s, %s, %s, 'TEST', %s)",
+                (t, v, i, float(i)),
+            )
+
+
+async def test_buckets_align_to_from_and_bounds(app: tuple[httpx.AsyncClient, str]) -> None:
+    c, v = app
+    start = T0 + timedelta(milliseconds=350)  # not epoch-aligned to the 100 ms bucket
+    end = start + timedelta(seconds=10)
+    _rows(v, [
+        start - timedelta(microseconds=1),  # before `from`: excluded
+        start,  # exactly `from`: included
+        start + timedelta(milliseconds=150),  # second bucket
+        end - timedelta(microseconds=1),  # last microsecond: included
+        end,  # exactly `to`: excluded
+    ])  # fmt: skip
+    r = await c.get(
+        f"/api/telemetry/{v}/{P}", params={"from": iso_z(start), "to": iso_z(end), "width": "100"}
+    )
+    got = r.json()
+    assert [b["first"] for b in got] == [1.0, 2.0, 3.0]  # seq 0 and 4 are out
+    assert got[0]["t"] == iso_z(start)
+    assert got[1]["t"] == iso_z(start + timedelta(milliseconds=100))
+    assert got[-1]["t"] == iso_z(end - timedelta(milliseconds=100))
+
+
+async def test_a_row_before_to_never_makes_bucket_width_plus_one(
+    app: tuple[httpx.AsyncClient, str],
+) -> None:
+    c, v = app
+    end = T0 + timedelta(seconds=3602)  # 3602 s / 1500 is not a whole microsecond
+    _rows(v, [T0, end - timedelta(microseconds=1)])
+    r = await c.get(
+        f"/api/telemetry/{v}/{P}", params={"from": iso_z(T0), "to": iso_z(end), "width": "1500"}
+    )
+    got = r.json()
+    assert len(got) == 2 and len(got) <= 1500
+    assert got[-1]["t"] == iso_z(T0 + timedelta(microseconds=2_401_334 * 1499))  # last of 1500
+
+
+async def test_buckets_with_a_non_utc_database_timezone(
+    app: tuple[httpx.AsyncClient, str],
+) -> None:
+    c, v = app
+    _gen(v, 100, 100, "i::float8")
+    tokyo = AsyncConnectionPool(
+        app_dsn("gs"), min_size=1, open=False, kwargs={"options": "-c TimeZone=Asia/Tokyo"}
+    )
+    await tokyo.open(wait=True)
+    c._transport.app.state.pool = tokyo  # type: ignore[attr-defined]
+    try:
+        r = await _get(c, v, 10, 100)
+    finally:
+        await tokyo.close()
+    assert r.status_code == 200 and r.json()[0]["t"] == iso_z(T0)

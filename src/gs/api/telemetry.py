@@ -8,7 +8,7 @@ from fastapi import APIRouter, Query, Request
 from psycopg import sql
 
 from gs.api.bodies import Bucket
-from gs.api.dbguard import connect, db_503
+from gs.api.dbguard import connect, db_503, utc
 from gs.api.deps import ApiError, User, errors, mission, vehicles
 from gs.common.interfaces.base import UtcTime, VehicleId
 
@@ -38,7 +38,10 @@ async def get_buckets(
         raise _bad("WIDTH_OUT_OF_RANGE", f"width must be {WIDTH_MIN}..{WIDTH_MAX}")
     if t_to <= t_from or t_to - t_from > MAX_WINDOW:
         raise _bad("WINDOW_TOO_LARGE", "window must be longer than 0 and at most 24 h")
-    bucket = max((t_to - t_from) / width, MIN_BUCKET)  # a float timedelta, never rounded up
+    # (to - from) / width as a timedelta, rounded UP to the next microsecond: rounded down,
+    # width x bucket < window and a row just before `to` would land in bucket width + 1
+    total_us = (t_to - t_from) // timedelta(microseconds=1)
+    bucket = max(timedelta(microseconds=-(-total_us // width)), MIN_BUCKET)
     col = sql.Identifier(param)  # D-DB-04: the name was checked against the mission db
     query = sql.SQL(
         "SELECT time_bucket(%s, t_onboard, %s) AS t, min({c}), max({c}), avg({c}),"
@@ -51,6 +54,8 @@ async def get_buckets(
             cur = await conn.execute(query, (bucket, t_from, vehicle, t_from, t_to))
             rows = await cur.fetchall()
     # buckets start at `from`, so a window holds at most `width` of them; empty ones are absent
+    # first/last among rows with the same t_onboard have no defined order
     return [
-        Bucket(t=r[0], lo=r[1], hi=r[2], mean=r[3], first=r[4], last=r[5], n=r[6]) for r in rows
+        Bucket(t=r[0], lo=r[1], hi=r[2], mean=r[3], first=r[4], last=r[5], n=r[6])
+        for r in map(utc, rows)
     ]

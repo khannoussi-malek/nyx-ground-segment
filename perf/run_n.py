@@ -35,21 +35,35 @@ LIMITS_MS = {
 REPO = Path(__file__).resolve().parent.parent
 
 
+N_STEPS = int(DURATION_S / STEP_EVERY_S)  # 120 alarms (D-PERF-04)
+
+
 def step_schedule(t0: float) -> list[float]:
     """Start times of the 120 one-second steps, 5 s apart; the last ends inside the run."""
-    return [t0 + i * STEP_EVERY_S for i in range(int(DURATION_S / STEP_EVERY_S))]
+    return [t0 + i * STEP_EVERY_S for i in range(N_STEPS)]
 
 
-def verdict(name: str, samples_ms: Sequence[float], limit_ms: float, excluded: int) -> str:
+def verdict(
+    name: str,
+    samples_ms: Sequence[float],
+    limit_ms: float,
+    excluded: int | None = None,
+    expected_n: int | None = None,
+) -> str:
+    """`excluded`: samples dropped as warmup (only the ingest series has a warmup);
+    `expected_n`: the sample count the run must produce, any other count fails (D-PERF-04)."""
     head = f"- **{name}**: "
     if not samples_ms:
         return head + "NO SAMPLES (FAIL)"
     p = p95(samples_ms)
-    ok = "PASS" if p <= limit_ms else "FAIL"
-    return (
-        f"{head}n = {len(samples_ms)}, p95 = {p:.1f} ms against {limit_ms:g} ms: **{ok}** "
-        f"(first 10 s excluded: {excluded} samples)"
-    )
+    ok = p <= limit_ms and (expected_n is None or len(samples_ms) == expected_n)
+    text = f"{head}n = {len(samples_ms)}, p95 = {p:.1f} ms against {limit_ms:g} ms: "
+    text += "**PASS**" if ok else "**FAIL**"
+    if expected_n is not None and len(samples_ms) != expected_n:
+        text += f" (expected {expected_n} samples, got {len(samples_ms)}: INCOMPLETE series)"
+    if excluded is not None:
+        text += f" (first 10 s excluded: {excluded} samples)"
+    return text
 
 
 def _env() -> dict[str, str]:
@@ -155,9 +169,12 @@ def _clock(db: psycopg.Connection) -> datetime:
     return now
 
 
-def _summary(out: Path, ctx: dict[str, str], results: list[str], n_alarms: int) -> str:
+def _summary(
+    out: Path, ctx: dict[str, str], results: list[str], n_alarms: int, incomplete: str | None
+) -> str:
+    banner = f"**INCOMPLETE RUN: {incomplete}**\n\n" if incomplete else ""
     return (
-        f"# Run N, {out.name}\n\n"
+        f"# Run N, {out.name}\n\n{banner}"
         f"2 vehicles x 10 Hz, {DURATION_S} s, `step` of {STEP_PARAM} to {STEP_VALUE:g} for "
         f"{STEP_S:g} s every {STEP_EVERY_S:g} s ({n_alarms} RED transitions recorded).\n\n"
         "## Result\n" + "\n".join(results) + "\n\n"
@@ -166,6 +183,10 @@ def _summary(out: Path, ctx: dict[str, str], results: list[str], n_alarms: int) 
         f"- Image digests:\n{ctx['digests']}\n"
         "- The load driver (this script and the browser) runs on the machine under test; one "
         "laptop cannot keep them apart (D-PERF-08).\n"
+        "- The 10 s warmup exclusion applies to the ingest series only; the other series have no "
+        "warmup rule.\n"
+        "- Not in this run, Gate 4: the p95 confidence interval from pooled samples (D-PERF-10) "
+        "and the takeover-window samples (D-PERF-07). Percentiles here are point values.\n"
         "- Screen latency is `age_ms` (API, VM clock) plus `paint_ms` (browser clock, double "
         "rAF heuristic); localhost socket transit is left out (D-PERF-02).\n"
         "- Reproduce: `make perf`. Raw samples: ingest.csv, alarm.csv, ui.csv, query.csv.\n"
@@ -184,7 +205,22 @@ def main() -> None:
             ["npx", "--prefix", "e2e", "playwright", "test", "-c", "perf/playwright.config.ts"],
             cwd=REPO, env={**os.environ, "PERF_OUT": str(out), "PERF_DURATION_S": str(DURATION_S)},
         )  # fmt: skip
-        _drive_steps(env["SIM_HOST_PORT"])
+        error: str | None = None
+        try:
+            _drive_steps(env["SIM_HOST_PORT"])
+        except (
+            OSError,
+            AssertionError,
+        ) as e:  # a partial summary is still written, marked INCOMPLETE
+            error = f"{type(e).__name__}: {e}"
+        finally:
+            if error is not None and ui.poll() is None:
+                ui.terminate()  # the browser must not keep running after the driver failed
+                try:
+                    ui.wait(timeout=30)
+                except subprocess.TimeoutExpired:
+                    ui.kill()
+                    ui.wait()
         ui_rc = ui.wait()
         end = _clock(db)
         queries = _query_times(env, end)
@@ -199,16 +235,18 @@ def main() -> None:
     ms = [v for _, v in alarm]
     results = [
         verdict("ingest ING-09 (both vehicles pooled)", [v for _, v in ing],
-                LIMITS_MS["ingest"], len(ingest) - len(ing)),
-        verdict("alarm ALM-05, first 20", ms[:20], LIMITS_MS["alarm"], 0),
-        verdict("alarm ALM-05, all steps", ms, LIMITS_MS["alarm"], 0),
-        verdict("screen UI-01 (age + paint)", _ui_total_ms(out / "ui.csv"), LIMITS_MS["ui"], 0),
-        verdict("query DAT-03 (1 h range)", [v for _, v in queries], LIMITS_MS["query"], 0),
+                LIMITS_MS["ingest"], excluded=len(ingest) - len(ing)),
+        verdict("alarm ALM-05, first 20", ms[:20], LIMITS_MS["alarm"]),
+        verdict("alarm ALM-05, all steps", ms, LIMITS_MS["alarm"], expected_n=N_STEPS),
+        verdict("screen UI-01 (age + paint)", _ui_total_ms(out / "ui.csv"), LIMITS_MS["ui"]),
+        verdict("query DAT-03 (1 h range)", [v for _, v in queries], LIMITS_MS["query"]),
     ]  # fmt: skip
-    (out / "summary.md").write_text(_summary(out, ctx, results, len(alarm)))
+    if error is None and ui_rc != 0:
+        error = f"ui latency spec failed (exit {ui_rc})"
+    (out / "summary.md").write_text(_summary(out, ctx, results, len(alarm), error))
     print((out / "summary.md").read_text())
-    if ui_rc != 0:
-        sys.exit(f"ui latency spec failed (exit {ui_rc}); see the Playwright output above")
+    if error is not None:
+        sys.exit(f"run N INCOMPLETE: {error}")
 
 
 def _ui_total_ms(path: Path) -> list[float]:

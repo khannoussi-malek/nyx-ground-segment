@@ -28,7 +28,12 @@ test("screen latency over the whole run", async ({ page }) => {
 
   await page.waitForTimeout(duration * 1000);
   const samples = await page.evaluate(() => window.__nyxLatency ?? []);
-  expect(samples.length).toBeGreaterThan(0);
+  // 2 vehicles x 10 Hz; a mostly dead probe must not pass
+  const expected = 2 * 10 * duration;
+  expect(samples.length, "no latency samples: probe not armed or UI build lacks probe.ts").toBeGreaterThan(0);
+  expect(samples.length, `only ${samples.length} of about ${expected} frames were sampled (need 80%)`).toBeGreaterThanOrEqual(
+    Math.floor(0.8 * expected),
+  );
 
   const rows = samples.map((s) =>
     [s.vehicle, s.seq, s.age_ms ?? "", s.paint_ms.toFixed(3), s.age_ms === null ? "" : (s.age_ms + s.paint_ms).toFixed(3)].join(","),

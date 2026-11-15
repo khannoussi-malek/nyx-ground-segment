@@ -238,7 +238,7 @@ async def delete_hot(
     return True
 
 
-def _merged_rows(prev: pa.Table, late: pa.Table, vehicle: str) -> pa.Table:
+def merged_rows(prev: pa.Table, late: pa.Table, vehicle: str) -> pa.Table:
     """The archived rows plus the late rows whose (t_onboard, seq) is not archived yet; on a shared
     key the archived row wins (a differing late copy is logged)."""
     have = {
@@ -283,7 +283,7 @@ async def merge_late(
     late = await hot_table(conn, w, await hot_schema(conn))  # columns added since v0 included
     if late.num_rows == 0:
         return None
-    expected = _merged_rows(prev, late, row.vehicle)
+    expected = merged_rows(prev, late, row.vehicle)
     version = row.version + 1
     key = object_key(row.vehicle, row.hour, version)
     sha = await put(ctx.s3, ctx.bucket, key, encode(expected))

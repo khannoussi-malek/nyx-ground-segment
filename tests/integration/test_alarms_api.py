@@ -281,3 +281,13 @@ async def test_text_postgres_rejects_is_422(app: Any) -> None:  # was a 500 (Tas
         ):
             assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR"), r.text
     assert rows("select count(*) as n from alarm_ack_request where alarm_id=%s", aid)[0]["n"] == 0
+
+
+async def test_nul_in_a_uuid_is_422_not_500(app: Any) -> None:  # review of Task 27b
+    async with authed(app) as c:  # the 422 message echoes the bad value, NUL included
+        bad_rid = await ack(c, str(uuid.uuid4()), rid="\x00")
+        bad_path = await c.post(
+            "/api/alarms/%00/ack", json={"request_id": str(uuid.uuid4()), "note": "n"}
+        )
+    for r in (bad_rid, bad_path):
+        assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR"), r.text

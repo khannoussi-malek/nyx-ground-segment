@@ -117,6 +117,7 @@ export function AlarmList({ store, mission, user }: { store: Store; mission: Mis
       )}
       {acking && (
         <AckDialog
+          key={acking.alarm.alarm_id} // another alarm is another dialog: new request id and seen_key
           alarm={acking.alarm}
           current={alarms.find((x) => x.alarm_id === acking.alarm.alarm_id)}
           live={live(acking.alarm.vehicle)}

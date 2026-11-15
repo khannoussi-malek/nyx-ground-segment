@@ -14,11 +14,24 @@ export function EventStrip({ store }: { store: Store }) {
         <p className="empty" role="status">{wired ? "No events" : "Waiting for the first snapshot…"}</p>
       ) : (
         <ol>
-          {events.map((e) => (
-            <li key={e.key} data-kind={e.kind}>
-              {e.t_onboard && <time dateTime={e.t_onboard}>{utcClock(e.t_onboard)}</time>} {eventText(e, events)}
-            </li>
-          ))}
+          {events.map((e) => {
+            const line = eventText(e, events);
+            return (
+              <li key={e.key} data-kind={e.kind}>
+                {e.t_onboard && (
+                  <>
+                    <time dateTime={e.t_onboard}>{utcClock(e.t_onboard)}</time>{" "}
+                  </>
+                )}
+                {e.vehicle && !line.startsWith(e.vehicle) && (
+                  <>
+                    <span className="tag">{e.vehicle}</span>{" "}
+                  </>
+                )}
+                {line}
+              </li>
+            );
+          })}
         </ol>
       )}
     </section>

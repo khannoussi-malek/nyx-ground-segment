@@ -76,3 +76,14 @@ test("an unknown kind falls back to the vehicle and the kind", () => {
   expect(eventText(ev("WHATEVER", {}), [])).toBe("NYX-TA1 WHATEVER");
   expect(eventText(eventView("k", { kind: "WHATEVER" }), [])).toBe("WHATEVER");
 });
+
+test("SEQ_JUMP without from_seq prints a question mark, not seq 0", () => {
+  expect(eventText(ev("SEQ_JUMP", { lost: 5, lost_by_time: 4 }), [])).toBe("NYX-TA1 SEQ JUMP – sequence jumped by 5 after seq ?, 4 expected by time");
+});
+
+test("late verification and interface mismatch prefer their documented details, the key is the fallback", () => {
+  const late = eventView("LATE_VERIFICATION/c-1", { kind: "LATE_VERIFICATION", vehicle: "NYX-TA1", details: { cmd_id: "c-1", name: "hold_exec", failure_reason: "NOT_VERIFIED" } });
+  expect(eventText(late, [])).toBe("NYX-TA1 late verification of hold_exec c-1 (failed: NOT_VERIFIED)");
+  const mismatch = eventView("INTERFACE_MISMATCH/tcack/ab12cd34ef56", { kind: "INTERFACE_MISMATCH", details: { stream: "tcack", consumer: "ingest-1", detail: "missing field cmd_id" } });
+  expect(eventText(mismatch, [])).toBe("interface mismatch on tcack (consumer ingest-1): missing field cmd_id");
+});

@@ -30,7 +30,7 @@ export function eventText(e: EventView, all: readonly EventView[]): string {
       return `${v} GAP – ${frames(num(e, "lost"))} ${from !== null && from > 0 ? `after seq ${from - 1}` : "at the start of the sequence"}`;
     }
     case "SEQ_JUMP":
-      return `${v} SEQ JUMP – sequence jumped by ${num(e, "lost") ?? "?"} after seq ${(num(e, "from_seq") ?? 1) - 1}, ${num(e, "lost_by_time") ?? "?"} expected by time`;
+      return `${v} SEQ JUMP – sequence jumped by ${num(e, "lost") ?? "?"} after seq ${num(e, "from_seq") === null ? "?" : (num(e, "from_seq") ?? 1) - 1}, ${num(e, "lost_by_time") ?? "?"} expected by time`;
     case "SEQ_RESET":
       return `${v} SEQ RESET – gap of unknown size`;
     case "SEQ_ANOMALY":
@@ -44,11 +44,17 @@ export function eventText(e: EventView, all: readonly EventView[]): string {
       // the API's own check refused it: the worker may have applied it, the API keeps its old commands (P-pf5)
       return text(e, "by") === "api" ? `${base} – commands not updated until API restart` : base;
     }
-    case "LATE_VERIFICATION":
-      return `${v} late verification of command ${e.key.split("/")[1] ?? "?"}`.trim();
+    case "LATE_VERIFICATION": {
+      // details {cmd_id, name, failure_reason}; the key LATE_VERIFICATION/<cmd_id> when they are missing
+      const reason = text(e, "failure_reason");
+      return `${v} late verification of ${text(e, "name") ?? "command"} ${text(e, "cmd_id") ?? e.key.split("/")[1] ?? "?"}${reason ? ` (failed: ${reason})` : ""}`.trim();
+    }
     case "INTERFACE_MISMATCH": {
-      const [, stream = "?", id = "?"] = e.key.split("/");
-      return `interface mismatch on ${stream} (${id})`;
+      // details {stream, consumer, detail}; the key INTERFACE_MISMATCH/<stream>/<sha12> when they are missing
+      const [, keyStream = "?", id = "?"] = e.key.split("/");
+      const consumer = text(e, "consumer");
+      const detail = text(e, "detail");
+      return `interface mismatch on ${text(e, "stream") ?? keyStream}${consumer ? ` (consumer ${consumer})` : ` (${id})`}${detail ? `: ${detail}` : ""}`;
     }
     case "POISON":
       return `${v} POISON – entry ${text(e, "entry_id") ?? "?"} of ${text(e, "stream") ?? "?"} dead-lettered after ${num(e, "deliveries") ?? "?"} deliveries`;

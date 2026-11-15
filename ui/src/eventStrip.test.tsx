@@ -51,6 +51,15 @@ test("a repeated event is shown once; an event without a time has no clock", () 
   const rejected = eventView("LIMITS_REJECTED/x", { kind: "LIMITS_REJECTED", details: { file: "limits.yaml", error: "bad", by: "api" } });
   act(() => ingest(store, "link", { kind: "link", event: rejected }));
   act(() => ingest(store, "link", { kind: "link", event: rejected }));
-  expect(lines()).toEqual([" mission db REJECTED – limits.yaml: bad – commands not updated until API restart"]);
+  expect(lines()).toEqual(["mission db REJECTED – limits.yaml: bad – commands not updated until API restart"]);
   expect(host.querySelector("time")).toBeNull();
+});
+
+test("a vehicle tag tells apart two events whose text names no vehicle", () => {
+  const store = createStore();
+  const applied = (v: string) => eventView(`LIMITS_APPLIED/${v}`, { kind: "LIMITS_APPLIED", vehicle: v, t_onboard: "2026-11-14T10:00:00Z", details: { limits_sha256: "aaaaaaaaaa" } });
+  ingest(store, "snapshot", snapshot([applied("NYX-TA2"), applied("NYX-TA1")]));
+  act(() => root.render(<EventStrip store={store} />));
+  expect([...host.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["NYX-TA2", "NYX-TA1"]);
+  expect(host.querySelectorAll(".tag")).toHaveLength(2); // no tag where the text already starts with the vehicle
 });

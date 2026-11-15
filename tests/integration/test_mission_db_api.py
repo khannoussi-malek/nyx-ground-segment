@@ -37,6 +37,10 @@ async def mission_db(c: httpx.AsyncClient) -> dict[str, Any]:
     return body
 
 
+async def command(c: httpx.AsyncClient, name: str, args: dict[str, Any]) -> httpx.Response:
+    return await c.post("/api/commands", json={"vehicle": "NYX-TA1", "name": name, "args": args})
+
+
 async def test_definitions_follow_reload(users_file: Path, tmp_path: Path) -> None:
     m = mission_copy(tmp_path)
     async with authed(api_on(users_file, m)) as c:
@@ -49,8 +53,8 @@ async def test_definitions_follow_reload(users_file: Path, tmp_path: Path) -> No
             await asyncio.sleep(0.1)
         assert want != before
         assert db["commands"]["vent_cabin"]["args"]["duration_s"]["max"] == 8
-        # what POST /api/commands checks args against (deps.mission); the 422 itself is
-        # asserted once Track A's route is merged (Task 12 report)
+        r = await command(c, "vent_cabin", {"duration_s": 9})  # in bounds before the reload
+    assert (r.status_code, r.json()["error"]) == (422, "INVALID_ARGS")
 
 
 async def test_hazardous_downgrade_needs_restart(users_file: Path, tmp_path: Path) -> None:
@@ -77,6 +81,8 @@ async def test_hazardous_downgrade_needs_restart(users_file: Path, tmp_path: Pat
         health = (await c.get("/healthz")).json()  # P-pf46: the API lags ingest until restart
         assert health["status"] == "degraded"
         assert health["checks"]["mission_db"] == "pending API restart"
+        vent = await command(c, "vent_cabin", {"duration_s": 5})
+    assert (vent.status_code, vent.json()["error"]) == (409, "HAZARDOUS_CONFIRMATION_REQUIRED")
     assert seen.count(key) == 1
     (ev,) = [e for e in events_for(None, "LIMITS_REJECTED") if e["key"] == key]
     d = ev["details"]
@@ -106,6 +112,8 @@ async def test_hazardous_change_audited(users_file: Path, tmp_path: Path) -> Non
 
         await until(lambda: bool(reloaded()), RELOAD_S)
         assert (await mission_db(c))["commands"]["isolate_valve"]["hazardous"] is True
+        r = await command(c, "isolate_valve", {"valve": "A"})  # D-CMD-06 from the new set
+    assert (r.status_code, r.json()["error"]) == (409, "HAZARDOUS_CONFIRMATION_REQUIRED")
     (row,) = reloaded()
     assert row["actor"] == "system" and row["details"]["hazardous_changed"] == ["isolate_valve"]
     assert row["details"]["previous_set_sha256"] == before

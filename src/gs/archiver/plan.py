@@ -89,6 +89,16 @@ def plan_pass(
 def oldest_unarchived(
     now: datetime, counts: Mapping[Key, int], rows: Mapping[Key, ArchiveRow]
 ) -> datetime | None:
-    """Oldest eligible hour that has hot rows but no archive row (drives /healthz)."""
-    hours = [h for (v, h), n in counts.items() if n > 0 and (v, h) not in rows and eligible(h, now)]
-    return min(hours, default=None)
+    """Oldest hour with hot rows the archive does not hold yet (drives /healthz): eligible with no
+    row, or (G4-1) late rows pending: a row not hot-deleted with n > rows, or hot-deleted with
+    n > 0, so a failing MergeLate shows as backlog."""
+    pending = []
+    for (v, h), n in counts.items():
+        row = rows.get((v, h))
+        if row is None:
+            late = n > 0 and eligible(h, now)
+        else:
+            late = n > 0 if row.hot_deleted_at is not None else n > row.rows
+        if late:
+            pending.append(h)
+    return min(pending, default=None)

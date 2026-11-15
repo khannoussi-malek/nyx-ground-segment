@@ -11,7 +11,7 @@ import pytest
 from tests.support.compose import ONE_SHOTS, compose_config
 from tests.support.env import REPO, dotenv
 
-APP = {"migrate", "simulator", "ingest-1", "ingest-2", "api"}
+APP = {"migrate", "simulator", "ingest-1", "ingest-2", "api", "archiver"}
 MINIO_IMAGE = (
     "bitnamilegacy/minio:2025.5.24"
     "@sha256:451fe6858cb770cc9d0e77ba811ce287420f781c7c1b806a386f6896471a349c"
@@ -44,6 +44,11 @@ ENV = {
     "migrate": {"DATABASE_URL", "MISSION_DB"},
     "simulator": {
         "REDIS_URL", "SIM_VEHICLES", "SIM_SEED", "BIND_HOST", "HEALTH_PORT", "MISSION_DB",
+    },
+    "archiver": {
+        "DATABASE_URL", "REDIS_URL", "S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET",
+        "HOT_RETENTION_H", "ARCHIVE_LOOP_S", "BIND_HOST", "HEALTH_PORT", "GS_TEST_HOOKS",
+        "CRASH_AT", "STOP_AT",
     },
     "ingest-1": INGEST_ENV,
     "ingest-2": INGEST_ENV,
@@ -85,6 +90,7 @@ USES = {  # secret keys each service's environment is derived from
     "minio-init": {"S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_ARCHIVER_SECRET"},
     "migrate": {"GS_OWNER_PASSWORD"},
     "simulator": {"REDIS_SIM_PW"},
+    "archiver": {"REDIS_HEALTH_PW", "GS_APP_PASSWORD", "S3_ARCHIVER_SECRET"},
     "ingest-1": {"REDIS_INGEST_PW", "GS_APP_PASSWORD"},
     "ingest-2": {"REDIS_INGEST_PW", "GS_APP_PASSWORD"},
     "api": {"REDIS_API_PW", "GS_APP_PASSWORD", "SESSION_SECRET"},
@@ -177,3 +183,20 @@ def test_image_tag_is_per_worktree() -> None:
     ).stdout
     svcs = json.loads(out)["services"]
     assert {n: svcs[n]["image"] for n in APP} == {n: "nyx-gs:x" for n in APP}
+
+
+def test_archiver_service(services: dict[str, dict[str, Any]]) -> None:
+    a = services["archiver"]
+    env = a["environment"]
+    assert a["command"] == ["gs-archiver"] and "ports" not in a
+    got = (env["HOT_RETENTION_H"], env["ARCHIVE_LOOP_S"], env["S3_BUCKET"], env["S3_ACCESS_KEY"])
+    assert got == ("25", dotenv().get("ARCHIVE_LOOP_S", "300"), "archive", "archiver")
+    assert env["S3_ENDPOINT"] == "minio:9000" and env["HEALTH_PORT"] == "8081"
+    assert env["REDIS_URL"].startswith("redis://health:")
+    dep = {k: v["condition"] for k, v in a["depends_on"].items()}
+    assert dep == {
+        "db": "service_healthy", "redis": "service_healthy",
+        "migrate": "service_completed_successfully",
+        "minio-init": "service_completed_successfully",
+    }  # fmt: skip
+    assert "healthcheck" in a

@@ -582,3 +582,185 @@ async def test_put_itself_sends_the_checksum_header(
     assert archive_rows(v) == []
     with pytest.raises(S3Error):
         object_bytes(object_key(v, H))
+
+
+# ---- Task 5: rolling scrub, run_pass ------------------------------------------------------
+
+
+def _flip(key: str) -> None:
+    root = s3_client("root")
+    data = bytearray(object_bytes(key))
+    data[len(data) // 2] ^= 0xFF
+    root.put_object("archive", key, io.BytesIO(bytes(data)), len(data))
+
+
+def _drop_vehicle(v: str) -> None:
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
+        for t in ("events", "archive_object", "telemetry"):
+            c.execute(f"delete from {t} where vehicle = %s", (v,))  # noqa: S608
+
+
+async def test_scrub_detects_corrupt_object() -> None:
+    from gs.archiver.scrub import corrupt_key, scrub_pass, unresolved_corrupt
+    from gs.common.time import iso_z
+
+    v = vid()
+    hot_hour(v, H, n=200)
+    async with app_conn() as c:
+        row = await archive_hour(archiver_ctx(), c, v, H)
+        assert row is not None
+        _flip(object_key(v, H))
+        assert await scrub_pass(archiver_ctx(), c, 10_000) >= 1
+        ev = rows("select * from events where vehicle=%s and kind='ARCHIVE_CORRUPT'", v)
+        assert (
+            [e["key"] for e in ev] == [corrupt_key(v, H, 0)] == [f"ARCHIVE_CORRUPT/{v}/{iso_z(H)}"]
+        )
+        found = hashlib.sha256(object_bytes(object_key(v, H))).hexdigest()
+        assert (ev[0]["details"]["expected"], ev[0]["details"]["found"]) == (row.sha256, found)
+        assert await unresolved_corrupt(c, v) == 1
+        await scrub_pass(archiver_ctx(), c, 10_000)  # idempotent by key
+        assert await unresolved_corrupt(c, v) == 1
+    _drop_vehicle(v)
+
+
+async def test_scrub_missing_object_is_corrupt_and_s3_down_raises() -> None:
+    import urllib3
+    from minio import Minio
+
+    from gs.archiver.scrub import scrub_pass, unresolved_corrupt
+
+    v = vid()
+    hot_hour(v, H, n=50)
+    async with app_conn() as c:
+        assert await archive_hour(archiver_ctx(), c, v, H) is not None
+        s3_client("root").remove_object("archive", object_key(v, H))
+        dead = archiver_ctx(
+            s3=Minio("127.0.0.1:1", "a", "b", secure=False, region="us-east-1",
+                     http_client=urllib3.PoolManager(retries=False, timeout=1))
+        )  # fmt: skip
+        with pytest.raises(s3_mod.S3_ERRORS):
+            await scrub_pass(dead, c, 10_000)
+        assert archive_rows(v)[0]["last_checked_at"] is None
+        await scrub_pass(archiver_ctx(), c, 10_000)
+        assert await unresolved_corrupt(c, v) == 1
+        assert archive_rows(v)[0]["last_checked_at"] is not None
+    _drop_vehicle(v)
+
+
+RECENT = "select hour from archive_object where last_checked_at > now() - interval '1 minute'"
+
+
+async def test_scrub_oldest_checked_first() -> None:
+    from gs.archiver.scrub import SCRUB_K, scrub_pass
+    from tests.support.pg import throwaway_db
+
+    assert SCRUB_K == 20
+    hours = [H - i * HOUR for i in range(25)]
+    with throwaway_db() as db:  # the shared db holds other tests' rows: scrub is global
+        with psycopg.connect(admin_dsn(db), autocommit=True) as a:
+            for i, h in enumerate(hours):
+                when = "now() - interval '1 hour'" if i < 5 else "null"
+                a.execute(
+                    "insert into archive_object (vehicle, hour, sha256, rows, t_min, t_max,"
+                    f" verified_at, last_checked_at) values ('NYX-TSCRUB', %s, 'x', 1, %s, %s,"
+                    f" now(), {when})",  # noqa: S608
+                    (h, h, h),
+                )
+        async with await psycopg.AsyncConnection.connect(app_dsn(db), autocommit=True) as c:
+            assert await scrub_pass(archiver_ctx(), c, 20) == 20  # the 20 NULL rows, not the 5
+            checked = rows(RECENT, db=db)
+            assert {r["hour"] for r in checked} == set(hours[5:])
+            assert await scrub_pass(archiver_ctx(), c, 5) == 5  # now the 5 oldest-checked
+            checked = rows(RECENT, db=db)
+            assert {r["hour"] for r in checked} == set(hours)
+
+
+async def test_new_version_resolves_corrupt() -> None:
+    from gs.archiver.scrub import scrub_pass, unresolved_corrupt
+
+    v = vid()
+    hot_hour(v, H, n=100)
+    async with app_conn() as c:
+        assert await archive_hour(archiver_ctx(), c, v, H) is not None
+        _flip(object_key(v, H))
+        await scrub_pass(archiver_ctx(), c, 10_000)
+        assert await unresolved_corrupt(c, v) == 1
+        insert_rows(v, [{"t_onboard": H + timedelta(minutes=30), "seq": 5000}])  # a late row
+        row = await archive_hour(archiver_ctx(), c, v, H, version=1)
+        assert row is not None and row.version == 1 and row.rows == 101
+        assert await unresolved_corrupt(c, v) == 0
+        await scrub_pass(archiver_ctx(), c, 10_000)
+        assert await unresolved_corrupt(c, v) == 0
+    _drop_vehicle(v)
+
+
+def _dead_ctx() -> Any:
+    import urllib3
+    from minio import Minio
+
+    return archiver_ctx(
+        s3=Minio("127.0.0.1:1", "a", "b", secure=False, region="us-east-1",
+                 http_client=urllib3.PoolManager(retries=False, timeout=1))
+    )  # fmt: skip
+
+
+async def test_minio_down_pass_deletes_nothing() -> None:
+    from gs.archiver.main import run_pass
+
+    v = vid()
+    old, older = H, H - HOUR
+    hot_hour(v, old, n=20)
+    hot_hour(v, older, n=20)
+    async with app_conn() as c:
+        assert await archive_hour(archiver_ctx(), c, v, old) is not None  # verified, delete due
+        res = await run_pass(_dead_ctx(), c)
+        assert res.failed
+        assert stored_in(v, old) == 20 and stored_in(v, older) == 20
+        assert [r["hour"] for r in archive_rows(v)] == [old]
+        ctx = archiver_ctx(retention_h=1000.0)  # nothing is delete-due: archive only
+        res = await run_pass(ctx, c)
+        assert not res.failed
+        assert [r["hour"] for r in archive_rows(v)] == [older, old]  # both, oldest built first
+    _drop_vehicle(v)
+
+
+async def test_run_pass_end_to_end() -> None:
+    from gs.archiver.main import run_pass
+
+    v = vid()
+    h1, h2 = H - 2 * HOUR, H - HOUR
+    hot_hour(v, h1, n=30)
+    hot_hour(v, h2, n=30)
+    async with app_conn() as c:
+        first = await run_pass(archiver_ctx(retention_h=0.0), c)  # archives; deletes next pass
+        assert not first.failed and stored_in(v, h1) == 30
+        res = await run_pass(archiver_ctx(retention_h=0.0), c)
+        assert not res.failed
+        assert (stored_in(v, h1), stored_in(v, h2)) == (0, 0)
+        rs = archive_rows(v)
+        assert [r["hour"] for r in rs] == [h1, h2]
+        assert all(r["hot_deleted_at"] and r["last_checked_at"] for r in rs)
+        assert first.archived >= 2 and res.deleted >= 2 and res.scrubbed >= 2
+        insert_rows(
+            v, [{"t_onboard": h1 + timedelta(minutes=1), "seq": 9000}]
+        )  # late, after delete
+        await run_pass(archiver_ctx(retention_h=0.0), c)
+        assert archive_rows(v)[0]["version"] == 1 and stored_in(v, h1) == 0
+        assert res.oldest_unarchived is None or res.oldest_unarchived != h1
+    _drop_vehicle(v)
+
+
+async def test_delete_and_merge_need_an_autocommit_connection() -> None:
+    """On a non-autocommit connection conn.transaction() is a savepoint nobody commits."""
+    v = vid()
+    hot_hour(v, H, n=10)
+    async with app_conn() as c:
+        row = await archive_hour(archiver_ctx(), c, v, H)
+    assert row is not None
+    async with await psycopg.AsyncConnection.connect(app_dsn("gs")) as plain:
+        with pytest.raises(AssertionError, match="autocommit"):
+            await delete_hot(archiver_ctx(), plain, row, hour_bounds(v, H))
+        with pytest.raises(AssertionError, match="autocommit"):
+            await merge_late(archiver_ctx(), plain, row)
+    assert stored_in(v, H) == 10
+    _drop_vehicle(v)

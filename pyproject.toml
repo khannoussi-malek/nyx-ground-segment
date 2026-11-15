@@ -21,6 +21,7 @@ gs-migrate = "gs.common.migrate:main"
 gs-sim = "gs.simulator.main:main"
 gs-ingest = "gs.ingest.main:main"
 gs-api = "gs.api.server:main"
+gs-archiver = "gs.archiver.main:main"
 
 [build-system]
 requires = ["uv_build>=0.12.18,<0.13"]

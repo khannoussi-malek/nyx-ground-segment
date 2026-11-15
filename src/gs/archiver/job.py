@@ -9,6 +9,7 @@ from typing import Any
 import psycopg
 import pyarrow as pa
 from minio import Minio
+from minio.error import S3Error
 
 from gs.archiver.hours import HourWindow, hour_bounds, object_key, sidecar
 from gs.archiver.parquet import (
@@ -104,7 +105,13 @@ async def _recorded(
 
 async def _recorded_table(ctx: ArchiverCtx, row: ArchiveRow) -> pa.Table | None:
     """The recorded object, decoded, only if its bytes still hash to the recorded sha256."""
-    data = await get(ctx.s3, ctx.bucket, object_key(row.vehicle, row.hour, row.version))
+    try:
+        data = await get(ctx.s3, ctx.bucket, object_key(row.vehicle, row.hour, row.version))
+    except S3Error as e:
+        if e.code != "NoSuchKey":
+            raise
+        _fail(row.vehicle, row.hour, "recorded object is missing")  # the scrub flags it too
+        return None
     if hashlib.sha256(data).hexdigest() != row.sha256:
         _fail(row.vehicle, row.hour, f"recorded object does not hash to {row.sha256}")
         return None
@@ -132,7 +139,11 @@ async def _may_replace_recorded(
         )
         return False
     prev = await _recorded_table(ctx, old)
-    if prev is None or not set(keys(prev)) <= set(keys(table)):
+    if prev is None:
+        # corrupt or missing, and the hot rows are still here: they are the truth, a new version
+        # heals it (the scrub's ARCHIVE_CORRUPT resolves when the row's sha256 changes)
+        return True
+    if not set(keys(prev)) <= set(keys(table)):
         _fail(vehicle, hour, "the new version would drop rows of the recorded version")
         return False
     return True
@@ -165,6 +176,7 @@ async def delete_hot(
     still hash right, and inside the delete transaction the deleted rows' count, min, max AND
     (t_onboard, seq) fingerprint must equal the archive row and the archived object. Else roll
     back, log, refuse."""
+    assert conn.autocommit, "delete_hot needs an autocommit connection (top-level transaction)"
     key = (row.vehicle, row.hour)
     if (w.vehicle, w.start) != key:
         return _refuse(ctx, *key, f"window {w.vehicle} {w.start} is not the archived hour")
@@ -210,6 +222,7 @@ async def merge_late(
     late rows become version + 1; the row update and the delete of the late rows commit together,
     and only if exactly those late rows go. Any doubt: None, the late rows stay hot, and a later
     pass retries."""
+    assert conn.autocommit, "merge_late needs an autocommit connection (top-level transaction)"
     prev = await _recorded_table(ctx, row)
     if prev is None:
         return None

@@ -124,7 +124,7 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
         <button onClick={() => void safeLogout(logout).then(onLogout)}>Log out</button>
       </header>
       <AlarmList store={store} mission={mission} user={user} />
-      <SessionPanel store={store} />
+      <SessionPanel store={store} mission={mission} />
       <CommandPanel store={store} mission={mission} />
       <main>
         <LiveTable store={store} mission={mission} probe={probe} />

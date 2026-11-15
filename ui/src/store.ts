@@ -34,6 +34,8 @@ export function createStore(
   let link: Link = { connected: false, broker: "up", processing: {} };
   let silence: ReturnType<typeof setTimeout> | undefined;
   let lastMessageAt: number | null = null;
+  let hbSilence: ReturnType<typeof setTimeout> | undefined;
+  let lastHbAt: number | null = null;
   const subs = new Set<() => void>();
   const notify = () => subs.forEach((fn) => fn());
   const set = (next: Readonly<Record<string, Tm>>) => {
@@ -91,7 +93,16 @@ export function createStore(
       notify();
     },
     setGround: (b: "up" | "down"): void => setLink({ broker: b }),
-    setProcessing: (p: Record<string, boolean>): void => setLink({ processing: { ...p } }),
+    /** A stale hb (none for SILENCE_MS) forgets the map: a vehicle without an hb word gets no ACK (P-pf42b). */
+    setProcessing(p: Record<string, boolean>): void {
+      lastHbAt = clock();
+      if (hbSilence !== undefined) clearTimeout(hbSilence);
+      hbSilence = setTimeout(() => {
+        hbSilence = undefined;
+        setLink({ processing: {} });
+      }, SILENCE_MS);
+      setLink({ processing: { ...p } });
+    },
     /** Any message proves the link. One-shot timer, re-armed here: a hidden tab throttles intervals (P-pf18). */
     noteMessage(): void {
       lastMessageAt = clock();
@@ -105,6 +116,7 @@ export function createStore(
     /** A hidden tab may delay the silence timer: when the tab is shown again, judge by the clock (P-pf18). */
     recheck(): void {
       if (link.connected && lastMessageAt !== null && clock() - lastMessageAt >= SILENCE_MS) setLink({ connected: false });
+      if (lastHbAt !== null && clock() - lastHbAt >= SILENCE_MS && Object.keys(link.processing).length > 0) setLink({ processing: {} });
     },
     noteError(): void {
       if (link.connected) setLink({ connected: false });
@@ -112,7 +124,8 @@ export function createStore(
     /** Cancel the silence timer (console unmount). */
     stop(): void {
       if (silence !== undefined) clearTimeout(silence);
-      silence = undefined;
+      if (hbSilence !== undefined) clearTimeout(hbSilence);
+      silence = hbSilence = undefined;
     },
     vehicle: (v: string): Tm | undefined => rows[v],
     receivedAt: (v: string): number | undefined => stamps[v],

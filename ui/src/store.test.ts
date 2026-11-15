@@ -286,6 +286,19 @@ test("recheck after a throttled background tab: silence over 3 s is noticed with
   expect(s.link().connected).toBe(false);
 });
 
+test("recheck after a throttled background tab: an hb over 3 s old forgets the processing map (P-pf42b)", () => {
+  let now = 0;
+  const s = createStore(() => now, { setTimeout: (() => 1) as never, clearTimeout: () => {} }); // timer never fires
+  s.setProcessing({ "NYX-TA1": true });
+  now = 2999;
+  s.noteMessage(); // other messages keep the link
+  s.recheck();
+  expect(s.link().processing).toEqual({ "NYX-TA1": true });
+  now = 3000;
+  s.recheck();
+  expect(s.link()).toEqual({ connected: true, broker: "up", processing: {} });
+});
+
 test("the latency probe gets a receipt for every accepted tm, with its server age, and none for a dropped one", () => {
   const got: unknown[][] = [];
   const s = createStore(undefined, undefined, { receipt: (...a) => void got.push(a) });

@@ -1,6 +1,12 @@
 import type { CommandView, MissionDb, SendResult } from "./api";
 import { utcClock } from "./time";
 
+/** `vent_cabin (duration_s = 3)`: the args tell apart two commands of one name (the list and the late "queued" note). */
+export const cmdLabel = (name: string, args: Readonly<Record<string, unknown>>): string => {
+  const a = Object.entries(args).map(([k, v]) => `${k} = ${String(v)}`).join(", ");
+  return a ? `${name} (${a})` : name;
+};
+
 /** Exact match, no trimming and no case folding: typing the vehicle id is the deliberate act (D-UI-20). */
 export const confirmEnabled = (typed: string, vehicle: string, reason: string): boolean =>
   typed === vehicle && reason.trim().length >= 10;

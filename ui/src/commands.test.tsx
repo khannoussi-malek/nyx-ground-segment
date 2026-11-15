@@ -108,7 +108,7 @@ test("a plain command (vehicle chosen explicitly): posted with the chosen vehicl
   expect(f).toHaveBeenCalledWith("/api/commands?vehicle=NYX-TA2", { credentials: "same-origin" });
   expect(store.commands()).toHaveLength(1);
   expect(host.querySelector('li[data-cmd-id="c9"]')!.textContent).toContain("isolate_valve (valve = A)");
-  expect(host.querySelector('[role="status"]')!.textContent).toBe("isolate_valve queued for NYX-TA2");
+  expect(host.querySelector('[role="status"]')!.textContent).toBe("isolate_valve (valve = A) queued for NYX-TA2");
 });
 
 test("a failing list refresh is logged, not fatal", async () => {
@@ -179,7 +179,7 @@ test("confirm posts the same body with the token and the reason, then closes and
     { vehicle: "NYX-TA2", name: "vent_cabin", args: { duration_s: 3 }, confirm_token: "tok1", reason: "venting now" },
   ]);
   expect(host.querySelector("dialog")).toBeNull();
-  expect(host.querySelector('[role="status"]')!.textContent).toBe("vent_cabin queued for NYX-TA2");
+  expect(host.querySelector('[role="status"]')!.textContent).toBe("vent_cabin (duration_s = 3) queued for NYX-TA2");
   expect(store.commands()).toEqual([]); // the stub list is empty: nothing invented
 });
 
@@ -339,7 +339,7 @@ test("while the confirm is in flight Cancel is disabled and Esc is ignored; the 
   expect(host.querySelector("dialog")).not.toBeNull();
   await act(async () => held.release(new Response(JSON.stringify({ cmd_id: "c" }), { status: 202 })));
   expect(host.querySelector("dialog")).toBeNull();
-  expect(host.querySelector('[role="status"]')!.textContent).toBe("vent_cabin queued for NYX-TA2");
+  expect(host.querySelector('[role="status"]')!.textContent).toBe("vent_cabin (duration_s = 3) queued for NYX-TA2");
 });
 
 test("closing the confirm dialog returns the focus to the Send button", async () => {
@@ -577,5 +577,5 @@ test("a late answer from a natively closed dialog does not close the next one, a
   expect((host.querySelector("dialog") as HTMLDialogElement).open).toBe(true);
   await act(async () => release(new Response(JSON.stringify({ cmd_id: "c1" }), { status: 202 }))); // the first confirm answers late
   expect(host.querySelector("dialog")).not.toBeNull(); // the new dialog is untouched
-  expect(host.querySelector('[role="status"]')!.textContent).toBe("vent_cabin queued for NYX-TA2");
+  expect(host.querySelector('[role="status"]')!.textContent).toBe("vent_cabin (duration_s = 3) queued for NYX-TA2");
 });

@@ -3,9 +3,10 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { MissionDb } from "./api";
+import { AckDialog } from "./AckDialog";
 import { AlarmList } from "./AlarmList";
 import { alarmView } from "./fixtures";
-import { createStore, ingest } from "./store";
+import { createStore, ingest, type AlarmView } from "./store";
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -31,9 +32,12 @@ const a1 = alarmView({ alarm_id: "a1", vehicle: "NYX-TA1", value: 107, level: "R
 const a2 = alarmView({ alarm_id: "a2", vehicle: "NYX-TA2", severity: "YELLOW", level: "YELLOW_HIGH", value: 105, opened_at: "2026-11-14T10:00:05Z" });
 const a3 = alarmView({ alarm_id: "a3", vehicle: "NYX-TA1", state: "RTN_UNACK", param: "other" });
 
-function mount(alarms = [a1, a2, a3]) {
+const LIVE = { kind: "hb", server_ms: 1, processing: { "NYX-TA1": true, "NYX-TA2": true } };
+/** a live screen: the snapshot proves the link, the broker is up, every vehicle's hb says processing (P-pf42b) */
+function mount(alarms = [a1, a2, a3], live = true) {
   const store = createStore();
   ingest(store, "snapshot", { kind: "snapshot", vehicles: {}, alarms, commands: [], events: [] });
+  if (live) ingest(store, "hb", LIVE);
   act(() => root.render(<AlarmList store={store} mission={MDB} user="fc1" />));
   return store;
 }
@@ -265,4 +269,146 @@ test("a submit that bypasses the disabled button still needs a note, and two sub
   });
   expect(f).toHaveBeenCalledTimes(1);
   await act(async () => release(new Response(JSON.stringify({ request_id: "r", status: "pending" }), { status: 202 })));
+});
+
+// --- Task 27b: the ACK binds to what the operator saw (P-pf42 / P-pf42b / P-pf43 / P-pf43b) ---
+const bodies = (f: { mock: { calls: unknown[][] } }) => f.mock.calls.map((c) => JSON.parse((c[1] as { body: string }).body) as Record<string, unknown>);
+const row = (id: string) => host.querySelector(`tr[data-alarm-id="${id}"]`)!.textContent;
+const CHANGED = "Alarm changed – review it before acknowledging";
+
+test("the ACK sends seen_key = the alarm's last.key shown when the dialog opened", async () => {
+  mount();
+  const f = stubAck(202, { request_id: "r", status: "pending" });
+  act(() => ackButton("a1")!.click());
+  typeNote("seen");
+  await act(async () => button("ACK")!.click());
+  expect(bodies(f)[0]).toMatchObject({ note: "seen", seen_key: "k1" });
+});
+
+test("seen_key is captured at open: a newer alarm prop at submit is not re-read, a retry resends the same key and id", async () => {
+  const f = stubAck(503, { error: "BROKER_DOWN", message: "try again" });
+  const render = (key: string) =>
+    act(() => root.render(<AckDialog alarm={alarmView({ last: { ...a1.last, key } })} current={a1} live mission={MDB} opener={null} onDone={() => {}} onCancel={() => {}} onChanged={() => {}} />));
+  render("k1");
+  typeNote("seen");
+  render("k2"); // the live alarm moved on while the dialog stayed open
+  await act(async () => button("ACK")!.click());
+  await act(async () => button("ACK")!.click()); // retry
+  const [first, retry] = bodies(f);
+  expect(first.seen_key).toBe("k1");
+  expect(retry).toEqual(first);
+});
+
+test.each<[string, Partial<AlarmView>]>([
+  ["last.key", { last: { ...a1.last, key: "k2" } }],
+  ["severity", { severity: "YELLOW", level: "YELLOW_HIGH" }],
+  ["state", { state: "ACKED" }],
+])("a %s change while the dialog is open closes it and the row says the alarm changed", (_what, over) => {
+  const store = mount();
+  act(() => ackButton("a1")!.click());
+  typeNote("seen");
+  act(() => ingest(store, "alarm", { kind: "alarm", alarm: alarmView({ ...a1, ...over, last: { ...(over.last ?? a1.last), t: "2026-11-14T10:00:01.000000Z" } }) }));
+  expect(host.querySelector("dialog")).toBeNull();
+  expect(row("a1")).toContain(CHANGED);
+});
+
+test("another operator's pending request (same key, severity, state) leaves the dialog open; reopening clears the note", () => {
+  const store = mount();
+  act(() => ackButton("a1")!.click());
+  act(() => ingest(store, "alarm", { kind: "alarm", alarm: alarmView({ ...a1, ack_request: { by_user: "fc2", request_id: "r", status: "pending", status_reason: null } }) }));
+  expect(host.querySelector("dialog")).not.toBeNull();
+  act(() => button("Cancel")!.click());
+  act(() => ingest(store, "alarm", { kind: "alarm", alarm: alarmView({ ...a1, last: { ...a1.last, key: "k2", t: "2026-11-14T10:00:01.000000Z" } }) }));
+  expect(row("a1")).not.toContain(CHANGED); // no dialog was open
+  act(() => ackButton("a2")!.click());
+  act(() => ingest(store, "alarm", { kind: "alarm", alarm: alarmView({ ...a2, last: { ...a2.last, key: "k9", t: "2026-11-14T10:00:09.000000Z" } }) }));
+  expect(row("a2")).toContain(CHANGED);
+  act(() => ackButton("a2")!.click());
+  expect(row("a2")).not.toContain(CHANGED);
+});
+
+test("an alarm cleared while its dialog is open closes the dialog", () => {
+  const store = mount();
+  act(() => ackButton("a1")!.click());
+  act(() => ingest(store, "alarm", { kind: "alarm", alarm: alarmView({ ...a1, state: "CLEARED", last: { ...a1.last, t: "2026-11-14T10:00:01.000000Z" } }) }));
+  expect(host.querySelector("dialog")).toBeNull();
+});
+
+test("a change that arrives while the request is in flight leaves the answer to the server (the 202 is not dropped)", async () => {
+  const store = mount();
+  let release!: (r: Response) => void;
+  vi.stubGlobal("fetch", vi.fn(() => new Promise<Response>((res) => (release = res))));
+  act(() => ackButton("a1")!.click());
+  typeNote("seen");
+  await act(async () => void button("ACK")!.click());
+  act(() => ingest(store, "alarm", { kind: "alarm", alarm: alarmView({ ...a1, last: { ...a1.last, key: "k2", t: "2026-11-14T10:00:01.000000Z" } }) }));
+  expect(host.querySelector("dialog")).not.toBeNull();
+  await act(async () => release(new Response(JSON.stringify({ request_id: "r", status: "pending" }), { status: 202 })));
+  expect(host.querySelector("dialog")).toBeNull();
+  expect(row("a1")).toContain("ACK PENDING (by fc1)");
+});
+
+test("ACK is disabled before the first hb, on NO LIVE CONNECTION, broker down, processing down and a missing hb entry", () => {
+  const store = mount(undefined, false);
+  expect(ackButton("a1")!.disabled).toBe(true); // the snapshot proves the link, but no hb has said processing yet
+  act(() => ingest(store, "hb", LIVE));
+  expect(ackButton("a1")!.disabled).toBe(false);
+  act(() => store.noteError());
+  expect(ackButton("a1")!.disabled).toBe(true); // NO LIVE CONNECTION
+  act(() => ingest(store, "ground", { kind: "ground", broker: "down" }));
+  expect(ackButton("a1")!.disabled).toBe(true); // GROUND PROCESSING DOWN – BROKER
+  act(() => ingest(store, "ground", { kind: "ground", broker: "up" }));
+  expect(ackButton("a1")!.disabled).toBe(false);
+  act(() => ingest(store, "hb", { kind: "hb", server_ms: 2, processing: { "NYX-TA1": false, "NYX-TA2": true } }));
+  expect(ackButton("a1")!.disabled).toBe(true); // GROUND PROCESSING DOWN
+  expect(ackButton("a2")!.disabled).toBe(false); // another vehicle is fine
+  act(() => ingest(store, "hb", { kind: "hb", server_ms: 3, processing: { "NYX-TA2": true } }));
+  expect(ackButton("a1")!.disabled).toBe(true); // no hb word for this vehicle
+});
+
+test("a stale hb (none for 3 s while other messages keep the link) disables ACK", () => {
+  vi.useFakeTimers();
+  try {
+    const store = mount();
+    expect(ackButton("a1")!.disabled).toBe(false);
+    for (let i = 0; i < 4; i++) {
+      act(() => vi.advanceTimersByTime(900));
+      act(() => ingest(store, "link", { kind: "link", event: { key: `e${i}`, kind: "AOS", vehicle: null, t_onboard: null, details: {} } }));
+    }
+    expect(store.link().connected).toBe(true);
+    expect(ackButton("a1")!.disabled).toBe(true);
+    act(() => ingest(store, "hb", LIVE));
+    expect(ackButton("a1")!.disabled).toBe(false);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+test("a screen that goes stale while the dialog is open disables its ACK; it comes back when live again", () => {
+  const store = mount();
+  act(() => ackButton("a1")!.click());
+  typeNote("seen");
+  expect(button("ACK")!.disabled).toBe(false);
+  act(() => ingest(store, "ground", { kind: "ground", broker: "down" }));
+  expect(host.querySelector("dialog")).not.toBeNull();
+  expect(button("ACK")!.disabled).toBe(true);
+  act(() => ingest(store, "ground", { kind: "ground", broker: "up" }));
+  expect(button("ACK")!.disabled).toBe(false);
+});
+
+test("a scripted submit on a stale screen sends nothing", async () => {
+  const store = mount();
+  const f = stubAck(202, { request_id: "r", status: "pending" });
+  act(() => ackButton("a1")!.click());
+  typeNote("seen");
+  act(() => store.noteError());
+  await act(async () => (host.querySelector("dialog form") as HTMLFormElement).requestSubmit());
+  expect(f).not.toHaveBeenCalled();
+});
+
+test.each(["alarm changed since you saw it", "alarm changed since the request"])("the server's superseded reason shows as-is: %s", (reason) => {
+  const store = mount();
+  act(() => ingest(store, "alarm", { kind: "alarm", alarm: alarmView({ ...a1, ack_request: { by_user: "fc1", request_id: "r", status: "superseded", status_reason: reason } }) }));
+  expect(host.querySelector('tr[data-alarm-id="a1"] .ack-status')!.textContent).toBe(reason);
+  expect(ackButton("a1")!.disabled).toBe(false);
 });

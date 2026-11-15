@@ -41,19 +41,22 @@ export async function missionDb(): Promise<MissionDb | null> {
 }
 
 type AckAccepted = components["schemas"]["AckAccepted"];
+type AckRequest = components["schemas"]["AckRequest"];
 type ErrorBody = components["schemas"]["ErrorBody"];
 export type AckResult = { ok: true; status: AckAccepted["status"] } | { ok: false; error: string; message: string };
 
 /** Ask for an ACK. 202 = the request is accepted (it may still be pending); anything else comes back as the server's
  *  error + message for the dialog, a network failure as NETWORK. The same request id may be sent again: the server
- *  treats it as the same request. */
-export async function ackAlarm(alarmId: string, requestId: string, note: string): Promise<AckResult> {
+ *  treats it as the same request, so a retry must carry the same `seenKey` (another one is 422 REQUEST_ID_REUSED).
+ *  `seenKey` is the alarm's last event key the operator was shown (P-pf43): the owner supersedes the ACK if it moved on. */
+export async function ackAlarm(alarmId: string, requestId: string, note: string, seenKey: string): Promise<AckResult> {
+  const req: AckRequest = { request_id: requestId, note, seen_key: seenKey };
   try {
     const r = await fetch(`/api/alarms/${encodeURIComponent(alarmId)}/ack`, {
       method: "POST",
       credentials: "same-origin",
       headers: { "Content-Type": "application/json", ...CLIENT },
-      body: JSON.stringify({ request_id: requestId, note }),
+      body: JSON.stringify(req),
     });
     if (r.status === 202) return { ok: true, status: ((await r.json()) as AckAccepted).status };
     const body = (await r.json().catch(() => null)) as Partial<ErrorBody> | null;

@@ -13,6 +13,7 @@ const STATE_TEXT: Record<AlarmView["state"], string> = {
   CLEARED: "CLEARED",
 };
 const ALL = "ALL";
+const CHANGED = "Alarm changed – review it before acknowledging";
 
 /** Open alarms, sticky until CLEARED (a returned one stays until acknowledged), with the ACK request's own status. */
 export function AlarmList({ store, mission, user }: { store: Store; mission: MissionDb | null; user: string }) {
@@ -24,6 +25,13 @@ export function AlarmList({ store, mission, user }: { store: Store; mission: Mis
   const [state, setState] = useState(ALL);
   const [acking, setAcking] = useState<{ alarm: AlarmView; opener: HTMLElement } | null>(null);
   const [mine, setMine] = useState<Readonly<Record<string, { by: string; requestId: string }>>>({}); // from my 202 "pending"
+  const [changedIds, setChanged] = useState<ReadonlySet<string>>(new Set()); // dialogs the guard closed (P-pf42)
+  // no ACK on a stale screen (P-pf42b 3): NO LIVE CONNECTION, GROUND PROCESSING DOWN (broker or owner) or no fresh hb word
+  const live = (v: string) => link.connected && link.broker === "up" && link.processing[v] === true;
+  const openDialog = (alarm: AlarmView, opener: HTMLElement) => {
+    setChanged((s) => new Set([...s].filter((id) => id !== alarm.alarm_id)));
+    setAcking({ alarm, opener });
+  };
   const vehicles = [...new Set(alarms.map((a) => a.vehicle))].sort();
   const vehicle = vehicles.includes(vehicleWanted) ? vehicleWanted : ALL; // a filter whose vehicle has no alarm left resets
   const shown = [...alarms]
@@ -90,11 +98,12 @@ export function AlarmList({ store, mission, user }: { store: Store; mission: Mis
                   <td>{STATE_TEXT[a.state]}</td>
                   <td>
                     {status && <span className="ack-status">{status.text}</span>}
+                    {changedIds.has(a.alarm_id) && <span className="ack-status" role="status">{CHANGED}</span>}
                     {(a.state === "UNACK" || a.state === "RTN_UNACK") && (
                       <button
-                        disabled={status?.pending}
+                        disabled={status?.pending || !live(a.vehicle)}
                         aria-label={`Acknowledge ${a.vehicle} ${a.param}`}
-                        onClick={(e) => setAcking({ alarm: a, opener: e.currentTarget })}
+                        onClick={(e) => openDialog(a, e.currentTarget)}
                       >
                         ACK
                       </button>
@@ -109,6 +118,12 @@ export function AlarmList({ store, mission, user }: { store: Store; mission: Mis
       {acking && (
         <AckDialog
           alarm={acking.alarm}
+          current={alarms.find((x) => x.alarm_id === acking.alarm.alarm_id)}
+          live={live(acking.alarm.vehicle)}
+          onChanged={() => {
+            setChanged((s) => new Set([...s, acking.alarm.alarm_id]));
+            setAcking(null);
+          }}
           mission={mission}
           opener={acking.opener}
           onCancel={() => setAcking(null)}

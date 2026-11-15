@@ -4,17 +4,28 @@ import { alarmText, hashText } from "./alarmText";
 import type { MissionDb } from "./api";
 import type { AlarmView } from "./store";
 
+/** The operator must re-read an alarm whose event, severity or state moved on (or that cleared) since the dialog opened. */
+const changed = (seen: AlarmView, now: AlarmView | undefined): boolean =>
+  !now || now.last.key !== seen.last.key || now.severity !== seen.severity || now.state !== seen.state;
+
 /** ACK with a required note in a native <dialog>: it shows the alarm, takes the note and keeps its errors inline.
- *  (window.confirm can do none of that and blocks the live page.) One request id per opening: a retry is the same request. */
-export function AckDialog({ alarm, mission, opener, onDone, onCancel }: {
+ *  (window.confirm can do none of that and blocks the live page.) One request id and one seen_key per opening: a retry
+ *  is the same request. The ACK binds to what the operator saw (P-pf42/42b/43): `alarm` is the alarm as it was when the
+ *  dialog opened, `current` the live one; a change closes the dialog (onChanged) unless a request is in flight (then
+ *  the owner's seen_key check answers). `live` false (stale screen) disables the ACK. */
+export function AckDialog({ alarm, current, live, mission, opener, onDone, onCancel, onChanged }: {
   alarm: AlarmView;
+  current: AlarmView | undefined; // undefined once the alarm cleared
+  live: boolean;
   mission: MissionDb | null;
   opener: HTMLElement | null; // gets the focus back when the dialog closes
   onDone: (status: "pending" | "applied" | "superseded" | "rejected", requestId: string) => void;
   onCancel: () => void;
+  onChanged: () => void;
 }) {
   const ref = useRef<HTMLDialogElement>(null);
   const [requestId] = useState(() => crypto.randomUUID());
+  const [seen] = useState(alarm); // captured at open: never re-read at submit (P-pf43b rule 1)
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -27,14 +38,18 @@ export function AckDialog({ alarm, mission, opener, onDone, onCancel }: {
       opener?.focus();
     };
   }, [opener]);
+  const moved = changed(seen, current);
+  useEffect(() => {
+    if (moved && !busy) onChanged();
+  }, [moved, busy, onChanged]);
   async function submit(e: FormEvent) {
     e.preventDefault();
     // a programmatic submit must not get past what the disabled button enforces
-    if (inFlight.current || note.trim() === "") return;
+    if (inFlight.current || note.trim() === "" || !live) return;
     inFlight.current = true;
     setBusy(true);
     setError("");
-    const r = await ackAlarm(alarm.alarm_id, requestId, note.trim());
+    const r = await ackAlarm(seen.alarm_id, requestId, note.trim(), seen.last.key);
     inFlight.current = false;
     setBusy(false);
     if (r.ok) onDone(r.status, requestId);
@@ -45,11 +60,11 @@ export function AckDialog({ alarm, mission, opener, onDone, onCancel }: {
       <form onSubmit={(e) => void submit(e)}>
         <h2 id="ack-title">Acknowledge alarm</h2>
         <p className="ack-alarm">
-          <strong>{alarm.vehicle}</strong> {alarm.param}
+          <strong>{seen.vehicle}</strong> {seen.param}
           <br />
-          {alarmText(alarm, mission)}
+          {alarmText(seen, mission)}
           <br />
-          <small>{hashText(alarm)}</small>
+          <small>{hashText(seen)}</small>
         </p>
         <label>
           Note (required)
@@ -58,7 +73,7 @@ export function AckDialog({ alarm, mission, opener, onDone, onCancel }: {
         {error && <p role="alert">{error}</p>}
         <div className="actions">
           <button type="button" className="secondary" disabled={busy} onClick={onCancel}>Cancel</button>
-          <button type="submit" disabled={busy || note.trim() === ""}>ACK</button>
+          <button type="submit" disabled={busy || !live || note.trim() === ""}>ACK</button>
         </div>
       </form>
     </dialog>

@@ -1,14 +1,20 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { getReport, listSessions, reportCsvUrl, startSession, stopSession, type ReportResult, type SessionResult, type SessionView } from "./api";
+import { getReport, listSessions, reportCsvUrl, startSession, stopSession, type MissionDb, type ReportResult, type SessionReport, type SessionResult, type SessionView } from "./api";
 import { eventText } from "./eventText";
-import { formatValue } from "./format";
+import { formatValue, sortedEntries } from "./format";
 import type { Store } from "./store";
 import { utcClock, utcIso } from "./time";
 
 const MAY_NOT_HAVE_COMPLETED = "May not have completed – check the session list before trying again";
 type View = { id: number; state: "loading" } | { id: number; state: "error"; message: string } | { id: number; state: "done"; result: ReportResult };
 
-function Report({ id, result, onRecheck }: { id: number; result: ReportResult; onRecheck: () => void }) {
+/** Mission-db order like the live table (the report's jsonb reorders keys), unknown ids after, sorted. */
+function inMissionOrder(p: SessionReport["parameters"], m: MissionDb | null) {
+  const known = m ? Object.keys(m.parameters).filter((id) => Object.hasOwn(p, id)) : [];
+  return [...known.map((id) => [id, p[id]] as const), ...sortedEntries(p).filter(([id]) => !known.includes(id))];
+}
+
+function Report({ id, result, mission, onRecheck }: { id: number; result: ReportResult; mission: MissionDb | null; onRecheck: () => void }) {
   if (result.kind === "running") return <p role="status">Session still running – stop it to get the report</p>;
   if (result.kind === "pending") {
     const n = result.frames !== null && result.expected !== null ? `: ${result.frames} of ${result.expected} frames` : "";
@@ -38,7 +44,7 @@ function Report({ id, result, onRecheck }: { id: number; result: ReportResult; o
           <tr>{["Parameter", "Unit", "n", "min", "avg", "max"].map((h) => <th key={h} scope="col">{h}</th>)}</tr>
         </thead>
         <tbody>
-          {Object.entries(r.parameters).map(([p, s]) => (
+          {inMissionOrder(r.parameters, mission).map(([p, s]) => (
             <tr key={p}>
               <th scope="row">{p}</th>
               <td>{s.unit}</td>
@@ -73,7 +79,7 @@ function Report({ id, result, onRecheck }: { id: number; result: ReportResult; o
 }
 
 /** Start and stop test sessions, read the frozen report, download its CSV (D-UI-17). */
-export function SessionPanel({ store }: { store: Store }) {
+export function SessionPanel({ store, mission }: { store: Store; mission: MissionDb | null }) {
   const vehicles = useSyncExternalStore(store.subscribe, store.vehicles, store.vehicles);
   const [sessions, setSessions] = useState<SessionView[] | null>(null);
   const [vehicle, setVehicle] = useState("");
@@ -176,7 +182,7 @@ export function SessionPanel({ store }: { store: Store }) {
       )}
       {view?.state === "loading" && <p role="status">Loading the report…</p>}
       {view?.state === "error" && <p role="alert">{view.message}</p>}
-      {view?.state === "done" && <Report id={view.id} result={view.result} onRecheck={() => void openReport(view.id)} />}
+      {view?.state === "done" && <Report id={view.id} result={view.result} mission={mission} onRecheck={() => void openReport(view.id)} />}
     </section>
   );
 }

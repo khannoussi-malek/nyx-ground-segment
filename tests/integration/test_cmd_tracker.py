@@ -10,7 +10,9 @@ from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
+import pytest
 
+import gs.commanding.tracker as tracker_mod
 from gs.commanding.decide import Change, CmdRow
 from gs.commanding.tracker import LATE_WINDOW_S, TCACK_COUNT, apply_change, track_pass
 from gs.common.interfaces.render import schema_sha12
@@ -174,6 +176,66 @@ async def test_late_ack_after_not_received() -> None:
     assert await outcome_of(cmd_id) == "RECEIVED_LATE"
 
 
+async def test_tcack_pel_over_count_still_catches_up() -> None:  # review: no stuck SENT
+    v = vid()
+    late = insert_cmd(v, age_s=8.0)
+    held = [insert_cmd(v, age_s=8.0) for _ in range(TCACK_COUNT + 1)]
+    for c in [*held, late]:
+        tcack(v, c, now() - timedelta(seconds=1))  # all after their 5 s window
+    async with direct() as (ctx, conn):
+        for _ in range(2):  # owner behind: every late ack is held, the PEL grows past COUNT
+            await track_pass(ctx, conn, v, caught_up=False)
+        assert pending(v) == TCACK_COUNT + 2
+        await track_pass(ctx, conn, v, caught_up=True)  # one pass claims the whole PEL
+    for c in [*held, late]:
+        r = row_of(v, c)
+        assert (r["failure_reason"], r["late_ack_accepted"]) == ("NOT_RECEIVED", True)
+    assert pending(v) == 0
+
+
+async def test_send_error_row_records_vehicle_evidence() -> None:  # P-pf16
+    v = vid()
+    cmd_id = insert_cmd(v, state="FAILED", failure_reason="SEND_ERROR", failed_at=now())
+    t = now()
+    tcack(v, cmd_id, t)
+    produce_values(v, {"cabin_temp_c": [22.0]}, last_cmd_id=cmd_id, base=t)
+    async with worker([v]):
+        await until(lambda: row_of(v, cmd_id)["late_verified_at"] is not None, 5)
+    r = row_of(v, cmd_id)
+    assert (r["state"], r["failure_reason"], r["late_ack_accepted"]) == (
+        "FAILED",
+        "SEND_ERROR",
+        True,
+    )
+    assert await outcome_of(cmd_id) == "EXECUTED_LATE"  # never "not sent, safe to retry"
+
+
+async def test_late_window_is_inclusive_at_600_s(monkeypatch: pytest.MonkeyPatch) -> None:
+    fixed = now()
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz: Any = None) -> datetime:  # type: ignore[override]
+            return fixed
+
+    monkeypatch.setattr(tracker_mod, "datetime", Clock)
+    v = vid()
+    edge = insert_cmd(
+        v, state="FAILED", age_s=700, failure_reason="NOT_RECEIVED",
+        failed_at=fixed - timedelta(seconds=LATE_WINDOW_S),
+    )  # fmt: skip
+    past = insert_cmd(
+        v, state="FAILED", age_s=700, failure_reason="NOT_RECEIVED",
+        failed_at=fixed - timedelta(seconds=LATE_WINDOW_S, microseconds=1),
+    )  # fmt: skip
+    tcack(v, edge, fixed)
+    tcack(v, past, fixed)
+    async with direct() as (ctx, conn):
+        await track_pass(ctx, conn, v, caught_up=True)
+    assert row_of(v, edge)["late_ack_at"] == fixed  # exactly 600 s: still loaded
+    assert row_of(v, past)["late_ack_at"] is None
+
+
 async def test_late_window_edges() -> None:
     v = vid()
     inside = insert_cmd(
@@ -333,6 +395,22 @@ async def test_no_false_failed_after_takeover() -> None:  # Review Focus 1
     assert r["verified_at"] == sent + timedelta(seconds=0.4)
     assert r["failure_reason"] is None
     assert [s for a, s in cmd_audits(cmd_id) if a == "CMD_STATE"] == ["RECEIVED", "VERIFIED"]
+
+
+async def test_no_false_failed_with_echo_in_tm_backlog() -> None:  # no ack, both windows past
+    v = vid()
+    sent = now() - timedelta(seconds=20)
+    cmd_id = insert_cmd(v, sent_at=sent, queued_at=sent - timedelta(seconds=0.1))
+    base = sent - timedelta(seconds=10)  # frames 0..119 before the echo: a full first read
+    produce_values(v, {"cabin_temp_c": [22.0] * 120}, base=base)
+    produce_values(v, {"cabin_temp_c": [22.0] * 30}, last_cmd_id=cmd_id, base=base, start_seq=120)
+    async with worker([v]):
+        await until(lambda: row_of(v, cmd_id)["state"] != "SENT", 8)
+        await asyncio.sleep(1.0)
+    r = row_of(v, cmd_id)
+    assert (r["state"], r["failure_reason"]) == ("VERIFIED", None)
+    assert r["verified_at"] == base + timedelta(seconds=12.0)  # sent + 2 s: inside both windows
+    assert r["received_at"] is None
 
 
 async def test_fenced_tracker_reads_no_tcack() -> None:  # D-ING-12, R2-06

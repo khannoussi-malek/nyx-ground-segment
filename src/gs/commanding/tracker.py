@@ -49,7 +49,8 @@ SELECT cmd_id, name, state, failure_reason, queued_at, sent_at, received_at, fai
        late_verified_at, late_ack_at
 FROM commands
 WHERE vehicle = %(v)s AND (state IN ('QUEUED', 'SENT', 'RECEIVED')
-   OR (state = 'FAILED' AND failure_reason IN ('NOT_RECEIVED', 'NOT_VERIFIED', 'ACK_INVALID')
+   OR (state = 'FAILED'
+       AND failure_reason IN ('NOT_RECEIVED', 'NOT_VERIFIED', 'ACK_INVALID', 'SEND_ERROR')
        AND failed_at >= %(oldest)s AND (late_verified_at IS NULL OR late_ack_at IS NULL)))
 """
 _ECHOES = """
@@ -121,22 +122,26 @@ def _validate(ctx: Ctx, vehicle: str, stream: str, entries: Sequence[Any], into:
 
 async def _read(ctx: Ctx, vehicle: str) -> _Read:
     """Pending entries (a previous owner's or a failed pass's) first, then new ones."""
-    stream, out = f"tcack:{vehicle}", _Read()
-    try:
-        res: Any = await ctx.redis.xautoclaim(
-            stream, GROUP, ctx.consumer, 0, "0-0", count=TCACK_COUNT
-        )
-    except redis.exceptions.ResponseError as e:
-        if "NOGROUP" not in str(e):
-            raise
-        await ctx.redis.xgroup_create(stream, GROUP, id="0", mkstream=True)
-        res = [b"0-0", []]
-    cursor = res[0].decode() if isinstance(res[0], bytes) else str(res[0])
-    _validate(ctx, vehicle, stream, res[1], out)
+    stream, out, cursor = f"tcack:{vehicle}", _Read(), "0-0"
+    while True:  # the whole PEL every pass: held acks must never hide the ones behind them
+        try:
+            res: Any = await ctx.redis.xautoclaim(
+                stream, GROUP, ctx.consumer, 0, cursor, count=TCACK_COUNT
+            )
+        except redis.exceptions.ResponseError as e:
+            if "NOGROUP" not in str(e):
+                raise
+            await ctx.redis.xgroup_create(stream, GROUP, id="0", mkstream=True)
+            break
+        # ponytail: bounded by the PEL, which holds only acks not yet stored (a handful)
+        _validate(ctx, vehicle, stream, res[1], out)
+        cursor = res[0].decode() if isinstance(res[0], bytes) else str(res[0])
+        if cursor == "0-0":
+            break
     new: Any = await ctx.redis.xreadgroup(GROUP, ctx.consumer, {stream: ">"}, count=TCACK_COUNT)
     fresh = new[0][1] if new else []
     _validate(ctx, vehicle, stream, fresh, out)
-    out.caught_up = cursor == "0-0" and len(fresh) < TCACK_COUNT
+    out.caught_up = len(fresh) < TCACK_COUNT  # a full read: more acks wait behind it
     return out
 
 
@@ -273,14 +278,7 @@ async def track_pass(
         return
     done = [eid for eid, cid in read.entries if cid not in held]
     rejected = [read.dlq[eid] for eid in done if eid in read.dlq]
-    try:
-        if done:  # commit, then DLQ + ack in one MULTI (D-ING-05)
-            pipe = ctx.redis.pipeline(transaction=True)
-            for rec in rejected:
-                pipe.xadd(DLQ, {"data": rec.model_dump_json()})
-            pipe.xack(stream, GROUP, *done)
-            await pipe.execute()
-            ctx.counters["interface_mismatch"] += len(rejected)  # /healthz degraded (D-ING-27)
+    try:  # publish, then DLQ + ack in one MULTI: the frame path's order (D-ING-05)
         views = await command_views(conn, cmd_ids=changed, limit=None) if changed else []
         links = [
             Link(
@@ -295,5 +293,12 @@ async def track_pass(
             for e in inserted
         ]
         await publish_ui(ctx.redis, [*(Cmd(command=v) for v in views), *links])
+        if done:
+            pipe = ctx.redis.pipeline(transaction=True)
+            for rec in rejected:
+                pipe.xadd(DLQ, {"data": rec.model_dump_json()})
+            pipe.xack(stream, GROUP, *done)
+            await pipe.execute()
+            ctx.counters["interface_mismatch"] += len(rejected)  # /healthz degraded (D-ING-27)
     except (redis.exceptions.RedisError, psycopg.Error) as e:  # re-read, re-judged idempotently
-        log.warning("tcack ack/publish failed for %s: %s", vehicle, e, extra={"vehicle": vehicle})
+        log.warning("tcack publish/ack failed for %s: %s", vehicle, e, extra={"vehicle": vehicle})

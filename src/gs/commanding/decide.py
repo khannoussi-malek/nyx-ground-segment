@@ -18,8 +18,14 @@ EARLIER: dict[CmdState, tuple[CmdState, ...]] = {
     "VERIFIED": ("QUEUED", "SENT", "RECEIVED"),
     "FAILED": ("QUEUED", "SENT", "RECEIVED"),
 }
-LATE_REASONS: tuple[FailureReason, ...] = ("NOT_RECEIVED", "NOT_VERIFIED", "ACK_INVALID")
-LATE_ACK_REASONS: tuple[FailureReason, ...] = ("NOT_RECEIVED", "ACK_INVALID")
+# SEND_ERROR too: vehicle evidence beats the API's "not sent" (P-pf16; outcome() checks it first)
+LATE_REASONS: tuple[FailureReason, ...] = (
+    "NOT_RECEIVED",
+    "NOT_VERIFIED",
+    "ACK_INVALID",
+    "SEND_ERROR",
+)
+LATE_ACK_REASONS: tuple[FailureReason, ...] = ("NOT_RECEIVED", "ACK_INVALID", "SEND_ERROR")
 
 
 @dataclass(frozen=True)

@@ -78,7 +78,9 @@ CASES: list[tuple[CmdRow, AckSeen | None, datetime | None, datetime, bool, Want]
     (failed(NR, 5, late_ack_at=s(6)), ack(6), None, s(7), True, None),
     (failed(AI, 1), bad(2), None, s(3), True, None),  # an invalid ack is never late evidence
     (failed("REJECTED", 0.3), None, s(1), s(2), True, None),
-    (failed("SEND_ERROR", 0), OK, s(1), s(2), True, None),
+    # P-pf16: the API judged SEND_ERROR, but the vehicle's evidence is recorded as late
+    (failed("SEND_ERROR", 0), OK, s(1), s(2), True, (F, "SEND_ERROR", s(1), True)),
+    (failed("SEND_ERROR", 0), None, s(1), s(2), True, (F, "SEND_ERROR", s(1), None)),
     (row("VERIFIED"), OK, s(0.4), s(30), True, None),
 ]
 

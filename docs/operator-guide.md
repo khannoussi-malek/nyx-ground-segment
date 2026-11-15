@@ -3,6 +3,8 @@
 One page for the person at the console. All times are UTC and end in `Z`, for example `14:03:17Z`. Text in bold is exactly what the console shows.
 
 ## Read the console
+![The console during a cabin leak: the RED LOW cabin pressure alarm on NYX-TA1 at the top of the alarm list](img/console-leak.png)
+
 - One row per parameter and vehicle. A value is grey when nominal; colour, text and a glyph appear only for YELLOW or RED. A RED badge on a row that is also stale shows the last limit as "was RED LOW".
 - Next to a value you may see a freshness mark: **STALE** (older than 2 s), **FROZEN** (all analog values identical for 2 s or more) or **NO DATA** (no value yet). No mark means fresh.
 - An alarm row says in words why it fired (for example "YELLOW - RATE FALLING -0.40 kPa/s (limit 0.15)") and shows two 8-character hash prefixes. They identify the limits file and the whole mission database that were live when it fired; quote them when you report a limit question.

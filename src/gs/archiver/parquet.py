@@ -1,5 +1,6 @@
 """Hot rows <-> Parquet: one row group, zstd, the hot schema, no custom footer metadata."""
 
+import hashlib
 import io
 from typing import Any
 
@@ -69,3 +70,23 @@ def sort_rows(t: pa.Table) -> pa.Table:
 
 def same_rows(a: pa.Table, b: pa.Table) -> bool:
     return bool(sort_rows(a).equals(sort_rows(b)))
+
+
+# The set of (t_onboard in us, seq) of a vehicle-hour as one hash, built in SQL over the rows a
+# DELETE returns and in Python over an archived table. Unlike count/min/max it tells a swapped row
+# (one archived row lost, one late row in range) from the archived set.
+FINGERPRINT_SQL = (
+    "encode(sha256(convert_to(coalesce(string_agg("
+    "((extract(epoch from t_onboard) * 1000000)::bigint)::text || ':' || seq::text,"
+    " ',' order by t_onboard, seq), ''), 'UTF8')), 'hex')"
+)
+
+
+def keys(t: pa.Table) -> list[tuple[int, int]]:
+    """(t_onboard us, seq) of every row, sorted."""
+    s = sort_rows(t)
+    return list(zip(s["t_onboard"].cast(pa.int64()).to_pylist(), s["seq"].to_pylist(), strict=True))
+
+
+def fingerprint(t: pa.Table) -> str:
+    return hashlib.sha256(",".join(f"{ts}:{seq}" for ts, seq in keys(t)).encode()).hexdigest()

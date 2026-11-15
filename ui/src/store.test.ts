@@ -244,6 +244,38 @@ test("an older alarm upsert is dropped, also after CLEARED (no flash back to UNA
   expect(s.alarms()).toHaveLength(1);
 });
 
+// final review F1: the server orders an ACK by its frame position (after_t_onboard = the last frame
+// before the batch it was applied in, D-ALM-14), so its last.t can equal the transition it acknowledges
+const step = (state: AlarmView["state"], kind: AlarmView["last"]["kind"], t: string, severity: AlarmView["severity"] = "YELLOW") =>
+  alarmView({ alarm_id: "a1", state, severity, last: { ...alarmView().last, kind, t, key: `${kind}@${t}` } });
+
+test("an ESCALATE processed after the ACK, from an earlier frame than the ACK's apply time, shows UNACK RED", () => {
+  const s = createStore();
+  s.applyAlarm(step("UNACK", "RAISE", "2026-11-14T10:00:00.900000Z"));
+  s.applyAlarm(step("ACKED", "ACK", "2026-11-14T10:00:00.900000Z")); // after the RAISE frame
+  s.applyAlarm(step("UNACK", "ESCALATE", "2026-11-14T10:00:01.400000Z", "RED"));
+  expect(s.alarms().map((a) => [a.state, a.severity, a.last.kind])).toEqual([["UNACK", "RED", "ESCALATE"]]);
+});
+
+test("at the same time an ACK is newer than a frame transition, never older", () => {
+  const s = createStore();
+  s.applyAlarm(step("UNACK", "ESCALATE", "2026-11-14T10:00:00.900000Z", "RED"));
+  s.applyAlarm(step("ACKED", "ACK", "2026-11-14T10:00:00.900000Z", "RED"));
+  s.applyAlarm(step("UNACK", "ESCALATE", "2026-11-14T10:00:00.900000Z", "RED")); // replay of the ACKed frame
+  expect(s.alarms().map((a) => a.state)).toEqual(["ACKED"]);
+  s.applyAlarm(step("RTN_UNACK", "RTN", "2026-11-14T10:00:01.900000Z", "RED"));
+  s.applyAlarm(step("CLEARED", "ACK", "2026-11-14T10:00:01.900000Z", "RED")); // ACK of RTN_UNACK clears
+  s.applyAlarm(step("RTN_UNACK", "RTN", "2026-11-14T10:00:01.900000Z", "RED")); // replay: no flash back
+  expect(s.alarms()).toEqual([]);
+});
+
+test("a snapshot's ACK keeps the same-time order", () => {
+  const s = createStore();
+  s.applySnapshot({ ...snap(), alarms: [step("ACKED", "ACK", "2026-11-14T10:00:00.900000Z")] });
+  s.applyAlarm(step("UNACK", "RAISE", "2026-11-14T10:00:00.900000Z"));
+  expect(s.alarms().map((a) => a.state)).toEqual(["ACKED"]);
+});
+
 test("a snapshot resets what 'older' means", () => {
   const s = createStore();
   s.applyAlarm(alarm("a1", "UNACK", "p", "NYX-TA1", "2026-11-14T10:00:09Z"));

@@ -8,6 +8,9 @@ export type EventView = components["schemas"]["EventView"];
 export type Link = { connected: boolean; broker: "up" | "down"; processing: Record<string, boolean> };
 
 const ms = (t: string | null): number => (t === null ? -Infinity : Date.parse(t));
+/** An alarm upsert's place in time: last.t is a vehicle time for every kind, an ACK's being the last frame before
+ *  the batch it was applied in (D-ALM-14), so at the same t the ACK came after that frame's transition. */
+const alarmOrder = (a: AlarmView): number => ms(a.last.t) * 2 + (a.last.kind === "ACK" ? 1 : 0);
 /** Newest time a command row carries; a row with more evidence is newer. */
 const cmdTime = (c: CommandView): number =>
   Math.max(...[c.queued_at, c.sent_at, c.received_at, c.verified_at, c.failed_at, c.late_ack_at, c.late_verified_at].map(ms));
@@ -71,7 +74,7 @@ export function createStore(
       const now = clock();
       stamps = Object.fromEntries(Object.keys(s.vehicles).map((v) => [v, now]));
       alarms = (s.alarms ?? []).filter((a) => a.state !== "CLEARED");
-      alarmT = Object.fromEntries((s.alarms ?? []).map((a) => [a.alarm_id, ms(a.last.t)]));
+      alarmT = Object.fromEntries((s.alarms ?? []).map((a) => [a.alarm_id, alarmOrder(a)]));
       commands = [...(s.commands ?? [])];
       events = trim(s.events ?? []);
       links = newest(s.events ?? [], isLink, links);
@@ -91,7 +94,7 @@ export function createStore(
     },
     /** An upsert older than what is held is dropped: a CLEARED alarm must not flash back to UNACK (reconnect replay). */
     applyAlarm(a: AlarmView): void {
-      const t = ms(a.last.t);
+      const t = alarmOrder(a);
       if (t < (alarmT[a.alarm_id] ?? -Infinity)) return;
       alarmT = { ...alarmT, [a.alarm_id]: t };
       const rest = alarms.filter((x) => x.alarm_id !== a.alarm_id);

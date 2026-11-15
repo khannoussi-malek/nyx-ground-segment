@@ -570,7 +570,7 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
             backoff = min(backoff * 2, BACKOFF_MAX_S)
             last_new = time.monotonic()  # a broker outage is not loss of signal (D-UI-04/15)
         try:  # after the frame COMMIT and _silence, outside the Redis except
-            await track_pass(ctx, conn, vehicle, caught_up)
+            unsent = [*unsent, *await track_pass(ctx, conn, vehicle, caught_up)]
         except Exception:  # noqa: BLE001  D-CMD-05/D-ING-24: the tracker never stops ingest
             log.exception("command tracker failed for %s", vehicle, extra={"vehicle": vehicle})
             ctx.counters["cmd_tracker_errors"] += 1

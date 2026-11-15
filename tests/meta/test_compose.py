@@ -190,9 +190,10 @@ def test_archiver_service(services: dict[str, dict[str, Any]]) -> None:
     env = a["environment"]
     assert a["command"] == ["gs-archiver"] and "ports" not in a
     got = (env["HOT_RETENTION_H"], env["ARCHIVE_LOOP_S"], env["S3_BUCKET"], env["S3_ACCESS_KEY"])
-    assert got == ("25", dotenv().get("ARCHIVE_LOOP_S", "300"), "archive", "archiver")
+    assert got == ("25", "300", "archive", "archiver")
     assert env["S3_ENDPOINT"] == "minio:9000" and env["HEALTH_PORT"] == "8081"
     assert env["REDIS_URL"].startswith("redis://health:")
+    assert env["DATABASE_URL"].startswith("postgresql://gs_app:") and env["BIND_HOST"] == "0.0.0.0"
     dep = {k: v["condition"] for k, v in a["depends_on"].items()}
     assert dep == {
         "db": "service_healthy", "redis": "service_healthy",

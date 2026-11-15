@@ -1,16 +1,20 @@
 """Archiver test helpers: hot hours, archive_object rows, a context with archiver credentials."""
 
-from collections.abc import Mapping
-from contextlib import AbstractAsyncContextManager, asynccontextmanager
+import time
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from datetime import datetime, timedelta
 from typing import Any
 
 import psycopg
+import pytest
+from psycopg import sql
 
 from gs.archiver.job import ArchiverCtx
 from gs.common.hooks import Hooks
-from tests.support.pg import app_dsn, rows
-from tests.support.s3 import s3_client
+from tests.support.compose import compose
+from tests.support.pg import admin_dsn, app_dsn, rows, throwaway_db
+from tests.support.s3 import inspect_health, s3_client
 
 NO_HOOKS = Hooks()
 
@@ -30,11 +34,12 @@ def hot_hour(
     n: int = 36_000,
     rate_hz: float = 10.0,
     values: Mapping[str, float] | None = None,
+    db: str = "gs",
 ) -> None:
     """`n` frames of `vehicle`: seq 0..n-1 at hour + i / rate_hz, every parameter filled."""
     params = param_columns()
     cols = ["t_onboard", "vehicle", "seq", "mode", *params]
-    with psycopg.connect(app_dsn("gs")) as c, c.cursor() as cur:
+    with psycopg.connect(app_dsn(db)) as c, c.cursor() as cur:
         with cur.copy(f"copy telemetry ({', '.join(cols)}) from stdin") as cp:
             for i in range(n):
                 vals = [
@@ -43,16 +48,16 @@ def hot_hour(
                 cp.write_row([hour + timedelta(seconds=i / rate_hz), vehicle, i, "TEST", *vals])
 
 
-def archive_rows(vehicle: str) -> list[dict[str, Any]]:
-    return rows("select * from archive_object where vehicle=%s order by hour", vehicle)
+def archive_rows(vehicle: str, db: str = "gs") -> list[dict[str, Any]]:
+    return rows("select * from archive_object where vehicle=%s order by hour", vehicle, db=db)
 
 
-def stored_in(vehicle: str, hour: datetime) -> int:
+def stored_in(vehicle: str, hour: datetime, db: str = "gs") -> int:
     """Hot rows of `vehicle` in the UTC hour starting at `hour`."""
     found = rows(
         "select count(*) as n from telemetry where vehicle=%s and t_onboard >= %s"
         " and t_onboard < %s",
-        vehicle, hour, hour + timedelta(hours=1),
+        vehicle, hour, hour + timedelta(hours=1), db=db,
     )  # fmt: skip
     return int(found[0]["n"])
 
@@ -67,10 +72,52 @@ def archiver_ctx(**overrides: Any) -> ArchiverCtx:
     return ArchiverCtx(**(base | overrides))
 
 
-def app_conn() -> AbstractAsyncContextManager[psycopg.AsyncConnection[Any]]:
+def app_conn(db: str = "gs") -> AbstractAsyncContextManager[psycopg.AsyncConnection[Any]]:
     @asynccontextmanager
     async def cm() -> Any:
-        async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as c:
+        async with await psycopg.AsyncConnection.connect(app_dsn(db), autocommit=True) as c:
             yield c
 
     return cm()
+
+
+def insert_late(vehicle: str, rows_: Sequence[Mapping[str, Any]], db: str = "gs") -> None:
+    """Telemetry rows (t_onboard and seq required) into `db` as gs_app."""
+    with psycopg.connect(app_dsn(db)) as c:
+        for row in rows_:
+            cols = {"vehicle": vehicle, "mode": "TEST"} | dict(row)
+            c.execute(
+                sql.SQL("insert into telemetry ({}) values ({})").format(
+                    sql.SQL(", ").join(map(sql.Identifier, cols)),
+                    sql.SQL(", ").join(sql.Placeholder() * len(cols)),
+                ),
+                list(cols.values()),
+            )
+
+
+@contextmanager
+def archive_db() -> Iterator[str]:
+    """A throwaway database shaped like `gs` (same parameter columns): a pass, which acts on every
+    vehicle, must never see other tests' or the simulator's rows."""
+    params = param_columns()
+    with throwaway_db() as name:
+        with psycopg.connect(admin_dsn(name), autocommit=True) as c:
+            for p in params:
+                c.execute(sql.SQL("alter table telemetry add column {} double precision").format(
+                    sql.Identifier(p)
+                ))  # fmt: skip
+        yield name
+
+
+@pytest.fixture(scope="module")
+def archiver_paused() -> Iterator[None]:
+    """G4-3: the compose archiver would archive and delete the hot hours these tests create.
+    Stopped for the module, started again (and awaited healthy) in finally."""
+    compose("stop", "archiver")
+    try:
+        yield
+    finally:
+        compose("start", "archiver")
+        deadline = time.monotonic() + 60
+        while inspect_health("archiver") != "healthy" and time.monotonic() < deadline:
+            time.sleep(1)

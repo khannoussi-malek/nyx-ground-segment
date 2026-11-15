@@ -5,7 +5,7 @@ import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Literal
 
 import redis.asyncio
 from fastapi import APIRouter, FastAPI, Request, Response
@@ -22,6 +22,7 @@ from gs.api import alarms, auth, commands, deps, events, sessions, telemetry
 from gs.api.auth import SESSION_TTL_S, load_users
 from gs.api.bodies import ErrorBody, Health
 from gs.api.deps import ApiError, User, errors
+from gs.api.hub import Hub
 from gs.api.openapi import build_openapi
 from gs.api.settings import Settings
 from gs.common.interfaces.missiondb import MissionDbView, Vehicles
@@ -80,7 +81,10 @@ async def healthz(request: Request) -> Response:
             log.warning("healthz %s check failed: %s: %s", name, type(e).__name__, e)
             checks[name] = "down"
     up = all(v == "ok" for v in checks.values())
-    body = Health(status="ok" if up else "down", checks=checks)
+    status: Literal["ok", "degraded", "down"] = "ok" if up else "down"
+    if up and request.app.state.hub.degraded:  # a ui:events entry was rejected (D-ING-27)
+        status, checks["ui_events"] = "degraded", "degraded"
+    body = Health(status=status, checks=checks)
     return JSONResponse(body.model_dump(), status_code=200 if up else 503)
 
 
@@ -116,13 +120,17 @@ def create_app(settings: Settings) -> FastAPI:
             retry=Retry(NoBackoff(), 0),
             decode_responses=True,
         )
-        pool = AsyncConnectionPool(settings.database_url, min_size=1, max_size=4, open=False)
+        pool = AsyncConnectionPool(settings.database_url, min_size=1, max_size=8, open=False)
         await pool.open(wait=False)
         app.state.pool = pool
+        hub = Hub(app.state.redis, pool, settings.vehicles, lambda: app.state.mission.param_names)
+        app.state.hub = hub
+        reader = asyncio.create_task(hub.run(app.state.shutdown))  # the one ui:events reader
         try:
             yield
         finally:
             app.state.shutdown.set()
+            await reader
             await pool.close()
             await app.state.redis.aclose()
 

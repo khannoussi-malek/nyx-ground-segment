@@ -80,8 +80,10 @@ async def test_disconnect_releases_stream(live_api: LiveApi) -> None:
         async with sse(live_api) as s:
             await s.next_of("snapshot")
     await until(lambda: live_api.app.state.sse_open == 0, timeout=2)
-    # no blocked XREAD left holding a pooled redis connection
-    await until(lambda: not live_api.app.state.redis.connection_pool._in_use_connections, timeout=2)
+    # no per-stream XREAD left holding a pooled redis connection: only the hub's one reader
+    pool = live_api.app.state.redis.connection_pool
+    await until(lambda: len(pool._in_use_connections) <= 1, timeout=2)
+    assert not live_api.app.state.hub.clients
 
 
 async def test_shutdown_hook_ends_streams(live_api: LiveApi) -> None:

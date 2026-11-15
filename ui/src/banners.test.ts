@@ -1,7 +1,8 @@
 import { expect, test } from "vitest";
 import { conditionFor, vehicleCondition } from "./banners";
 import { eventView } from "./fixtures";
-import { createStore, type Tm } from "./store";
+import { toneActive } from "./audio";
+import { createStore, ingest, type EventView, type Snapshot, type Tm } from "./store";
 
 const base = { connected: true, broker: "up" as const, processing: true, ageMs: 100, frozen: false };
 
@@ -39,50 +40,75 @@ test("LOS counts from when monitoring came back: a broker or owner outage is not
   expect(conditionFor({ ...base, ageMs: 12_000, healthyMs: null })).toBe("LOSS OF SIGNAL"); // never interrupted
 });
 
-// the real store + ageAt + conditionFor together (vehicleCondition, as the live table renders it)
+// the real store + ageAt + conditionFor together (vehicleCondition, as the live table renders it), fed the wire
+// messages through ingest()
 const V = "NYX-TA1";
-const frame = (seq: number): Tm => ({
+const W = "NYX-TA2";
+const frame = (seq: number, ageMs = 5): Tm => ({
   kind: "tm", vehicle: V, seq, t_onboard: new Date(Date.UTC(2026, 10, 15, 10) + seq * 100).toISOString().replace("Z", "000Z"),
-  mode: "TEST", last_cmd_id: null, values: { cabin_pressure_kpa: 101.3 }, age_ms: 5, frozen: false,
+  mode: "TEST", last_cmd_id: null, values: { cabin_pressure_kpa: 101.3 }, age_ms: ageMs, frozen: false,
+});
+const LOS = eventView("LOS/NYX-TA1/e/0", { kind: "LOS", vehicle: V });
+/** The snapshot the server sends on page load, after ground{up} and on a resync (hub.build_snapshot): the newest
+ *  50 events (here all of NYX-TA2's), then each vehicle's newest LOS/AOS when it is older, and the last frame
+ *  (received at 0 ms) with its server age. */
+const serverSnapshot = (now: number, link?: EventView): Snapshot => ({
+  kind: "snapshot", vehicles: { [V]: frame(0, now) }, alarms: [], commands: [],
+  events: [...Array.from({ length: 50 }, (_, i) => eventView(`GAP/${W}/${i}`, { kind: "GAP", vehicle: W })), ...(link ? [link] : [])],
 });
 
-/** A live vehicle (frame at 0 ms), `before` at its own times, then the broker down for 10 s. */
-function outage(before: (s: ReturnType<typeof createStore>, at: (t: number) => void) => void = () => {}) {
+/** A live vehicle loaded at 0 ms; `losAt` its server LOS (then silent); an outage of the broker or of the
+ *  vehicle's owner from 5 s to 15 s, ended as the server ends it: ground{up} or hb true, then the snapshot. */
+function outage(what: "broker" | "owner", losAt?: number) {
   let now = 0;
   const at = (t: number) => void (now = t);
   const s = createStore(() => now, { setTimeout: (() => 1) as never, clearTimeout: () => {} });
-  s.applySnapshot({ kind: "snapshot", vehicles: { [V]: frame(0) }, alarms: [], commands: [], events: [] });
-  s.noteMessage();
-  s.setProcessing({ [V]: true });
-  before(s, at);
-  at(Math.max(now, 1000));
-  s.setGround("down");
-  expect(vehicleCondition(s, V, now)).toBe("GROUND PROCESSING DOWN – BROKER");
-  at(now + 10_000);
-  s.setGround("up");
-  return { s, at, up: now, cond: (t: number) => vehicleCondition(s, V, t) };
+  ingest(s, "snapshot", serverSnapshot(0));
+  ingest(s, "hb", { processing: { [V]: true } });
+  if (losAt !== undefined) {
+    at(losAt);
+    ingest(s, "link", { event: LOS });
+    expect(vehicleCondition(s, V, losAt)).toBe("LOSS OF SIGNAL");
+  }
+  at(5000);
+  if (what === "broker") ingest(s, "ground", { broker: "down" });
+  else ingest(s, "hb", { processing: { [V]: false } });
+  expect(vehicleCondition(s, V, 10_000)).toMatch(/^GROUND PROCESSING DOWN/);
+  at(15_000);
+  if (what === "broker") ingest(s, "ground", { broker: "up" });
+  else ingest(s, "hb", { processing: { [V]: true } });
+  ingest(s, "snapshot", serverSnapshot(15_000, losAt === undefined ? undefined : LOS));
+  return { s, at, up: 15_000, cond: (t: number) => vehicleCondition(s, V, t) };
 }
 
-test("frames resume 500 ms after the broker is back: never LOSS OF SIGNAL", () => {
-  const { s, at, up, cond } = outage();
-  for (let t = up, seq = 1; t <= up + 5000; t += 100) {
-    at(t);
-    if (t >= up + 500) s.applyTm(frame(seq++));
-    expect(cond(t), `up + ${t - up} ms`).not.toBe("LOSS OF SIGNAL");
-  }
-});
-
-test("a vehicle still silent after the broker is back: no LOS at +1999 ms, LOS at +2000 ms", () => {
-  const { up, cond } = outage();
-  expect(cond(up + 1999)).toBeNull();
-  expect(cond(up + 2000)).toBe("LOSS OF SIGNAL");
-});
-
-test("a LOS open before the outage shows on the first redraw after it (the server kept it open)", () => {
-  const { up, cond } = outage((s, at) => {
-    at(2500);
-    s.applyLink(eventView("los:NYX-TA1:1", { kind: "LOS", vehicle: V }));
-    expect(vehicleCondition(s, V, 2500)).toBe("LOSS OF SIGNAL");
+for (const what of ["broker", "owner"] as const) {
+  test(`${what} outage, frames resume 500 ms after it ends: never LOSS OF SIGNAL`, () => {
+    const { s, at, up, cond } = outage(what);
+    for (let t = up, seq = 1; t <= up + 5000; t += 100) {
+      at(t);
+      if (t >= up + 500) ingest(s, "tm", frame(seq++));
+      expect(cond(t), `up + ${t - up} ms`).not.toBe("LOSS OF SIGNAL");
+    }
   });
-  for (let t = up; t <= up + 2000; t += 100) expect(cond(t), `up + ${t - up} ms`).toBe("LOSS OF SIGNAL");
+
+  test(`${what} outage, the vehicle still silent after it: no LOS at +1999 ms, LOS at +2000 ms`, () => {
+    const { up, cond } = outage(what);
+    expect(cond(up + 1999)).toBeNull();
+    expect(cond(up + 2000)).toBe("LOSS OF SIGNAL");
+  });
+
+  test(`${what} outage with a LOS open before it, past the newest snapshot events: LOS at once, the tone stays on`, () => {
+    const { s, up, cond } = outage(what, 2500);
+    for (let t = up; t <= up + 2000; t += 100) expect(cond(t), `up + ${t - up} ms`).toBe("LOSS OF SIGNAL");
+    expect(toneActive(s)).toEqual({ [LOS.key]: "LOS" });
+  });
+}
+
+test("page load: a vehicle silent for a minute whose open LOS is past the newest snapshot events shows LOS at once, toned", () => {
+  const now = 100_000;
+  const s = createStore(() => now, { setTimeout: (() => 1) as never, clearTimeout: () => {} });
+  ingest(s, "snapshot", serverSnapshot(60_000, LOS));
+  ingest(s, "hb", { processing: { [V]: true } }); // unknown -> true: a recovery, but the LOS is open
+  expect(vehicleCondition(s, V, now)).toBe("LOSS OF SIGNAL");
+  expect(toneActive(s)).toEqual({ [LOS.key]: "LOS" });
 });

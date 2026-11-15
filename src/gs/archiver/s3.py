@@ -15,6 +15,8 @@ from gs.common.config import require
 # refused / reset / timeout / any S3 answer: the pass treats all of them as "MinIO trouble"
 S3_ERRORS: tuple[type[BaseException], ...] = (MinioException, urllib3.exceptions.HTTPError, OSError)
 REGION = "us-east-1"  # the archiver policy has no GetBucketLocation: never let the client ask
+CONNECT_TIMEOUT_S = 3.0
+READ_TIMEOUT_S = 10.0
 _MIN_PART = 5 * 1024 * 1024  # above this a client would switch to multipart; one PUT stays one PUT
 
 
@@ -34,7 +36,14 @@ class S3Settings:
 
 
 def client(s: S3Settings) -> Minio:
-    return Minio(s.endpoint, s.access_key, s.secret_key, secure=False, region=REGION)
+    """Short timeouts and one retry: a black-holed MinIO must fail a pass, not freeze it."""
+    http = urllib3.PoolManager(
+        timeout=urllib3.Timeout(connect=CONNECT_TIMEOUT_S, read=READ_TIMEOUT_S),
+        retries=urllib3.Retry(total=1, backoff_factor=0.2, status_forcelist=(500, 502, 503, 504)),
+    )
+    return Minio(
+        s.endpoint, s.access_key, s.secret_key, secure=False, region=REGION, http_client=http
+    )
 
 
 def checksum_headers(digest: bytes) -> dict[str, str]:

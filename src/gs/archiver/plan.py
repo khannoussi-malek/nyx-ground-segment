@@ -1,6 +1,6 @@
 """The archiver pass planner: what to do this loop from hot counts and archive rows (pure)."""
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -62,8 +62,12 @@ def plan_pass(
     counts: Mapping[Key, int],
     rows: Mapping[Key, ArchiveRow],
     retention_h: float,
+    corrupt: Collection[Key] = frozenset(),
 ) -> list[Action]:
-    """Archive/MergeLate first (oldest hour first), then DeleteHot oldest first, then anomalies."""
+    """Archive/MergeLate first (oldest hour first), then DeleteHot oldest first, then anomalies.
+    `corrupt`: hours with an unresolved ARCHIVE_CORRUPT. One whose hot rows are all still here is
+    rebuilt as the next version and never deleted; one that already lost its hot rows is left
+    alone (nothing can rebuild it; the event stays open)."""
     build: list[Action] = []
     delete: list[Action] = []
     odd: list[Action] = []
@@ -75,12 +79,14 @@ def plan_pass(
             if n > 0 and eligible(h, now):
                 build.append(Archive(v, h, 0))
         elif row.hot_deleted_at is not None:
-            if n > 0:
+            if n > 0 and key not in corrupt:
                 build.append(MergeLate(v, h, row.version + 1))
         elif n > row.rows:
             build.append(Archive(v, h, row.version + 1))
         elif n < row.rows:
             odd.append(Anomaly(v, h, f"{n} hot rows, archived {row.rows}"))
+        elif key in corrupt:
+            build.append(Archive(v, h, row.version + 1))
         elif delete_due(h, now, retention_h):
             delete.append(DeleteHot(v, h))
     return [*build, *delete, *odd]

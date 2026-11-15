@@ -26,6 +26,8 @@ from gs.archiver.parquet import (
 from gs.archiver.plan import ArchiveRow
 from gs.archiver.s3 import get, put
 from gs.common.hooks import Hooks
+from gs.common.time import iso_z
+from gs.ingest.events import GroundEvent, insert_events
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +41,23 @@ on conflict (vehicle, hour) do update set version = excluded.version, sha256 = e
 returning vehicle, hour, sha256, rows, t_min, t_max, version, verified_at, hot_deleted_at,
   last_checked_at
 """
+
+
+def corrupt_key(vehicle: str, hour: datetime, version: int) -> str:
+    """T4-d: version 0 keeps the design key, later versions get a /v<N> suffix."""
+    base = f"ARCHIVE_CORRUPT/{vehicle}/{iso_z(hour)}"
+    return base if version == 0 else f"{base}/v{version}"
+
+
+async def flag_corrupt(
+    conn: psycopg.AsyncConnection[Any], row: ArchiveRow, found: str | None
+) -> None:
+    """Put an ARCHIVE_CORRUPT on record (idempotent by key): expected = the row's sha256."""
+    event = GroundEvent(
+        corrupt_key(row.vehicle, row.hour, row.version), row.vehicle, "ARCHIVE_CORRUPT", row.hour,
+        {"hour": row.hour, "version": row.version, "expected": row.sha256, "found": found},
+    )  # fmt: skip
+    await insert_events(conn, [event])
 
 
 @dataclass
@@ -106,17 +125,21 @@ async def _recorded(
     return ArchiveRow(*row) if row else None
 
 
-async def _recorded_table(ctx: ArchiverCtx, row: ArchiveRow) -> pa.Table | None:
-    """The recorded object, decoded, only if its bytes still hash to the recorded sha256."""
+async def _recorded_table(
+    ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], row: ArchiveRow
+) -> pa.Table | None:
+    """The recorded object, decoded, only if its bytes still hash to the recorded sha256. A missing
+    or altered object is put on record (ARCHIVE_CORRUPT) without waiting for the scrub."""
+    found: str | None = None
     try:
         data = await get(ctx.s3, ctx.bucket, object_key(row.vehicle, row.hour, row.version))
+        found = hashlib.sha256(data).hexdigest()
     except S3Error as e:
         if e.code != "NoSuchKey":
             raise
-        _fail(row.vehicle, row.hour, "recorded object is missing")  # the scrub flags it too
-        return None
-    if hashlib.sha256(data).hexdigest() != row.sha256:
-        _fail(row.vehicle, row.hour, f"recorded object does not hash to {row.sha256}")
+    if found != row.sha256:
+        _fail(row.vehicle, row.hour, f"recorded object is {found or 'missing'}, not {row.sha256}")
+        await flag_corrupt(conn, row, found)
         return None
     return decode(data)
 
@@ -141,10 +164,15 @@ async def _may_replace_recorded(
             f"{old.hot_deleted_at is not None}); refusing to overwrite with version {version}",
         )
         return False
-    prev = await _recorded_table(ctx, old)
+    prev = await _recorded_table(ctx, conn, old)
     if prev is None:
         # corrupt or missing, and the hot rows are still here: they are the truth, a new version
-        # heals it (the scrub's ARCHIVE_CORRUPT resolves when the row's sha256 changes)
+        # heals it (the ARCHIVE_CORRUPT resolves when the row's sha256 changes). The object cannot
+        # prove the new version drops nothing, the row can: same count and range at least.
+        t_min, t_max = table["t_onboard"][0].as_py(), table["t_onboard"][-1].as_py()
+        if table.num_rows < old.rows or t_min > old.t_min or t_max < old.t_max:
+            _fail(vehicle, hour, "the hot rows no longer cover the corrupt version's rows or range")
+            return False
         return True
     if not set(keys(prev)) <= set(keys(table)):
         _fail(vehicle, hour, "the new version would drop rows of the recorded version")
@@ -183,7 +211,7 @@ async def delete_hot(
     key = (row.vehicle, row.hour)
     if (w.vehicle, w.start) != key:
         return _refuse(ctx, *key, f"window {w.vehicle} {w.start} is not the archived hour")
-    archived = await _recorded_table(ctx, row)  # S3 trouble raises here, before any delete
+    archived = await _recorded_table(ctx, conn, row)  # S3 trouble raises here, before any delete
     if archived is None:
         return _refuse(ctx, *key, "the archived object is not the recorded one")
     if archived.num_rows != row.rows:
@@ -210,23 +238,34 @@ async def delete_hot(
     return True
 
 
-def _dedupe_sorted(t: pa.Table) -> pa.Table:
-    s = sort_rows(t)
-    first: dict[tuple[Any, Any, Any], int] = {}
-    keep, differing = [], 0
-    for i, k in enumerate(
-        zip(s["vehicle"].to_pylist(), s["t_onboard"].to_pylist(), s["seq"].to_pylist(), strict=True)
-    ):
-        if k not in first:
-            first[k] = i
-            keep.append(i)
-        elif repr(s.slice(i, 1).to_pylist()) != repr(s.slice(first[k], 1).to_pylist()):
+def _merged_rows(prev: pa.Table, late: pa.Table, vehicle: str) -> pa.Table:
+    """The archived rows plus the late rows whose (t_onboard, seq) is not archived yet; on a shared
+    key the archived row wins (a differing late copy is logged)."""
+    have = {
+        k: i
+        for i, k in enumerate(
+            zip(prev["t_onboard"].to_pylist(), prev["seq"].to_pylist(), strict=True)
+        )
+    }
+    common = [c for c in prev.column_names if c in late.column_names]
+    fresh, differing = [], 0
+    for j, k in enumerate(zip(late["t_onboard"].to_pylist(), late["seq"].to_pylist(), strict=True)):
+        if k not in have:
+            fresh.append(j)
+        elif repr(late.select(common).slice(j, 1).to_pylist()) != repr(
+            prev.select(common).slice(have[k], 1).to_pylist()
+        ):
             differing += 1
     if differing:
         log.warning(
-            "%d late row(s) share a key with an archived row but differ; dropped", differing
+            "%d late row(s) share a key with an archived row but differ; the archived row is kept",
+            differing, extra={"vehicle": vehicle},
+        )  # fmt: skip
+    return sort_rows(
+        pa.concat_tables(
+            [prev, late.take(pa.array(fresh, type=pa.int64()))], promote_options="default"
         )
-    return s.take(keep)
+    )
 
 
 async def merge_late(
@@ -237,14 +276,14 @@ async def merge_late(
     and only if exactly those late rows go. Any doubt: None, the late rows stay hot, and a later
     pass retries."""
     assert conn.autocommit, "merge_late needs an autocommit connection (top-level transaction)"
-    prev = await _recorded_table(ctx, row)
+    prev = await _recorded_table(ctx, conn, row)
     if prev is None:
         return None
     w = hour_bounds(row.vehicle, row.hour)
     late = await hot_table(conn, w, await hot_schema(conn))  # columns added since v0 included
     if late.num_rows == 0:
         return None
-    expected = _dedupe_sorted(pa.concat_tables([prev, late], promote_options="default"))
+    expected = _merged_rows(prev, late, row.vehicle)
     version = row.version + 1
     key = object_key(row.vehicle, row.hour, version)
     sha = await put(ctx.s3, ctx.bucket, key, encode(expected))

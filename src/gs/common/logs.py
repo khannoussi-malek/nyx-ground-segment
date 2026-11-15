@@ -21,7 +21,7 @@ class JsonFormatter(logging.Formatter):
             "logger": record.name,
             "msg": record.getMessage(),
         }
-        for key in ("vehicle", "seq"):  # from extra={"vehicle": v, "seq": s}
+        for key in ("vehicle", "seq", "hour"):  # from extra={"vehicle": v, "seq": s, "hour": iso}
             if key in record.__dict__:
                 out[key] = record.__dict__[key]
         if record.exc_info:

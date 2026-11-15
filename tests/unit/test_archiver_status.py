@@ -85,3 +85,18 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
             ArchiverSettings.from_env()
         monkeypatch.delenv(name)
         monkeypatch.setenv("HOT_RETENTION_H", "25")
+
+
+def test_plan_corrupt_hours_self_heal_but_never_shrink_or_delete() -> None:
+    from gs.archiver.plan import Anomaly, Archive, DeleteHot, plan_pass
+
+    h = NOW - 40 * HOUR
+    row = ArchiveRow("v", h, "x", 10, h, h, 0, NOW, None, None)
+    gone = ArchiveRow("v", h, "x", 10, h, h, 0, NOW, NOW, None)
+    k = frozenset({("v", h)})
+    assert plan_pass(NOW, {("v", h): 10}, {("v", h): row}, 0.0) == [DeleteHot("v", h)]
+    assert plan_pass(NOW, {("v", h): 10}, {("v", h): row}, 0.0, k) == [Archive("v", h, 1)]
+    assert plan_pass(NOW, {("v", h): 11}, {("v", h): row}, 0.0, k) == [Archive("v", h, 1)]
+    (odd,) = plan_pass(NOW, {("v", h): 9}, {("v", h): row}, 0.0, k)
+    assert isinstance(odd, Anomaly)  # healing would shrink the hour
+    assert plan_pass(NOW, {("v", h): 1}, {("v", h): gone}, 0.0, k) == []  # event stays open

@@ -16,8 +16,10 @@ test("api restart: NO LIVE CONNECTION from the first error, data flowing again i
   await restart;
   const s1 = await seqOf(page, "NYX-TA1")();
   await expect.poll(seqOf(page, "NYX-TA1"), { timeout: 5_000, intervals: [100] }).toBeGreaterThan(s1);
+  const ms = Date.now() - t0;
   for (const v of VEHICLES) await expect(summary(page, v)).not.toContainText("NO LIVE CONNECTION");
-  console.log(`data flowing ${Date.now() - t0} ms after the restart began`);
+  console.log(`data flowing ${ms} ms after the restart began`);
+  expect(ms).toBeLessThan(5000); // UI-07 counts from the restart command, not from when it returned
 });
 
 test("redis stopped 10 s: GROUND PROCESSING DOWN – BROKER on both vehicles, no LOSS OF SIGNAL", async ({ page }) => {

@@ -49,7 +49,7 @@ test("dispatches every kind as parsed JSON", () => {
   es.emit("snapshot", '{"kind":"snapshot","vehicles":{}}');
   es.emit("tm", '{"kind":"tm","seq":1}');
   expect([...es.listeners.keys()].sort()).toEqual(
-    ["alarm", "cmd", "error", "ground", "hb", "hello", "link", "snapshot", "tm"],
+    ["alarm", "cmd", "error", "ground", "hb", "hello", "link", "open", "snapshot", "tm"],
   );
   es.emit("hb", '{"kind":"hb"}');
   expect(got).toEqual([["snapshot", { kind: "snapshot", vehicles: {} }], ["tm", { kind: "tm", seq: 1 }], ["hb", { kind: "hb" }]]);
@@ -80,9 +80,10 @@ test("every error also calls onError", () => {
   expect(onError).toHaveBeenCalledOnce();
 });
 
-test("error closes the source and reopens once after 1000 ms", () => {
+test("a live stream's error closes the source and reopens once after 1000 ms", () => {
   connectEvents("/u", () => {}, () => {}, deps);
   const first = FakeEventSource.all[0]!;
+  first.emit("open", "");
   first.listeners.get("error")!({ data: "" });
   first.listeners.get("error")!({ data: "" }); // a second error while one reopen is pending
   expect(first.closed).toBe(true);
@@ -93,6 +94,22 @@ test("error closes the source and reopens once after 1000 ms", () => {
   expect(FakeEventSource.all[1]!.url).toBe("/u");
   FakeEventSource.all[1]!.listeners.get("error")!({ data: "" }); // pending flag was reset
   expect(timers).toHaveLength(2);
+});
+
+test("a reopen that fails before it opened retries after 250 ms, not a full 1000 ms (UI-07)", () => {
+  connectEvents("/u", () => {}, () => {}, deps);
+  FakeEventSource.all[0]!.emit("open", "");
+  FakeEventSource.all[0]!.listeners.get("error")!({ data: "" }); // the api went away
+  timers[0]!.fn();
+  FakeEventSource.all[1]!.listeners.get("error")!({ data: "" }); // still down: refused, never opened
+  timers[1]!.fn();
+  FakeEventSource.all[2]!.listeners.get("error")!({ data: "" });
+  expect(timers.map((t) => t.ms)).toEqual([1000, 250, 250]);
+  timers[2]!.fn();
+  const back = FakeEventSource.all[3]!;
+  back.emit("open", ""); // the api is back: the next drop waits the full 1000 ms again
+  back.listeners.get("error")!({ data: "" });
+  expect(timers.map((t) => t.ms)).toEqual([1000, 250, 250, 1000]);
 });
 
 test("the returned function closes the source and cancels a pending reopen", () => {

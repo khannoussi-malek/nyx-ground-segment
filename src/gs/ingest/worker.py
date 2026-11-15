@@ -27,6 +27,7 @@ from gs.common.interfaces.ui_event import Resync, UiMessage
 from gs.common.missiondb import MissionDb, MissionDbError
 from gs.common.uievents import publish_ui
 from gs.common.views import alarm_views
+from gs.ingest.acks import AckReq, apply_acks, pending_acks
 from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
 from gs.ingest.events import GroundEvent, details_json, poison_key, reset_key
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
@@ -162,7 +163,8 @@ async def _ui(
     alarm the commits touched (its view after them)."""
     tm = [to_tm(f, params, vs.frozen.reported) for f in stored]
     links = _links([e for o in outs for e in o.events], vs)
-    ids = list(dict.fromkeys(t.alarm_id for o in outs for t in o.transitions))
+    ids = list(dict.fromkeys([*(t.alarm_id for o in outs for t in o.transitions),
+                              *(a for o in outs for a in o.acked)]))  # fmt: skip
     views = await alarm_views(conn, alarm_ids=ids, open_only=False) if ids else []
     return [*tm, *links, *(Alarm(alarm=a) for a in views)]
 
@@ -182,18 +184,20 @@ async def process_batch(
     stream: str,
     entries: list[Entry],
     vs: VehicleState,
+    acks: Sequence[AckReq] = (),
 ) -> tuple[VehicleState, int]:
     """One frame transaction (D-ING-22); returns the new state and the frames newly stored.
-    Data errors are isolated per frame (D-ING-04); an operational Postgres error rolls back,
-    resets the batch's delivery counts and raises OperationalDbError (D-ING-24). Nothing is
-    acked on any error."""
-    if not entries:
+    Pending ACK requests are applied first in it (D-ALM-14); with no entries they commit on
+    their own (ruling R-x). Data errors are isolated per frame (D-ING-04); an operational
+    Postgres error rolls back, resets the batch's delivery counts and raises
+    OperationalDbError (D-ING-24). Nothing is acked on any error."""
+    if not entries and not acks:
         return vs, 0
     deliveries = await _deliveries(ctx, stream, entries)  # before classify (R8)
     # an entry already judged poison keeps its count; resetting it would start a new crash loop
     ids = [eid for (eid, _), n in zip(entries, deliveries, strict=True) if n <= POISON_DELIVERIES]
     try:
-        return await _process(ctx, conn, stream, entries, deliveries, vs)
+        return await _process(ctx, conn, stream, entries, deliveries, vs, acks)
     except psycopg.Error as e:
         # data errors are isolated inside _process; the only Postgres work after isolation is the
         # closing events write (event inserts ON CONFLICT DO NOTHING + the state upserts that
@@ -212,6 +216,7 @@ async def _process(
     entries: list[Entry],
     deliveries: list[int],
     vs: VehicleState,
+    acks: Sequence[AckReq],
 ) -> tuple[VehicleState, int]:
     vehicle = stream.removeprefix("tm:")
     now = datetime.now(UTC)
@@ -234,24 +239,28 @@ async def _process(
             ctx.stats.observe(r, params)
             items.append((eid, fields, n, r))
     try:
-        nvs, out, inserted = await _commit(ctx, conn, b, vehicle, [i[3] for i in items], vs, events)
+        frames = [i[3] for i in items]
+        nvs, out, inserted = await _commit(ctx, conn, b, vehicle, frames, vs, events, acks)
         outs = [out]
     except Exception as e:  # noqa: BLE001  D-ING-04: a processing exception is the frame's fault
         if _operational(e):
             raise
         log.warning("data error in a batch of %s (%s); isolating frames", stream, _why(e))
-        nvs, inserted, bad, outs = await _isolate(ctx, conn, b, stream, items, vs, events, now)
+        nvs, inserted, bad, outs = await _isolate(
+            ctx, conn, b, stream, items, vs, events, acks, now
+        )
         dlq += bad
     ctx.hooks.fire("after_commit_before_publish")
     # tm only for what this commit stored (a redelivery publishes none); links and alarms may
     # repeat on a redelivery
     await publish_ui(ctx.redis, await _ui(conn, nvs, inserted, outs, params))
     ctx.hooks.fire("after_publish_before_ack")
-    ack = ctx.redis.pipeline(transaction=True)  # one MULTI: DLQ records + XACK
-    for rec in dlq:
-        ack.xadd(DLQ, {"data": rec.model_dump_json()})
-    ack.xack(stream, GROUP, *(eid for eid, _ in entries))
-    await ack.execute()
+    if entries:  # an ACK-only pass has nothing to ack
+        ack = ctx.redis.pipeline(transaction=True)  # one MULTI: DLQ records + XACK
+        for rec in dlq:
+            ack.xadd(DLQ, {"data": rec.model_dump_json()})
+        ack.xack(stream, GROUP, *(eid for eid, _ in entries))
+        await ack.execute()
     ctx.hooks.fire("after_xack")
     ctx.dup_or_late[vehicle] += sum(o.dup_or_late for o in outs)
     return nvs, len(inserted)
@@ -265,12 +274,17 @@ async def _commit(
     frames: list[FrameHeader],
     vs: VehicleState,
     events: Sequence[GroundEvent],
+    acks: Sequence[AckReq] = (),
 ) -> tuple[VehicleState, Outcome, list[FrameHeader]]:
-    """fold + one transaction: frames (LATE frames still insert), then seq/link/events (incl.
-    LIMITS_APPLIED), alarm transitions and the engine snapshot; returns what it committed."""
-    nvs, out = fold(vs, vehicle, frames, b.mdb, b.cset, b.old)
-    out = replace(out, events=(*events, *out.events))
+    """One transaction: the ACK requests (each in a savepoint, positioned after the last frame
+    before this batch, D-ALM-14), then fold, frames (LATE frames still insert), seq/link/events
+    (incl. LIMITS_APPLIED), alarm transitions and the engine snapshot; returns what it
+    committed."""
     async with conn.transaction():  # COMMIT
+        es = await apply_acks(conn, vehicle, vs.engine, acks, vs.seq)
+        nvs, out = fold(replace(vs, engine=es), vehicle, frames, b.mdb, b.cset, b.old)
+        acked = tuple(r.alarm_id for r in acks)
+        out = replace(out, events=(*events, *out.events), acked=acked)
         inserted = await insert_frames(conn, frames, b.mdb.param_names)
         await write_outcome(conn, vehicle, nvs, out)
         ctx.hooks.fire("before_commit")
@@ -285,37 +299,37 @@ async def _isolate(
     items: list[Item],
     vs: VehicleState,
     events: list[GroundEvent],
+    acks: Sequence[AckReq],
     now: datetime,
 ) -> tuple[VehicleState, list[FrameHeader], list[DlqRecord], list[Outcome]]:
     """Re-run one frame per transaction from the pre-batch state; a frame failing RETRIES times
-    goes to the DLQ as poison, the rest commit (D-ING-04). Pending events (POISON) ride
-    in the next per-frame commit that succeeds. Operational errors propagate. Returns the
-    committed outcomes too."""
+    goes to the DLQ as poison, the rest commit (D-ING-04). Pending events (POISON) and the ACK
+    requests ride in the first per-frame commit that succeeds (P-pf15; a rolled-back try
+    leaves the requests pending). Operational errors propagate. Returns the committed
+    outcomes too."""
     vehicle = stream.removeprefix("tm:")
     outs: list[Outcome] = []
     inserted: list[FrameHeader] = []
     bad: list[DlqRecord] = []
-    pending = list(events)
+    pending, unapplied = list(events), list(acks)
     for eid, fields, n, frame in items:
         why = ""
         for _ in range(RETRIES):
             try:
-                vs, out, ins = await _commit(ctx, conn, b, vehicle, [frame], vs, pending)
+                vs, out, ins = await _commit(ctx, conn, b, vehicle, [frame], vs, pending, unapplied)
             except Exception as e:  # noqa: BLE001  D-ING-04: a processing exception is the frame's fault
                 if _operational(e):
                     raise
                 why = _why(e)
                 continue
-            outs, inserted, pending = [*outs, out], inserted + ins, []
+            outs, inserted, pending, unapplied = [*outs, out], inserted + ins, [], []
             break
         else:
             log.error("frame %s of %s failed %d times (%s); to DLQ", eid, stream, RETRIES, why)
             bad.append(poison(fields, stream, eid, n, why, now))
             pending.append(_poison_event(stream, vehicle, eid, n))
-    if pending:  # no later frame committed: write them on their own, still before the XACK
-        rest = Outcome((), tuple(pending), 0)
-        async with conn.transaction():
-            await write_outcome(conn, vehicle, vs, rest)
+    if pending or unapplied:  # no later frame committed: on their own, still before the XACK
+        vs, rest, _ = await _commit(ctx, conn, b, vehicle, [], vs, pending, unapplied)
         outs.append(rest)
     return vs, inserted, bad, outs
 
@@ -486,7 +500,9 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
                 claimed = res[0][1] if res else []
                 caught_up = len(claimed) < COUNT
             entries: list[Entry] = [(eid.decode(), f or {}) for eid, f in claimed]
-            nvs, _ = await process_batch(ctx, conn, stream, entries, vs)
+            # after the read: a request waits at most one BLOCK_MS (D-ALM-14: <= 1 s)
+            acks = await pending_acks(conn, vehicle)
+            nvs, _ = await process_batch(ctx, conn, stream, entries, vs, acks)
             if nvs.seq != vs.seq:  # a new frame advanced the tracker
                 last_new = time.monotonic()
             vs = nvs

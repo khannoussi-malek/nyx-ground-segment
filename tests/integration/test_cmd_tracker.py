@@ -371,7 +371,25 @@ async def test_invalid_tcack_dlq_not_retried() -> None:
     assert await outcome_of(cmd_id) == "UNKNOWN"
 
 
-async def test_tracker_error_never_touches_frames() -> None:
+def drop_trigger(fn: str) -> None:
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
+        c.execute("SET lock_timeout = '5s'")  # a lock wait fails, never hangs the run
+        c.execute(f"DROP TRIGGER {fn} ON commands")
+
+
+@pytest.mark.parametrize("slow_txn", [False, True])
+async def test_tracker_error_never_touches_frames(
+    monkeypatch: pytest.MonkeyPatch, slow_txn: bool
+) -> None:
+    if slow_txn:  # the tracker is mid-transaction most of the time: the DROP below lands in it
+        echoes = tracker_mod._echoes
+
+        async def slow(*a: Any) -> dict[UUID, datetime]:
+            out = await echoes(*a)
+            await asyncio.sleep(0.3)
+            return out
+
+        monkeypatch.setattr(tracker_mod, "_echoes", slow)
     v = vid()
     cmd_id = insert_cmd(v)
     tcack(v, cmd_id, now())
@@ -392,8 +410,9 @@ async def test_tracker_error_never_touches_frames() -> None:
             await asyncio.sleep(0.5)
             assert len(rows("select seq from telemetry where vehicle=%s", v)) > n  # frames commit
             assert not run.done() and row_of(v, cmd_id)["state"] == "SENT" and pending(v) == 1
-            with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
-                c.execute(f"DROP TRIGGER {fn} ON commands")
+            # off the event loop: DROP TRIGGER waits for the worker's open tracker transaction,
+            # which only this loop can finish (a sync call here deadlocked the full run for 2 h)
+            await asyncio.to_thread(drop_trigger, fn)
             await until(lambda: row_of(v, cmd_id)["state"] == "RECEIVED", 5)
             assert pending(v) == 0
     finally:

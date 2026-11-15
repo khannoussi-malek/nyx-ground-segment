@@ -3,13 +3,14 @@
 import time
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import psycopg
 import pytest
 from psycopg import sql
 
+from gs.archiver.hours import HOUR, hour_of
 from gs.archiver.job import ArchiverCtx
 from gs.common.hooks import Hooks
 from tests.support.compose import compose
@@ -122,3 +123,34 @@ def archiver_paused() -> Iterator[None]:
         while inspect_health("archiver") != "healthy" and time.monotonic() < deadline:
             time.sleep(1)
         assert inspect_health("archiver") == "healthy", "archiver did not come back healthy"
+
+
+TA9 = "NYX-TA9"
+_Z = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def next_ta9_window(hours: int) -> tuple[datetime, datetime]:
+    """`hours` whole UTC hours of NYX-TA9 history that nothing has covered yet: from six days ago,
+    or the hour after the last stored TA9 frame. A backfill behind earlier TA9 frames would be
+    DUP_OR_LATE (R2-14), so a used-up stack cannot be backfilled again."""
+    now = datetime.now(UTC)
+    start = hour_of(now - timedelta(days=6))
+    last = rows("select max(t_onboard) as t from telemetry where vehicle=%s", TA9)[0]["t"]
+    if last is not None:
+        start = max(start, hour_of(last) + HOUR)
+    end = start + hours * HOUR
+    if end > now - HOUR:
+        raise RuntimeError(
+            "NYX-TA9 backfill window exhausted: this stack's TA9 history is used up (use a "
+            "fresh stack volume; never `down -v` a stack that holds data you need)"
+        )
+    return start, end
+
+
+def backfill_ta9(t_from: datetime, t_to: datetime, *args: str) -> str:
+    """`gs-sim backfill` in a one-off simulator container; returns its stdout."""
+    out = compose(
+        "run", "--rm", "-T", "--no-deps", "simulator", "gs-sim", "backfill",
+        "--vehicle", TA9, "--from", t_from.strftime(_Z), "--to", t_to.strftime(_Z), *args,
+    )  # fmt: skip
+    return out.stdout

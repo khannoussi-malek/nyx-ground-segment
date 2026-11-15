@@ -85,11 +85,11 @@ services:
       REDIS_URL: "redis://ingest:${REDIS_INGEST_PW}@redis:6379/0"
       DATABASE_URL: "postgresql://gs_app:${GS_APP_PASSWORD}@db:5432/gs"
       CONSUMER_NAME: ingest-1
-      VEHICLES: "NYX-TA1,NYX-TA2"
+      VEHICLES: "NYX-TA1,NYX-TA2,NYX-TA9"   # TA9: backfill only (D-ENG-16), no live frames
       MISSION_DB: /mission
       BIND_HOST: "0.0.0.0"
       HEALTH_PORT: "8081"
-      INGEST_HOMES: "ingest-1=NYX-TA1,ingest-2=NYX-TA2"
+      INGEST_HOMES: "ingest-1=NYX-TA1,ingest-2=NYX-TA2,ingest-1=NYX-TA9"
       STEAL_IDLE_MS: "${STEAL_IDLE_MS:-30000}"
       RECLAIM_IDLE_MS: "${RECLAIM_IDLE_MS:-30000}"
       GS_TEST_HOOKS: "${GS_TEST_HOOKS:-0}"

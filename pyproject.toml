@@ -18,7 +18,7 @@ dependencies = [
 
 [project.scripts]
 gs-migrate = "gs.common.migrate:main"
-gs-sim = "gs.simulator.main:main"
+gs-sim = "gs.simulator.cli:main"
 gs-ingest = "gs.ingest.main:main"
 gs-api = "gs.api.server:main"
 gs-archiver = "gs.archiver.main:main"

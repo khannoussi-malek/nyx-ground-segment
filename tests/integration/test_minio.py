@@ -89,18 +89,24 @@ def test_archiver_cannot_create_buckets() -> None:
 
 
 def test_archiver_is_denied_admin_operations() -> None:
-    """`mc admin user list` as the archiver (its own credentials, inside the minio container)."""
-    cmd = (
-        "export MC_CONFIG_DIR=/tmp/mc-arch; "
-        'mc alias set arch http://127.0.0.1:9000 archiver "$ARCH_PW" >/dev/null && '
-        "mc admin user list arch"
+    """`mc` as the archiver, inside the minio container: the alias step must succeed (valid
+    credentials, so only the policy can refuse) and the admin call itself must be denied."""
+    env = ["-e", f"ARCH_PW={dotenv()['S3_ARCHIVER_SECRET']}", "-e", "MC_CONFIG_DIR=/tmp/mc-arch"]
+
+    def run(cmd: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["docker", "compose", "exec", "-T", *env, "minio", "bash", "-c", cmd],
+            capture_output=True, text=True,
+        )  # fmt: skip
+
+    alias = run('mc alias set arch http://127.0.0.1:9000 archiver "$ARCH_PW"')
+    assert alias.returncode == 0, alias.stderr  # the credentials work: a denial below is policy
+    admin = run("mc admin user list arch")
+    assert admin.returncode != 0
+    assert (
+        "denied" in (admin.stdout + admin.stderr).lower() or "not allowed" in admin.stderr.lower()
     )
-    r = subprocess.run(
-        ["docker", "compose", "exec", "-T", "-e", f"ARCH_PW={dotenv()['S3_ARCHIVER_SECRET']}",
-         "minio", "bash", "-c", cmd],
-        capture_output=True, text=True,
-    )  # fmt: skip
-    assert r.returncode != 0 and "denied" in (r.stdout + r.stderr).lower()
+    assert run("mc ls arch/archive/t/").returncode == 0  # control: an allowed call succeeds
 
 
 def test_init_rerun_keeps_policy() -> None:

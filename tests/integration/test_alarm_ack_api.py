@@ -565,3 +565,15 @@ async def test_escalate_then_rtn_in_one_held_batch_superseded(
         rid = request(v, uuid.UUID(str(a["alarm_id"])))
         await until(lambda: settled(v), 10)
     assert status(v) == {rid: ("superseded", CHANGED)}
+
+
+async def test_ack_right_after_rtn_applies() -> None:  # 0d24090 re-review, item 2
+    v, base = vid(), now() - timedelta(minutes=1)
+    aid = await red_alarm(v, base)
+    async with owned(v):
+        await asyncio.sleep(ACK_PROPAGATION_S + 0.2)  # past the takeover's stamp
+        produce_values(v, NOMINAL5, base=base, start_seq=10)
+        await until(lambda: any(m["alarm"]["last"]["kind"] == "RTN" for m in alarm_msgs(v)), 5)
+        rid = request(v, aid)  # an RTN is no news an ACK could hide
+        await until(lambda: settled(v), 3)
+    assert status(v) == {rid: ("applied", None)}

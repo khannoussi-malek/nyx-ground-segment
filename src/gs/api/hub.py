@@ -184,9 +184,10 @@ class Hub:
                 if time.monotonic() >= next_poll:  # also before the first XREAD
                     next_poll = time.monotonic() + HB_S
                     await self._poll_processing()
-                    if self._resnap:  # at most one per HB_S, however many were rejected
+                    # at most one per HB_S, however many were rejected; kept until one is built
+                    if self._resnap and (frame := await self._snapshot_frame()) is not None:
                         self._resnap = False
-                        await self._broadcast_snapshot()
+                        self.broadcast(frame)
                 read = await self._xread(last_id, stop)
                 if read is None:
                     return

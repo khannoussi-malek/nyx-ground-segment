@@ -91,8 +91,9 @@ class Ctx:
     csets: dict[str, CompiledSet] = field(default_factory=dict)  # set_sha256 -> compiled
     # cmd_tracker_errors, interface_mismatch (D-CMD-05, D-ING-27; /healthz reports both)
     counters: Counter[str] = field(default_factory=Counter)
-    # vehicle -> alarm -> when its state was last published, database clock (P-pf42b: ACK
-    # margins count from the publish); ponytail: never pruned, one entry per alarm shown
+    # vehicle -> alarm -> when news an ACK must not hide (a RAISE/ESCALATE, or any late state)
+    # reached the consoles, database clock (P-pf42b: margins count from the publish); pruned
+    # to the open alarms at each stamp
     shown: dict[str, dict[UUID, datetime]] = field(default_factory=dict)
 
 
@@ -160,12 +161,21 @@ def _links(events: Sequence[GroundEvent], vs: VehicleState) -> list[Link]:
 
 
 async def _stamp_shown(
-    ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, ids: set[UUID]
+    ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, ids: set[UUID], vs: VehicleState
 ) -> None:
     """After a successful publish: these alarms are on screen from now (a slow commit or
-    publish moves the ACK margin with it, P-pf42b)."""
+    publish moves the ACK margin with it, P-pf42b). Closed alarms are dropped."""
     if ids:
-        ctx.shown.setdefault(vehicle, {}).update(dict.fromkeys(ids, await db_now(conn)))
+        open_ids = {a.alarm_id for a in vs.engine.alarms.values()}
+        t = await db_now(conn)
+        kept = {a: at for a, at in ctx.shown.get(vehicle, {}).items() if a in open_ids}
+        ctx.shown[vehicle] = {**kept, **dict.fromkeys(ids & open_ids, t)}
+
+
+def _news(outs: Sequence[Outcome]) -> set[UUID]:
+    """Alarms an in-time publish shows a RAISE/ESCALATE for; an RTN or ACK is no news an ACK
+    could hide, and stamping it would supersede an ACK right after it."""
+    return {t.alarm_id for o in outs for t in o.transitions if t.kind in ("RAISE", "ESCALATE")}
 
 
 def _shown_now(msgs: Sequence[UiMessage], vs: VehicleState) -> set[UUID]:
@@ -284,7 +294,7 @@ async def _process(
     msgs = await _ui(conn, nvs, inserted, outs, params)
     try:
         await publish_ui(ctx.redis, msgs)
-        await _stamp_shown(ctx, conn, vehicle, _shown_now(msgs, nvs))
+        await _stamp_shown(ctx, conn, vehicle, _news(outs), nvs)
         msgs = []
         ctx.hooks.fire("after_publish_before_ack")
         if entries:  # an ACK-only pass has nothing to ack
@@ -494,7 +504,6 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
     vs, reset = await load_state(ctx, conn, vehicle)
     # committed but not yet published; kept across a Redis error (P-pf9). Starts with D-UI-18
     unsent: list[UiMessage] = [Resync(vehicle=vehicle), *_links(reset, vs)]
-    # ponytail: never pruned; an entry per alarm whose RAISE/ESCALATE was published late
     ready, backoff, was_down = False, BACKOFF_START_S, False
     claim_idle: int | None = 0  # XAUTOCLAIM min-idle while draining; None = read new entries
     cursor = "0-0"
@@ -513,7 +522,7 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
         try:
             if unsent:  # the first pass after load_state, or a pass after a Redis error
                 await publish_ui(ctx.redis, unsent)
-                await _stamp_shown(ctx, conn, vehicle, _shown_now(unsent, vs))
+                await _stamp_shown(ctx, conn, vehicle, _shown_now(unsent, vs), vs)
                 unsent = []
             if not ready:
                 await _ensure_group(ctx.redis, stream)

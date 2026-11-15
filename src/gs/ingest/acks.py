@@ -49,8 +49,8 @@ async def pending_acks(
 ) -> list[AckReq]:
     """Pending requests of `vehicle`, oldest first, each with whether the ACK may cover what the
     operator did not see (P-pf42/42b): a RAISE/ESCALATE processed later than ACK_PROPAGATION_S
-    before the request, or `shown` (alarm -> when its held RAISE/ESCALATE message was finally
-    published, database clock) later than that."""
+    before the request, or `shown` (alarm -> when a RAISE/ESCALATE, or any held or post-takeover
+    state, of it was last published; database clock) later than that."""
     cur = await conn.execute(
         "SELECT q.request_id, q.alarm_id, a.param, q.by_user, q.note, q.requested_at,"
         " EXISTS (SELECT 1 FROM alarm_events e WHERE e.alarm_id = q.alarm_id"

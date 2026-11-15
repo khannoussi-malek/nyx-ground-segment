@@ -198,3 +198,23 @@ async def test_every_rejected_entry_restores_with_a_snapshot(live_api: LiveApi) 
         await s.next_of("snapshot", timeout=4)
         later = [k for k, _ in s.seen[n:]]
     assert "link" not in later  # the event row is written once per schema version
+
+
+async def test_rejected_entry_snapshot_retried_after_a_db_error(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # 0d24090 re-review, item 1: the flag survives an unreachable database
+    h = hub(live_api)
+    real, left = h.snapshot, [1]
+
+    async def flaky() -> Any:
+        if left[0]:
+            left[0] -= 1
+            raise psycopg.OperationalError("test: database down")
+        return await real()
+
+    async with sse(live_api) as s:
+        await s.next_of("ground")
+        monkeypatch.setattr(h, "snapshot", flaky)
+        xadd_data("ui:events", '{"kind":"no-such-kind"}')
+        await s.next_of("snapshot", timeout=5)
+    assert left == [0]

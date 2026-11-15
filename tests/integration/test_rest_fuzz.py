@@ -1,6 +1,5 @@
-"""Schemathesis spike (D-EXT-18, R17 F2): fuzz the ASGI app against its own OpenAPI document.
-Not part of the gate (marker `spike`); Task 29 turns it into the CI check. Run it with
-`uv run pytest -m spike tests/integration/test_rest_fuzz.py -q`."""
+"""Schemathesis (D-EXT-18, R17 F2): fuzz the ASGI app against its own OpenAPI document.
+Part of the CI `test` job; alone: `uv run pytest tests/integration/test_rest_fuzz.py -q -s`."""
 
 import collections
 import dataclasses
@@ -25,8 +24,6 @@ from gs.api.auth import hash_password
 from tests.support.env import vid
 from tests.support.http import CLIENT_HEADERS, api_settings
 
-pytestmark = pytest.mark.spike
-
 FUZZ_USER, FUZZ_PW = "fuzz", "fuzz-test-password"  # never fc1/fc2: the login limit (P-pf8, P-pf18)
 _users = Path(tempfile.mkdtemp()) / "users.yaml"
 _users.write_text(yaml.safe_dump({"users": {FUZZ_USER: hash_password(FUZZ_PW)}}))
@@ -34,7 +31,7 @@ app = create_app(dataclasses.replace(api_settings(_users), vehicles=(vid(),)))
 # the app's lifespan is run by schemathesis itself (once per process)
 schema: Any = schemathesis.openapi.from_asgi("/openapi.json", app)  # Any: stubs are partial
 # POST /api/commands would reach a real vehicle path; only a vid() target is allowed on the
-# test stack, and the fuzzer cannot promise that, so the spike leaves the operation out
+# test stack, and the fuzzer cannot promise that, so the check leaves the operation out
 schema = schema.exclude(method="POST", path="/api/commands")
 
 

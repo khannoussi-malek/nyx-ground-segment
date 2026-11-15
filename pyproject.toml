@@ -46,8 +46,6 @@ plugins = ["pydantic.mypy"]
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration", "tests/meta"]
 asyncio_mode = "auto"
-addopts = "-m 'not spike'"  # spikes run on demand: pytest -m spike (D-EXT-18)
-markers = ["spike: exploratory tool trial, not part of the gate"]
 pythonpath = ["."]
 
 [dependency-groups]

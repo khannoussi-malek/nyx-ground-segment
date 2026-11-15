@@ -18,6 +18,7 @@ export function AckDialog({ alarm, mission, opener, onDone, onCancel }: {
   const [note, setNote] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const inFlight = useRef(false); // two submits in one task send once
   useEffect(() => {
     const d = ref.current;
     if (d && !d.open) d.showModal();
@@ -28,9 +29,13 @@ export function AckDialog({ alarm, mission, opener, onDone, onCancel }: {
   }, [opener]);
   async function submit(e: FormEvent) {
     e.preventDefault();
+    // a programmatic submit must not get past what the disabled button enforces
+    if (inFlight.current || note.trim() === "") return;
+    inFlight.current = true;
     setBusy(true);
     setError("");
     const r = await ackAlarm(alarm.alarm_id, requestId, note.trim());
+    inFlight.current = false;
     setBusy(false);
     if (r.ok) onDone(r.status, requestId);
     else setError(r.message);

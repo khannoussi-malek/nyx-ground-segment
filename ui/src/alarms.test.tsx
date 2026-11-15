@@ -246,3 +246,23 @@ test("a vehicle filter whose alarms are all gone resets instead of hiding everyt
   act(() => ingest(store, "alarm", { kind: "alarm", alarm: alarmView({ alarm_id: "a2", vehicle: "NYX-TA2", state: "CLEARED" }) }));
   expect(rows()).toEqual(["a1", "a3"]);
 });
+
+test("a submit that bypasses the disabled button still needs a note, and two submits send once", async () => {
+  mount();
+  let release!: (r: Response) => void;
+  const f = vi.fn(() => new Promise<Response>((res) => (release = res)));
+  vi.stubGlobal("fetch", f);
+  act(() => ackButton("a1")!.click());
+  const form = host.querySelector("dialog form") as HTMLFormElement;
+  await act(async () => form.requestSubmit()); // blank note
+  typeNote("   ");
+  await act(async () => form.requestSubmit()); // blank after trimming
+  expect(f).not.toHaveBeenCalled();
+  typeNote("seen");
+  await act(async () => {
+    form.requestSubmit();
+    form.requestSubmit();
+  });
+  expect(f).toHaveBeenCalledTimes(1);
+  await act(async () => release(new Response(JSON.stringify({ request_id: "r", status: "pending" }), { status: 202 })));
+});

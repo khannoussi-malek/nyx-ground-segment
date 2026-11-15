@@ -20,7 +20,7 @@ from typing import NamedTuple
 import psycopg
 
 from gs.common.time import iso_z
-from perf.stats import after_warmup, p95, write_csv
+from perf.stats import after_warmup, ci_text, verdict_of, write_csv
 
 DURATION_S = 600
 STEP_EVERY_S, STEP_S, STEP_VALUE = 5.0, 1.0, 31.0  # cabin_temp_c red_high is 30
@@ -56,10 +56,12 @@ def verdict(
     head = f"- **{name}**: "
     if not samples_ms:
         return head + "NO SAMPLES (FAIL)"
-    p = p95(samples_ms)
-    ok = p <= limit_ms and (expected_n is None or len(samples_ms) == expected_n)
-    text = f"{head}n = {len(samples_ms)}, p95 = {p:.1f} ms against {limit_ms:g} ms: "
-    text += "**PASS**" if ok else "**FAIL**"
+    v = verdict_of(samples_ms, limit_ms)
+    ok = v.passed and (expected_n is None or len(samples_ms) == expected_n)
+    text = f"{head}n = {len(samples_ms)}, p95 = {v.p95:.1f} ms ({ci_text(v)}) "
+    text += f"against {limit_ms:g} ms: " + ("**PASS**" if ok else "**FAIL**")
+    if v.marginal:
+        text += " **MARGINAL** (the limit lies inside the CI)"
     if expected_n is not None and len(samples_ms) != expected_n:
         text += f" (expected {expected_n} samples, got {len(samples_ms)}: INCOMPLETE series)"
     if excluded is not None:
@@ -186,8 +188,10 @@ def _summary(
         "laptop cannot keep them apart (D-PERF-08).\n"
         "- The 10 s warmup exclusion applies to the ingest series only; the other series have no "
         "warmup rule.\n"
-        "- Not in this run, Gate 4: the p95 confidence interval from pooled samples (D-PERF-10) "
-        "and the takeover-window samples (D-PERF-07). Percentiles here are point values.\n"
+        "- Every p95 carries its rank-based 95% confidence interval (D-PERF-10, Le Boudec ranks) "
+        "from the pooled raw samples; the CI exists from n = 120, smaller series say so. "
+        "MARGINAL: the limit lies inside the CI. A pass is the point p95 under the limit.\n"
+        "- Not in this run, Gate 4: the takeover-window samples (D-PERF-07).\n"
         "- Screen latency is `age_ms` (API, VM clock) plus `paint_ms` (browser clock, double "
         "rAF heuristic); localhost socket transit is left out (D-PERF-02).\n"
         "- Reproduce: `make perf`. Raw samples: ingest.csv, alarm.csv, ui.csv, query.csv.\n"

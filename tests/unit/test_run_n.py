@@ -53,8 +53,9 @@ def test_warmup_is_only_mentioned_where_it_applies() -> None:
 def test_summary_text_scopes_warmup_and_names_gate_4_items() -> None:
     ctx = {"spec": "x", "digests": "d", "load_before": "0", "load_after": "1"}
     text = _summary(Path("run-n-2026-11-15"), ctx, ["- r"], 120, None)
-    assert "ingest series only" in text and "D-PERF-10" in text and "D-PERF-07" in text
-    assert "Gate 4" in text and "INCOMPLETE" not in text
+    assert "ingest series only" in text and "D-PERF-07" in text and "Gate 4" in text
+    assert "INCOMPLETE" not in text and "confidence interval" in text
+    assert "Percentiles here are point values" not in text
     assert "INCOMPLETE RUN: boom" in _summary(Path("r"), ctx, [], 3, "boom")
 
 
@@ -110,3 +111,13 @@ def test_a_browser_that_ignores_terminate_is_killed() -> None:
     ui = FakePopen(hangs=True)
     _guard(ui, lambda: None)
     assert ui.calls == ["terminate", "wait(30)", "kill", "wait(None)"]
+
+
+def test_summary_prints_ci_and_small_n_text() -> None:
+    xs = [float(i) for i in range(1, 121)]  # p95 114, CI 109..120
+    big = verdict("alarm ALM-05, all steps", xs, 115.0, expected_n=120)
+    assert "95% CI [109.0, 120.0])" in big and "MARGINAL" in big and "**PASS**" in big
+    clear = verdict("alarm", xs, 300.0, expected_n=120)
+    assert "MARGINAL" not in clear
+    small = verdict("alarm ALM-05, first 20", [1.0] * 20, 300.0)
+    assert "n too small for a two-sided CI" in small and "MARGINAL" not in small

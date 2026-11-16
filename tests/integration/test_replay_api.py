@@ -7,10 +7,12 @@ from collections.abc import AsyncIterator, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 import httpx
 import psycopg
 import pytest
+from psycopg_pool import PoolTimeout
 
 from gs.api import replays
 from gs.archiver.hours import HOUR, hour_of, object_key
@@ -26,7 +28,6 @@ from tests.support.env import until, vid
 from tests.support.http import CLIENT_HEADERS, FC2_PW, login
 from tests.support.pg import admin_dsn
 from tests.support.s3 import s3_client
-from tests.support.sse import publish_tm, sse
 
 pytestmark = pytest.mark.usefixtures("archiver_paused")
 H = hour_of(datetime.now(UTC)) - timedelta(hours=40)
@@ -212,12 +213,103 @@ async def test_idle_replay_expires(live_api: LiveApi, monkeypatch: pytest.Monkey
         assert (await c.get(f"/api/replays/{rid}/events")).status_code == 404
 
 
-async def test_hub_drops_vehicles_outside_api_vehicles(live_api: LiveApi) -> None:
-    outside = vid()  # not in the API's VEHICLES (stands in for NYX-TA9)
-    async with sse(live_api) as s:
-        await s.next_of("snapshot")
-        publish_tm(outside, seq=1)
-        publish_tm(live_api.vehicle, seq=2)
-        while (await s.next_of("tm"))[1]["vehicle"] != live_api.vehicle:
-            pass
-    assert {d["vehicle"] for k, d in s.seen if k == "tm"} == {live_api.vehicle}
+def _live_msg(kind: str, v: str | None) -> dict[str, Any]:
+    t = H.isoformat()
+    last = {"key": "k", "kind": "RAISE", "t": t, "alert": True, "by_user": "system", "note": None,
+            "check_kind": None, "level": None, "value": None}  # fmt: skip
+    alarm = {"alarm_id": str(uuid4()), "vehicle": v, "param": "cabin_temp_c", "state": "UNACK",
+             "severity": "RED", "level": "RED", "value": 1.0, "trigger_check": "limits",
+             "limits_sha256": "a", "set_sha256": "b", "opened_at": t, "closed_at": None,
+             "last": last, "ack_request": None}  # fmt: skip
+    cmd = {"cmd_id": str(uuid4()), "vehicle": v, "name": "vent_cabin", "args": {},
+           "hazardous": True,
+           "reason": None, "issued_by": "fc1", "state": "QUEUED", "failure_reason": None,
+           "queued_at": t, "sent_at": None, "received_at": None, "verified_at": None,
+           "failed_at": None, "late_verified_at": None, "late_ack_at": None,
+           "late_ack_accepted": None, "outcome": None}  # fmt: skip
+    return {
+        "alarm": {"kind": "alarm", "alarm": alarm},
+        "cmd": {"kind": "cmd", "command": cmd},
+        "link": {"kind": "link", "event": {"key": "e", "vehicle": v, "kind": "LOS",
+                                           "t_onboard": t, "details": {}}},
+        "resync": {"kind": "resync", "vehicle": v},
+    }[kind]  # fmt: skip
+
+
+async def _through_hub(live: LiveApi, msg: dict[str, Any]) -> list[bytes]:
+    hub = live.app.state.hub
+    client_ = hub.subscribe()
+    try:
+        await hub._handle("1-0", json.dumps(msg))
+        await hub._handle("2-0", json.dumps(_live_msg("link", None)))  # ground event: sentinel
+        return [client_.queue.get_nowait() for _ in range(client_.queue.qsize())]
+    finally:
+        hub.unsubscribe(client_)
+
+
+@pytest.mark.parametrize("kind", ["alarm", "cmd", "link", "resync"])
+async def test_hub_drops_other_vehicles_on_every_arm(live_api: LiveApi, kind: str) -> None:
+    outside, inside = vid(), live_api.vehicle  # `outside` stands in for NYX-TA9
+    assert [f.split(b"\n")[0] for f in await _through_hub(live_api, _live_msg(kind, outside))] == [
+        b"event: link"  # only the ground sentinel
+    ]
+    got = await _through_hub(live_api, _live_msg(kind, inside))
+    # an own-vehicle message passes (a resync becomes a snapshot, or nothing without the database)
+    assert len(got) >= (1 if kind == "resync" else 2)
+
+
+async def test_503_when_archive_store_down(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    v = vehicle()
+    hot_hour(v, H, n=20, rate_hz=1.0)
+    async with app_conn() as conn:
+        await archive_and_delete(conn, v, H)
+
+    async def down(*_: Any) -> bytes:
+        raise ConnectionRefusedError("minio down")
+
+    monkeypatch.setattr("gs.archiver.window.get", down)
+    async with client(live_api) as c:
+        r = await c.post("/api/replays", json=body(v))
+    assert r.status_code == 503 and r.json()["error"] == "UNAVAILABLE"
+    assert registry(live_api) == {}
+
+
+async def test_503_when_database_down(live_api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    def down(*_: Any, **__: Any) -> Any:
+        raise PoolTimeout("no connection")
+
+    monkeypatch.setattr(live_api.app.state.pool, "connection", down)
+    async with client(live_api) as c:
+        r = await c.post("/api/replays", json=body(vehicle()))
+    assert r.status_code == 503 and r.json()["error"] == "UNAVAILABLE"
+    assert registry(live_api) == {}
+
+
+async def test_mid_stream_failure_ends_the_stream(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    v = vehicle()
+    for h in (H, H + HOUR):
+        hot_hour(v, h, n=20, rate_hz=1.0)
+    async with app_conn() as conn:
+        for h in (H, H + HOUR):
+            await archive_and_delete(conn, v, h)
+    async with client(live_api) as c:
+        rid = await create(c, body(v, H, H + HOUR + SPAN))
+        calls = 0
+
+        async def second_fails(*a: Any) -> bytes:
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                raise ConnectionResetError("minio went away")
+            return await real_get(*a)
+
+        monkeypatch.setattr("gs.archiver.window.get", second_fails)
+        async with c.stream("GET", f"/api/replays/{rid}/events", timeout=20) as r:
+            got = [f async for f in frames(r)]
+    assert got[0][0] == "replay_start" and "replay_end" not in [k for k, _ in got]
+    assert [k for k, _ in got].count("tm") == 20  # the first hour was served
+    await until(lambda: registry(live_api) == {}, 1)

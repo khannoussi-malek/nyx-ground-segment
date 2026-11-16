@@ -64,56 +64,60 @@ export function AlarmList({ store, mission, user }: { store: Store; mission: Mis
   );
   return (
     <section className="alarms" aria-label="Alarms">
-      <h2>Alarms</h2>
-      <div className="filters">
-        {select("Vehicle", vehicle, setVehicle, vehicles)}
-        {select("Severity", severity, setSeverity, ["RED", "YELLOW"])}
-        {select("State", state, setState, ["UNACK", "ACKED", "RTN_UNACK"])}
+      <div className="pane-head">
+        <h2>Alarms</h2>
+        <div className="filters">
+          {select("Vehicle", vehicle, setVehicle, vehicles)}
+          {select("Severity", severity, setSeverity, ["RED", "YELLOW"])}
+          {select("State", state, setState, ["UNACK", "ACKED", "RTN_UNACK"])}
+        </div>
       </div>
       {shown.length === 0 ? (
         <p className="empty" role="status">{empty}</p>
       ) : (
-        <table>
-          <thead>
-            <tr>
-              {["Severity", "Vehicle", "Parameter", "Alarm", "Limits and set", "Opened (UTC)", "State", "Action"].map((h) => (
-                <th key={h} scope="col">{h}</th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {shown.map((a) => {
-              const status = ackStatus(a);
-              return (
-                <tr key={a.alarm_id} data-alarm-id={a.alarm_id} data-severity={a.severity} data-state={a.state}>
-                  <th scope="row">
-                    <Glyph kind={a.severity === "RED" ? "red" : "yellow"} />
-                    {a.severity}
-                  </th>
-                  <td>{a.vehicle}</td>
-                  <td>{(mission && Object.hasOwn(mission.parameters, a.param) && mission.parameters[a.param].description) || a.param}</td>
-                  <td className="text">{alarmText(a, mission)}</td>
-                  <td className="hash">{hashText(a)}</td>
-                  <td><time dateTime={a.opened_at}>{utcClock(a.opened_at)}</time></td>
-                  <td>{STATE_TEXT[a.state]}</td>
-                  <td>
-                    {status && <span className="ack-status">{status.text}</span>}
-                    {changedIds.has(a.alarm_id) && <span className="ack-status" role="status">{CHANGED}</span>}
-                    {(a.state === "UNACK" || a.state === "RTN_UNACK") && (
-                      <button
-                        disabled={status?.pending || !live(a.vehicle)}
-                        aria-label={`Acknowledge ${a.vehicle} ${a.param}`}
-                        onClick={(e) => openDialog(a, e.currentTarget)}
-                      >
-                        ACK
-                      </button>
-                    )}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+        <div className="scroll">
+          <table>
+            <thead>
+              <tr>
+                {["Severity", "Vehicle", "Parameter", "Alarm", "Limits and set", "Opened (UTC)", "State", "Action"].map((h) => (
+                  <th key={h} scope="col">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {shown.map((a) => {
+                const status = ackStatus(a);
+                return (
+                  <tr key={a.alarm_id} data-alarm-id={a.alarm_id} data-severity={a.severity} data-state={a.state}>
+                    <th scope="row">
+                      <Glyph kind={a.severity === "RED" ? "red" : "yellow"} />
+                      {a.severity}
+                    </th>
+                    <td>{a.vehicle}</td>
+                    <td>{(mission && Object.hasOwn(mission.parameters, a.param) && mission.parameters[a.param].description) || a.param}</td>
+                    <td className="text">{alarmText(a, mission)}</td>
+                    <td className="hash">{hashText(a)}</td>
+                    <td><time dateTime={a.opened_at}>{utcClock(a.opened_at)}</time></td>
+                    <td>{STATE_TEXT[a.state]}</td>
+                    <td>
+                      {status && <span className="ack-status">{status.text}</span>}
+                      {changedIds.has(a.alarm_id) && <span className="ack-status" role="status">{CHANGED}</span>}
+                      {(a.state === "UNACK" || a.state === "RTN_UNACK") && (
+                        <button
+                          disabled={status?.pending || !live(a.vehicle)}
+                          aria-label={`Acknowledge ${a.vehicle} ${a.param}`}
+                          onClick={(e) => openDialog(a, e.currentTarget)}
+                        >
+                          ACK
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
       {acking && (
         <AckDialog

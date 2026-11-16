@@ -24,13 +24,13 @@ vi.mock("uplot/dist/uPlot.min.css", () => ({}));
 
 class FakeRO {
   static all: FakeRO[] = [];
-  constructor(public cb: (e: { contentRect: { width: number } }[]) => void) {
+  constructor(public cb: (e: { contentRect: { width: number; height?: number } }[]) => void) {
     FakeRO.all.push(this);
   }
   observe() {}
   disconnect() {}
-  resize(width: number) {
-    act(() => this.cb([{ contentRect: { width } }]));
+  resize(width: number, height?: number) {
+    act(() => this.cb([{ contentRect: { width, height } }]));
   }
 }
 
@@ -91,6 +91,21 @@ test("a resize refetches with the new width and resizes the plot; a width outsid
   FakeRO.all[0]!.resize(5000);
   await settle();
   expect(urls(f).at(-1)!.searchParams.get("width")).toBe("4000");
+});
+
+test("the plot fills its pane's height; a height-only change resizes the plot without refetching", async () => {
+  const f = stubBuckets();
+  act(() => root.render(<Chart vehicle="NYX-TA1" param="cabin_pressure_kpa" />));
+  FakeRO.all[0]!.resize(800, 180);
+  await flush();
+  expect(made.plots[0]!.opts.height).toBe(180);
+  FakeRO.all[0]!.resize(800, 300);
+  await settle();
+  expect(made.plots[0]!.setSize).toHaveBeenLastCalledWith({ width: 800, height: 300 });
+  expect(f).toHaveBeenCalledTimes(1);
+  FakeRO.all[0]!.resize(800, 20); // a squeezed pane still gets a readable plot
+  await settle();
+  expect(made.plots[0]!.setSize).toHaveBeenLastCalledWith({ width: 800, height: 64 });
 });
 
 test("a zero-width container asks for nothing", async () => {

@@ -260,3 +260,16 @@ test("the report lists its parameters in mission-db order (jsonb reorders keys),
   const order = [...host.querySelectorAll(".report tbody th")].map((th) => th.textContent);
   expect(order).toEqual(["cabin_pressure_kpa", "cabin_temp_c", "o2_pct", "legacy", "zz"]);
 });
+
+test("in the narrow side pane the action sits next to the name, and a long UTC time may wrap after its T", async () => {
+  server([sessionView({ id: 2, name: "pass 1", started_at: "2026-11-14T10:00:00Z", ended_at: "2026-11-14T10:10:00Z" })]);
+  mount();
+  await flush();
+  const heads = [...host.querySelectorAll("thead th")].map((th) => th.textContent);
+  expect(heads.slice(0, 2)).toEqual(["Session", "Report"]);
+  const cells = rows()[0]!.children;
+  expect(cells[1]!.querySelector("button")!.textContent).toBe("Report");
+  const started = rows()[0]!.querySelector("time")!;
+  expect(started.textContent).toBe("2026-11-14T10:00:00.000Z"); // the text is unchanged (D-UI-13)
+  expect(started.innerHTML).toContain("T<wbr>");
+});

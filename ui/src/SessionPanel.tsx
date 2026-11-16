@@ -5,7 +5,14 @@ import { formatValue, sortedEntries } from "./format";
 import type { Store } from "./store";
 import { utcClock, utcIso } from "./time";
 
-const MAY_NOT_HAVE_COMPLETED = "May not have completed – check the session list before trying again";
+/** The full UTC time, allowed to wrap after its T in the narrow side pane; the text itself is unchanged (D-UI-13). */
+const wrapIso = (t: string) => {
+  const s = utcIso(t);
+  const i = s.indexOf("T") + 1;
+  return i > 0 ? <>{s.slice(0, i)}<wbr />{s.slice(i)}</> : s;
+};
+
+const MAY_NOT_HAVE_COMPLETED ="May not have completed – check the session list before trying again";
 type View = { id: number; state: "loading" } | { id: number; state: "error"; message: string } | { id: number; state: "done"; result: ReportResult };
 
 /** Mission-db order like the live table (the report's jsonb reorders keys), unknown ids after, sorted. */
@@ -152,33 +159,35 @@ export function SessionPanel({ store, mission }: { store: Store; mission: Missio
       ) : sessions.length === 0 ? (
         <p className="empty">No sessions yet</p>
       ) : (
-        <table>
-          <thead>
-            <tr>{["Session", "Vehicle", "Started (UTC)", "Ended (UTC)", "Conductor", "Report"].map((h) => <th key={h} scope="col">{h}</th>)}</tr>
-          </thead>
-          <tbody>
-            {sessions.map((s) => (
-              <tr key={s.id} data-session-id={s.id} data-active={s.ended_at === null || undefined}>
-                <th scope="row">{s.name}</th>
-                <td>{s.vehicle}</td>
-                <td><time dateTime={s.started_at}>{utcIso(s.started_at)}</time></td>
-                <td>{s.ended_at ? <time dateTime={s.ended_at}>{utcIso(s.ended_at)}</time> : "active"}</td>
-                <td>{s.conductor}</td>
-                <td>
-                  {s.ended_at === null ? (
-                    <button type="button" disabled={busy} onClick={() => void act(() => stopSession(s.id), (x) => void openReport(x.id))}>
-                      Stop {s.name}
-                    </button>
-                  ) : (
-                    <>
-                      <button type="button" onClick={() => void openReport(s.id)}>Report</button>
-                    </>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="scroll">
+          <table>
+            <thead>
+              <tr>{["Session", "Report", "Vehicle", "Started (UTC)", "Ended (UTC)", "Conductor"].map((h) => <th key={h} scope="col">{h}</th>)}</tr>
+            </thead>
+            <tbody>
+              {sessions.map((s) => (
+                <tr key={s.id} data-session-id={s.id} data-active={s.ended_at === null || undefined}>
+                  <th scope="row">{s.name}</th>
+                  <td>
+                    {s.ended_at === null ? (
+                      <button type="button" disabled={busy} onClick={() => void act(() => stopSession(s.id), (x) => void openReport(x.id))}>
+                        Stop {s.name}
+                      </button>
+                    ) : (
+                      <>
+                        <button type="button" onClick={() => void openReport(s.id)}>Report</button>
+                      </>
+                    )}
+                  </td>
+                  <td>{s.vehicle}</td>
+                  <td><time dateTime={s.started_at}>{wrapIso(s.started_at)}</time></td>
+                  <td>{s.ended_at ? <time dateTime={s.ended_at}>{wrapIso(s.ended_at)}</time> : "active"}</td>
+                  <td>{s.conductor}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       {view?.state === "loading" && <p role="status">Loading the report…</p>}
       {view?.state === "error" && <p role="alert">{view.message}</p>}

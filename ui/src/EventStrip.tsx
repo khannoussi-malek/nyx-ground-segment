@@ -13,7 +13,7 @@ export function EventStrip({ store }: { store: Store }) {
       {events.length === 0 ? (
         <p className="empty" role="status">{wired ? "No events" : "Waiting for the first snapshot…"}</p>
       ) : (
-        <ol>
+        <ol className="scroll">
           {events.map((e) => {
             const line = eventText(e, events);
             return (

@@ -130,7 +130,7 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
       {spec && <p className="desc">{spec.description}{spec.hazardous && <strong> – hazardous: {spec.hazard}</strong>}</p>}
       {error && <p role="alert">{error}</p>}
       {note && <p role="status">{note}</p>}
-      <ul className="command-list">
+      <ul className="command-list scroll">
         {commands.slice(0, SHOWN).map((c) => (
           <li key={c.cmd_id} data-cmd-id={c.cmd_id} data-state={c.state}>
             <strong>{c.vehicle}</strong> {cmdLabel(c.name, c.args)}

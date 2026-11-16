@@ -54,11 +54,11 @@ export function ParamRow({ vehicle, seq, tOnboard, p }: { vehicle: string; seq: 
   const acq = acqMark(state.acq);
   const badge = limitBadge(state);
   const g = p.limits ? gaugeOf(p.limits, p.value) : null;
-  // one tbody per parameter: name + value, then the full-width gauge; the state tints both rows
+  // one tbody per parameter, one line: name, value, gauge (fits the one-screen console); the state tints the row
   return (
     <tbody data-level={p.state?.level} data-acq={p.state?.acq}>
       <tr>
-        <th scope="row">
+        <th scope="row" title={p.id}>
           <span className="label">{p.label || p.id}</span>
           {p.label && <span className="pid">{p.id}</span>}
           {(badge || acq) && (
@@ -82,14 +82,14 @@ export function ParamRow({ vehicle, seq, tOnboard, p }: { vehicle: string; seq: 
           <span className="num">{formatValue(p.value)}</span>
           {p.unit && <span className="unit">{p.unit}</span>}
         </td>
-      </tr>
-      {g && (
-        <tr className="gauge-row">
-          <td colSpan={2}>
+        {g ? (
+          <td className="gauge-cell">
             <GaugeBar g={g} live={fillsZone(p.state) ? p.state! : null} />
           </td>
-        </tr>
-      )}
+        ) : (
+          <td />
+        )}
+      </tr>
     </tbody>
   );
 }

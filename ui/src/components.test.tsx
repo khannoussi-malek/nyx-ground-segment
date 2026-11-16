@@ -44,16 +44,25 @@ test("a live RED shows a filled badge with the design's words", () => {
   expect(html).toMatch(/class="badge" data-tone="red">.*RED LOW<\/span>/);
 });
 
+test("the parameter id is also the row header's title, so it stays readable when a state mark takes its line", () => {
+  expect(row(cabin)).toContain('<th scope="row" title="cabin_pressure_kpa">');
+});
+
 test("a STALE value keeps its last limit as 'was' and says STALE", () => {
   const html = row({ ...cabin, state: { acq: "STALE", level: "RED", side: "LOW" } });
   expect(html).toMatch(/data-tone="was">.*was RED LOW/);
   expect(html).toMatch(/class="acq">.*STALE/);
 });
 
-test("one parameter = one tbody: name and value on top, the full-width gauge row under it", () => {
+test("one parameter = one tbody with one row: name, value, then the gauge in the same line", () => {
   const html = row(cabin);
-  expect(html).toMatch(/^<table><tbody><tr>.*<\/tr><tr class="gauge-row"><td colSpan="2">/);
+  expect(html).toMatch(/^<table><tbody><tr><th scope="row"[^>]*>.*<\/th><td class="value".*<\/td><td class="gauge-cell"><div class="gauge"/);
   expect(html.match(/<tbody/g)).toHaveLength(1);
+  expect(html.match(/<tr/g)).toHaveLength(1);
+});
+
+test("a parameter without limits keeps an empty third cell, so the columns of a card line up", () => {
+  expect(row({ ...cabin, limits: undefined })).toMatch(/<\/td><td><\/td><\/tr>/);
 });
 
 test("the gauge: grey zones, pointer at the value, the red limits printed, hidden from screen readers", () => {

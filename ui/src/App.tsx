@@ -116,7 +116,7 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
   const running = useRunning(ctx);
   const { beeps, lastTone } = useAudio(store, ctx, running);
   return (
-    <div data-beeps={beeps} data-last-tone={lastTone}>
+    <div className="console" data-beeps={beeps} data-last-tone={lastTone}>
       <header>
         <h1>Nyx</h1>
         <SoundBadge ctx={ctx} running={running} onArm={setCtx} />

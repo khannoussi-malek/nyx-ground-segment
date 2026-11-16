@@ -8,7 +8,8 @@ import type { Limits } from "./gauge";
 import type { Store } from "./store";
 import { utcClock } from "./time";
 
-const HEIGHT = 220;
+const HEIGHT = 220; // when the container gives no height (stacked layout, tests)
+const MIN_HEIGHT = 64; // a squeezed pane still gets a plot with its axes
 export const RESIZE_DEBOUNCE_MS = 200;
 const RIGHT_PAD = 44; // room for the red limit numbers outside the plot
 
@@ -31,24 +32,31 @@ export function Chart({ vehicle, param, unit, limits }: { vehicle: string; param
   limitsRef.current = limits;
   const [win, setWin] = useState<WindowKey>("2 min");
   const [width, setWidth] = useState(0);
+  const [height, setHeight] = useState(HEIGHT);
   const [error, setError] = useState("");
   const [data, setData] = useState<uPlot.AlignedData>(EMPTY);
 
-  // the plot's width follows its container
+  // the plot follows its container: the width drives the request, the height only the plot
   useEffect(() => {
     const el = host.current;
     if (!el) return;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let first = true;
     const ro = new ResizeObserver((entries) => {
-      const w = Math.round(entries[0]?.contentRect.width ?? 0);
+      const box = entries[0]?.contentRect;
+      const w = Math.round(box?.width ?? 0);
       if (w <= 0) return;
+      const h = box?.height ? Math.max(MIN_HEIGHT, Math.round(box.height)) : HEIGHT;
+      const apply = () => {
+        setWidth(w);
+        setHeight(h);
+      };
       clearTimeout(timer);
       // the first measurement starts the chart at once; a window being dragged refetches once it settles
       if (first) {
         first = false;
-        setWidth(w);
-      } else timer = setTimeout(() => setWidth(w), RESIZE_DEBOUNCE_MS);
+        apply();
+      } else timer = setTimeout(apply, RESIZE_DEBOUNCE_MS);
     });
     ro.observe(el);
     return () => {
@@ -89,12 +97,12 @@ export function Chart({ vehicle, param, unit, limits }: { vehicle: string; param
     const el = host.current;
     if (!el || width === 0) return;
     if (plot.current) {
-      plot.current.setSize({ width, height: HEIGHT });
+      plot.current.setSize({ width, height });
       return;
     }
-    plot.current = new uPlot(options(width, param, unit, limitsRef), data, el);
+    plot.current = new uPlot(options(width, param, unit, limitsRef, height), data, el);
     // eslint-disable-next-line react-hooks/exhaustive-deps -- created once; data is pushed by the next effect
-  }, [width]);
+  }, [width, height]);
   useEffect(() => plot.current?.setData(data), [data]);
   useEffect(() => () => {
     plot.current?.destroy();
@@ -115,12 +123,12 @@ export function Chart({ vehicle, param, unit, limits }: { vehicle: string; param
 }
 
 /** uPlot options. Exported for the tests. */
-export function options(width: number, param: string, unit: string | undefined, limits: { current: Limits | undefined }): uPlot.Options {
+export function options(width: number, param: string, unit: string | undefined, limits: { current: Limits | undefined }, height = HEIGHT): uPlot.Options {
   const ink = css("--ink", "#0E0E0E");
   const band = css("--zone-base", "#ECE9E5");
   return {
     width,
-    height: HEIGHT,
+    height,
     padding: [8, RIGHT_PAD, 0, 0],
     legend: { show: false },
     cursor: { drag: { x: false, y: false } },

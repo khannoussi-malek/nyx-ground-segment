@@ -5,10 +5,11 @@ One page for the person at the console. All times are UTC and end in `Z`, for ex
 ## Read the console
 ![The console during a cabin leak: the RED LOW cabin pressure alarm on NYX-TA1 at the top of the alarm list](img/console-leak.png)
 
-- One row per parameter and vehicle. A value is grey when nominal; colour, text and a glyph appear only for YELLOW or RED. A RED badge on a row that is also stale shows the last limit as "was RED LOW".
-- Next to a value you may see a freshness mark: **STALE** (older than 2 s), **FROZEN** (all analog values identical for 2 s or more) or **NO DATA** (no value yet). No mark means fresh.
+- The whole console fits one screen from 1280×720 up: alarms across the top, the two vehicle cards with the chart under them, commands and sessions on the right, events at the bottom. A long list scrolls inside its own pane. Drag a pane's bottom-right corner to make it taller; the page then grows and scrolls.
+- One row per parameter and vehicle: name, value, then the limit gauge. A value is grey when nominal; colour, text and a glyph appear only for YELLOW or RED. A RED badge on a row that is also stale shows the last limit as "was RED LOW".
+- Under a parameter's name (in place of its id, which stays in the hover text) you may see a freshness mark: **STALE** (older than 2 s), **FROZEN** (all analog values identical for 2 s or more) or **NO DATA** (no value yet). No mark means fresh.
 - An alarm row says in words why it fired (for example "YELLOW - RATE FALLING -0.40 kPa/s (limit 0.15)") and shows two 8-character hash prefixes. They identify the limits file and the whole mission database that were live when it fired; quote them when you report a limit question.
-- The event strip under the table lists lost frames, LOS and AOS (acquisition of signal), sequence resets and mission-db changes, newest first.
+- The event strip at the bottom lists lost frames, LOS and AOS (acquisition of signal), sequence resets and mission-db changes, newest first.
 
 ## Banners and tones
 Banners follow one order, highest first: **NO LIVE CONNECTION** (this browser lost the server) > **GROUND PROCESSING DOWN** (the ground software does not process that vehicle; **GROUND PROCESSING DOWN – BROKER** on every vehicle when the data broker is down) > **LOSS OF SIGNAL** (no frame for 2 s while the ground is healthy; it clears when the vehicle's signal is acquired again) > **FROZEN** > **STALE**. While a higher banner shows, trust nothing below it: no RED can be raised.

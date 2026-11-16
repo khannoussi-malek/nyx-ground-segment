@@ -10,7 +10,9 @@ OK = re.compile(r"^(feat|fix|refactor|docs|test|chore|perf|ci|merge)(\([^)]+\))?
 
 
 ATTRIBUTION = re.compile(
-    r"^co-authored-by:|\b(claude|anthropic)\b|generated (with|by)|\bAI[- ](generated|assisted)\b",
+    r"^co-authored-by:|\b(claude|anthropic)\b|generated (with|by)|\bAI[- ](generated|assisted)\b"
+    r"|\b(written|authored|created|drafted|made|co-?written)\s+(with|by)\s+(an?\s+)?"
+    r"(ai|chatgpt|gpt[-\w.]*|copilot|gemini|llm|codex|cursor)\b",
     re.IGNORECASE | re.MULTILINE,
 )
 

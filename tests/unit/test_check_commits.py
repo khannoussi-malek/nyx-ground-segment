@@ -86,3 +86,23 @@ def test_mentioning_claude_fails_and_a_clean_body_passes(
         cwd=tmp_path, check=True, capture_output=True,
     )  # fmt: skip
     assert c.main("HEAD~2") == 1
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        "Written by ChatGPT",
+        "authored by AI",
+        "Authored by an AI assistant",
+        "Created with Copilot",
+        "drafted by GPT-4",
+        "Co-written with an LLM",
+    ],
+)
+def test_explicit_ai_authorship_phrases_are_attributed(body: str) -> None:
+    assert c.attributed([f"docs: x\n\n{body}"]) == ["docs: x"]
+
+
+@pytest.mark.parametrize("body", ["Written by hand.", "Authored by the team.", "Created with make"])
+def test_human_authorship_phrases_pass(body: str) -> None:
+    assert c.attributed([f"docs: x\n\n{body}"]) == []

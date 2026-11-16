@@ -180,8 +180,11 @@ async def refreeze(
 ) -> SessionReport | ReportConflict | Literal["gone"] | None:
     """D-DB-10, T4-m: rebuild an incomplete stored report (None: no such session). Never creates
     the first freeze; refuses a complete one, and one whose archived hours were hot-deleted (the
-    rows it would count are gone). Runs in the caller's transaction; the row lock serialises
-    concurrent refreezes."""
+    rows it would count are gone). Must be the first operation in the caller's transaction:
+    repeatable read keeps the archive check and aggregates on one snapshot if hot deletion
+    commits between them. The row lock prevents concurrent replacements; a stale concurrent
+    refreeze raises SerializationFailure for the caller to roll back."""
+    await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
     cur = await conn.execute(
         "SELECT report::text FROM session_report WHERE session_id = %s FOR UPDATE", (session_id,)
     )

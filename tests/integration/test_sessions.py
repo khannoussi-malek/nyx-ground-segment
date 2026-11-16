@@ -16,15 +16,15 @@ from psycopg_pool import AsyncConnectionPool
 
 from gs.api import dbguard, report
 from gs.api.app import create_app
-from gs.api.bodies import ReportConflict, SessionReport
+from gs.api.bodies import ReportConflict, SessionReport, SessionView
 from gs.api.sessions import _view
-from gs.common.missiondb import load_dir
+from gs.common.missiondb import MissionDb, load_dir
 from tests.support.env import vid
 from tests.support.http import CLIENT_HEADERS as H
 from tests.support.http import FC2_PW, api_settings, authed, login
 from tests.support.ingest import ensure_set
 from tests.support.mission import MISSION_DIR
-from tests.support.pg import app_dsn, audit_rows, insert_rows
+from tests.support.pg import app_dsn, audit_rows, insert_rows, owner_dsn
 
 
 @pytest.fixture
@@ -461,6 +461,82 @@ async def test_refreeze_still_incomplete_stays_incomplete(
     _frames(v, 20, extra_seq=1000)
     r = await c.post(f"/api/sessions/{sid}/report/refreeze")
     assert (r.status_code, r.json()["complete"], r.json()["frames"]) == (200, False, 70)
+
+
+@pytest.mark.parametrize("caller", ["route", "helper"])
+async def test_refreeze_keeps_hot_rows_when_delete_commits_after_archive_check(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch, caller: str
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    _frames(v, 20, extra_seq=1000)
+    hour = T0.replace(minute=0, second=0)
+    _sql(
+        "INSERT INTO archive_object (vehicle, hour, sha256, rows, verified_at, t_min, t_max)"
+        " VALUES (%s, %s, 'x', 70, now(), %s, %s)",
+        v, hour, T0, T0 + 49 * timedelta(milliseconds=100),
+    )  # fmt: skip
+    build = report.build_report
+
+    async def delete_then_build(
+        conn: psycopg.AsyncConnection,
+        s: SessionView,
+        mdb: MissionDb,
+        complete: bool,
+        now: datetime,
+    ) -> SessionReport:
+        # The archiver commits deletion + metadata together, between the check and aggregates.
+        with psycopg.connect(app_dsn("gs")) as archiver:
+            archiver.execute("DELETE FROM telemetry WHERE vehicle = %s", (v,))
+            archiver.execute(
+                "UPDATE archive_object SET hot_deleted_at = clock_timestamp() WHERE vehicle = %s",
+                (v,),
+            )
+        return await build(conn, s, mdb, complete, now)
+
+    monkeypatch.setattr(report, "build_report", delete_then_build)
+    try:
+        if caller == "route":
+            response = await c.post(f"/api/sessions/{sid}/report/refreeze")
+            assert response.status_code == 200, response.text
+            got = SessionReport.model_validate_json(response.text)
+        else:
+            async with (
+                await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as conn,
+                conn.transaction(),
+            ):
+                result = await report.refreeze(conn, sid, SET, "fc1", datetime.now(UTC))
+                assert isinstance(result, SessionReport)
+                got = result
+        assert (got.frames, got.parameters[P1].n, got.parameters[P1].avg) == (
+            70,
+            70,
+            20.214285714285715,
+        )
+        stored = (await c.get(f"/api/sessions/{sid}/report")).json()
+        assert stored["frames"] == 70
+        csv_response = await c.get(f"/api/sessions/{sid}/report.csv")
+        summary = next(
+            x for x in csv.DictReader(io.StringIO(csv_response.text)) if x["section"] == "summary"
+        )
+        assert summary["n"] == "70"
+        audit = [
+            r for r in audit_rows("REPORT_REFROZEN", "fc1") if r["details"]["session_id"] == sid
+        ]
+        assert len(audit) == 1 and audit[0]["details"]["frames"] == 70
+        with psycopg.connect(app_dsn("gs")) as check:
+            assert check.execute(
+                "SELECT count(*) FROM telemetry WHERE vehicle = %s", (v,)
+            ).fetchone() == (0,)
+            assert check.execute(
+                "SELECT hot_deleted_at IS NOT NULL FROM archive_object WHERE vehicle = %s", (v,)
+            ).fetchone() == (True,)
+        response = await c.post(f"/api/sessions/{sid}/report/refreeze")
+        assert (response.status_code, response.json()["error"]) == (410, "HOT_DATA_GONE")
+        assert (await c.get(f"/api/sessions/{sid}/report")).json() == stored
+    finally:
+        with psycopg.connect(owner_dsn("gs")) as cleanup:
+            cleanup.execute("DELETE FROM archive_object WHERE vehicle = %s", (v,))
 
 
 async def test_refreeze_complete_409(rep: tuple[httpx.AsyncClient, str]) -> None:

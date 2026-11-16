@@ -5,10 +5,16 @@ One page for the person at the console. All times are UTC and end in `Z`, for ex
 ## Read the console
 ![The console during a cabin leak: the RED LOW cabin pressure alarm on NYX-TA1 at the top of the alarm list](img/console-leak.png)
 
-- One row per parameter and vehicle. A value is grey when nominal; colour, text and a glyph appear only for YELLOW or RED. A RED badge on a row that is also stale shows the last limit as "was RED LOW".
-- Next to a value you may see a freshness mark: **STALE** (older than 2 s), **FROZEN** (all analog values identical for 2 s or more) or **NO DATA** (no value yet). No mark means fresh.
+- Not sure what a pane is for? Press the small **ⓘ** next to its title for a short note on what it shows and what you can do there; Esc or a click elsewhere closes it.
+- The top bar always shows the unacknowledged alarms (for example **2 RED · 1 YELLOW unacknowledged**); click it to jump to the alarm list.
+- Arrange the console your way: press **Edit layout** in the top bar, then drag a pane by its grip onto another, or use its arrow buttons; the double arrow switches it between full and half width, and its bottom-right corner sets its height (the pane beside it follows). **Done** locks the layout again; **Reset layout** brings back the default. The layout is kept in this browser only.
+- Click a parameter's name, in a vehicle card or an alarm row, to show it in the chart.
+- In the chart, hover to read the exact UTC time, value and the min/max at that point. Drag across the plot to zoom into that stretch; **−** / **+** or Ctrl/⌘ + scroll (a trackpad pinch) zoom out and in. **‹ Older** / **Newer ›**, Shift + scroll or a sideways swipe move back and forward in time; the range shows **HISTORY** and stops following the clock until you press **Live**. A plain scroll still scrolls the page.
+- Each long list (commands, sessions, events) scrolls inside its pane and has its own **Show** (vehicle) and **Search** filter.
+- One row per parameter and vehicle: name, value, then the limit gauge. A value is grey when nominal; colour, text and a glyph appear only for YELLOW or RED. A RED badge on a row that is also stale shows the last limit as "was RED LOW".
+- Under a parameter's name (in place of its id, which stays in the hover text) you may see a freshness mark: **STALE** (older than 2 s), **FROZEN** (all analog values identical for 2 s or more) or **NO DATA** (no value yet). No mark means fresh.
 - An alarm row says in words why it fired (for example "YELLOW - RATE FALLING -0.40 kPa/s (limit 0.15)") and shows two 8-character hash prefixes. They identify the limits file and the whole mission database that were live when it fired; quote them when you report a limit question.
-- The event strip under the table lists lost frames, LOS and AOS (acquisition of signal), sequence resets and mission-db changes, newest first.
+- The event list shows lost frames, LOS and AOS (acquisition of signal), sequence resets and mission-db changes, newest first.
 
 ## Banners and tones
 Banners follow one order, highest first: **NO LIVE CONNECTION** (this browser lost the server) > **GROUND PROCESSING DOWN** (the ground software does not process that vehicle; **GROUND PROCESSING DOWN – BROKER** on every vehicle when the data broker is down) > **LOSS OF SIGNAL** (no frame for 2 s while the ground is healthy; it clears when the vehicle's signal is acquired again) > **FROZEN** > **STALE**. While a higher banner shows, trust nothing below it: no RED can be raised.

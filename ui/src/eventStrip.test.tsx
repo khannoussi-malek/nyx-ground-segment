@@ -63,3 +63,29 @@ test("a vehicle tag tells apart two events whose text names no vehicle", () => {
   expect([...host.querySelectorAll(".tag")].map((t) => t.textContent)).toEqual(["NYX-TA2", "NYX-TA1"]);
   expect(host.querySelectorAll(".tag")).toHaveLength(2); // no tag where the text already starts with the vehicle
 });
+
+test("the event strip filters by vehicle and text; a filter that hides every line says so", () => {
+  const store = createStore();
+  const los = eventView("LOS/NYX-TA1/e/1", { kind: "LOS", vehicle: "NYX-TA1", t_onboard: "2026-11-14T14:03:12Z" });
+  const aos = eventView("AOS/NYX-TA2/e/1", { kind: "AOS", vehicle: "NYX-TA2", t_onboard: "2026-11-14T14:03:22Z", details: { lost_frames: 3 } });
+  ingest(store, "snapshot", snapshot([aos, los]));
+  act(() => root.render(<EventStrip store={store} />));
+  const field = (label: string) =>
+    [...host.querySelectorAll('[role="search"] label')].find((l) => l.textContent?.startsWith(label))!.querySelector("select, input") as HTMLSelectElement & HTMLInputElement;
+  const set = (el: HTMLSelectElement & HTMLInputElement, value: string) =>
+    act(() => {
+      const proto = el instanceof HTMLSelectElement ? HTMLSelectElement.prototype : HTMLInputElement.prototype;
+      Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(el, value);
+      el.dispatchEvent(new Event(el instanceof HTMLSelectElement ? "change" : "input", { bubbles: true }));
+    });
+  const kinds = () => [...host.querySelectorAll<HTMLElement>("li")].map((li) => li.dataset.kind);
+  expect(kinds()).toEqual(["AOS", "LOS"]);
+  set(field("Show"), "NYX-TA1");
+  expect(kinds()).toEqual(["LOS"]);
+  set(field("Show"), "");
+  set(field("Search"), "frames lost");
+  expect(kinds()).toEqual(["AOS"]);
+  set(field("Search"), "zzz");
+  expect(kinds()).toEqual([]);
+  expect(host.textContent).toContain("No events match the filter");
+});

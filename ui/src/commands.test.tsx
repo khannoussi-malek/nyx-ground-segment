@@ -579,3 +579,23 @@ test("a late answer from a natively closed dialog does not close the next one, a
   expect(host.querySelector("dialog")).not.toBeNull(); // the new dialog is untouched
   expect(host.querySelector('[role="status"]')!.textContent).toBe("vent_cabin (duration_s = 3) queued for NYX-TA2");
 });
+
+const filterField = (label: string) =>
+  [...host.querySelectorAll('[role="search"] label')].find((l) => l.textContent?.startsWith(label))!.querySelector("select, input") as HTMLSelectElement & HTMLInputElement;
+
+test("the command list filters by vehicle and text; a filter that hides every row says so", () => {
+  const store = mount();
+  act(() => ingest(store, "cmd", { kind: "cmd", command: commandView({ cmd_id: "a", vehicle: "NYX-TA1", state: "VERIFIED" }) }));
+  act(() => ingest(store, "cmd", { kind: "cmd", command: commandView({ cmd_id: "b", vehicle: "NYX-TA2", state: "FAILED", failure_reason: "REJECTED", failed_at: "2026-11-14T10:00:01Z" }) }));
+  const shown = () => [...host.querySelectorAll<HTMLElement>("li[data-cmd-id]")].map((li) => li.dataset.cmdId);
+  expect(shown().sort()).toEqual(["a", "b"]);
+  expect([...filterField("Show").options].map((o) => o.value)).toEqual(["", "NYX-TA1", "NYX-TA2"]);
+  set(filterField("Show"), "NYX-TA2");
+  expect(shown()).toEqual(["b"]);
+  set(filterField("Show"), "");
+  set(filterField("Search"), "verified");
+  expect(shown()).toEqual(["a"]);
+  set(filterField("Search"), "nothing like this");
+  expect(shown()).toEqual([]);
+  expect(host.textContent).toContain("No commands match the filter");
+});

@@ -13,7 +13,6 @@ from typing import Any
 import psycopg
 import redis.asyncio
 import redis.exceptions
-from minio.error import S3Error
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
@@ -142,9 +141,10 @@ async def _act(
 
 async def run_pass(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any]) -> PassResult:
     """One loop: scrub first, then plan from hot counts, archive rows and the unresolved corrupt
-    hours, then act: builds oldest first, deletes after them. An S3 error local to one hour's
-    object (job.object_local) fails that hour only; any other S3 error ends the pass at once (the
-    scrub runs before any delete, so no delete follows a MinIO outage: T4-q)."""
+    hours, then act: builds oldest first, deletes after them. S3 trouble local to one hour's
+    object (job.object_local) fails that hour only, other verified hours may still be deleted
+    (G4-18); any other S3 error ends the pass at once (the scrub runs before any delete, so no
+    delete follows a MinIO outage: T4-q as amended by G4-18)."""
     now = datetime.now(UTC)
     cur = await conn.execute(COUNTS)
     counts = {(v, h): int(n) for v, h, n in await cur.fetchall()}
@@ -158,7 +158,8 @@ async def run_pass(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any]) -> Pass
         for a in plan_pass(now, counts, rows, ctx.retention_h, corrupt):
             try:
                 ok = await _act(ctx, conn, a, rows)
-            except S3Error as e:
+                ctx.unreadable.discard((a.vehicle, a.hour))
+            except S3_ERRORS as e:
                 if not await object_local(ctx, a.vehicle, a.hour, e):
                     raise
                 ok = False
@@ -274,7 +275,7 @@ async def run(s: ArchiverSettings, stop: asyncio.Event) -> None:
         snap = box.snap
         return archiver_status(
             datetime.now(UTC), snap.db_ok, snap.redis_ok, snap.s3_ok, snap.oldest_unarchived,
-            snap.corrupt, len(ctx.refused), snap.last_pass,
+            snap.corrupt, ctx.degraded_hours(), snap.last_pass,
         )  # fmt: skip
 
     server = await serve_health(s.bind_host, s.health_port, status)

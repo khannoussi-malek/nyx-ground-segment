@@ -14,7 +14,7 @@ from gs.archiver.job import (  # noqa: F401  (corrupt_key: re-export)
     object_local,
 )
 from gs.archiver.plan import ArchiveRow, Key
-from gs.archiver.s3 import get
+from gs.archiver.s3 import S3_ERRORS, get
 
 SCRUB_K = 20
 _PICK = (
@@ -45,10 +45,11 @@ async def scrub_pass(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], k: in
         row = ArchiveRow(*r)
         try:
             found = await _found(ctx, row.vehicle, row.hour, row.version)
-        except S3Error as e:
+        except S3_ERRORS as e:
             if await object_local(ctx, row.vehicle, row.hour, e):
                 continue
             raise
+        ctx.unreadable.discard((row.vehicle, row.hour))
         if found != row.sha256:
             await flag_corrupt(conn, row, found)
         await conn.execute(

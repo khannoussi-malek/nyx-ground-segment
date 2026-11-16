@@ -70,6 +70,13 @@ class ArchiverCtx:
     refused: set[tuple[str, datetime]] = field(
         default_factory=set
     )  # hours whose hot delete was refused
+    unreadable: set[tuple[str, datetime]] = field(
+        default_factory=set
+    )  # hours whose object failed on its own last pass (object_local); cleared when it works
+
+    def degraded_hours(self) -> int:
+        """/healthz `delete_refused` (T4-c): refused deletes and hours with an unreadable object."""
+        return len(self.refused | self.unreadable)
 
 
 async def bucket_answers(ctx: ArchiverCtx) -> bool:
@@ -85,13 +92,15 @@ async def bucket_answers(ctx: ArchiverCtx) -> bool:
     return True
 
 
-async def object_local(ctx: ArchiverCtx, vehicle: str, hour: datetime, e: S3Error) -> bool:
-    """An S3 error answer about one hour's object while the bucket still answers is that hour's
-    trouble: logged, the hour counts as refused (/healthz degraded) and the pass goes on. False
-    (the caller re-raises, the pass stops, nothing more is deleted) when MinIO as a whole fails."""
+async def object_local(ctx: ArchiverCtx, vehicle: str, hour: datetime, e: BaseException) -> bool:
+    """Any S3 trouble (S3_ERRORS: an error answer, a 5xx after retries, a timeout, a cut stream) on
+    one hour's object while the bucket still lists is that hour's trouble: logged, marked
+    unreadable (/healthz degraded), and the pass goes on (G4-18: other verified hours may still be
+    deleted; every delete re-reads its own object first). False (the caller re-raises, the pass
+    stops, nothing more is deleted) when the listing fails too: MinIO as a whole is in trouble."""
     if not await bucket_answers(ctx):
         return False
-    ctx.refused.add((vehicle, hour))
+    ctx.unreadable.add((vehicle, hour))
     log.error(
         "archiver skipped %s %s this pass, S3 error on its object: %s", vehicle, hour, e,
         extra={"vehicle": vehicle, "hour": iso_z(hour)},

@@ -775,55 +775,83 @@ async def test_minio_down_pass_deletes_nothing(outage: Any) -> None:
             assert done[oldest] < done[older]  # the oldest due hour was built first
 
 
-def _broken(ctx: Any, monkeypatch: pytest.MonkeyPatch, method: str, key: str) -> None:
-    """`key` alone answers every `method` call with an S3 error (AccessDenied); the rest of the
-    bucket works."""
+def _error(kind: str, key: str) -> Exception:
+    """What one object's request raises: an S3 error answer, retries exhausted on a 503, a stream
+    cut mid-body, a read timeout."""
     import urllib3
+    from urllib3.exceptions import MaxRetryError, ProtocolError, ReadTimeoutError, ResponseError
 
+    pool = urllib3.HTTPConnectionPool("127.0.0.1")
+    match kind:
+        case "s3":
+            return S3Error(
+                urllib3.HTTPResponse(status=403), "AccessDenied", "Access Denied.", f"/{key}",
+                None, None, "archive", key,
+            )  # fmt: skip
+        case "503":
+            return MaxRetryError(pool, f"/{key}", ResponseError("too many 503 error responses"))
+        case "stream":
+            return ProtocolError("Connection broken: IncompleteRead(3 bytes read)")
+        case _:
+            return ReadTimeoutError(pool, f"/{key}", "Read timed out.")
+
+
+def _broken(ctx: Any, monkeypatch: pytest.MonkeyPatch, method: str, key: str, kind: str) -> None:
+    """`key` alone fails every `method` call with `_error(kind)`; the rest of the bucket works."""
     real = getattr(ctx.s3, method)
 
     def call(bucket: str, name: str, *a: Any, **k: Any) -> Any:
         if name == key:
-            raise S3Error(
-                urllib3.HTTPResponse(status=403), "AccessDenied", "Access Denied.", f"/{key}",
-                None, None, bucket, name,
-            )  # fmt: skip
+            raise _error(kind, key)
         return real(bucket, name, *a, **k)
 
     monkeypatch.setattr(ctx.s3, method, call)
 
 
-@pytest.mark.parametrize("where", ["scrub_get", "archive_put"])
+@pytest.mark.parametrize(
+    ("op", "kind"),
+    [("get", "s3"), ("get", "503"), ("get", "stream"), ("put", "s3"), ("put", "timeout")],
+)
 async def test_one_broken_object_fails_its_hour_and_later_hours_still_archive(
-    where: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    op: str, kind: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """Fix 2 item 2: a persistent S3 error on hour A's object (MinIO itself answers) fails only A;
-    the newer hour B archives in the same pass, A keeps its hot rows and /healthz is degraded."""
+    """Fix 2 item 2 / fix 3 I1: a persistent error on hour A's object (MinIO itself still lists)
+    fails only A: the newer hour B archives in the same pass and (G4-18) the verified delete-due
+    hour C is deleted; A keeps its hot rows, /healthz is degraded until A's object works again."""
     from gs.archiver.main import run_pass
     from gs.archiver.status import archiver_status
     from gs.common.time import iso_z
 
+    def state(ctx: Any) -> str:
+        now = datetime.now(UTC)
+        return archiver_status(now, True, True, True, None, 0, ctx.degraded_hours(), now)[0]
+
     v = vid()
-    a, b = H - HOUR, H
+    c_, a, b = H - 2 * HOUR, H - HOUR, H
     with archive_db() as db:
-        hot_hour(v, a, n=20, db=db)
-        hot_hour(v, b, n=20, db=db)
+        for h in (c_, a, b):
+            hot_hour(v, h, n=20, db=db)
         async with app_conn(db) as c:
-            if where == "scrub_get":  # A archived and delete-due: the scrub reads it first
+            assert await archive_hour(archiver_ctx(), c, v, c_) is not None  # verified, delete-due
+            if op == "get":  # A archived and delete-due: the scrub reads it first
                 assert await archive_hour(archiver_ctx(), c, v, a) is not None
             ctx = archiver_ctx(retention_h=0.0)
-            _broken(ctx, monkeypatch, where.split("_")[1] + "_object", object_key(v, a))
+            _broken(ctx, monkeypatch, op + "_object", object_key(v, a), kind)
             res = await run_pass(ctx, c)
-            assert not res.failed and res.archived == 1 and res.deleted == 0
-            assert [r["hour"] for r in archive_rows(v, db)] == ([a, b] if where[0] == "s" else [b])
-            assert stored_in(v, a, db) == 20 and stored_in(v, b, db) == 20
-            assert all(r["hot_deleted_at"] is None for r in archive_rows(v, db))
-            assert ctx.refused == {(v, a)}
-            now = datetime.now(UTC)
-            state, _ = archiver_status(now, True, True, True, None, 0, len(ctx.refused), now)
-            assert state == "degraded"
-    logged = [r for r in caplog.records if r.__dict__.get("hour") == iso_z(a)]
-    assert logged and logged[-1].__dict__["vehicle"] == v
+            assert not res.failed and (res.archived, res.deleted) == (1, 1)
+            assert [stored_in(v, h, db) for h in (c_, a, b)] == [0, 20, 20]
+            got = {r["hour"]: r for r in archive_rows(v, db)}
+            assert set(got) == ({c_, a, b} if op == "get" else {c_, b})
+            if op == "get":
+                assert got[a]["hot_deleted_at"] is None and got[a]["last_checked_at"] is None
+            assert ctx.unreadable == {(v, a)} and not ctx.refused and state(ctx) == "degraded"
+            logged = [r for r in caplog.records if r.__dict__.get("hour") == iso_z(a)]
+            assert logged and logged[-1].__dict__["vehicle"] == v
+
+            monkeypatch.undo()  # A's object works again: the next pass clears the mark
+            res = await run_pass(ctx, c)
+            assert not res.failed and not ctx.unreadable and state(ctx) == "ok"
+            assert archive_rows(v, db)[1]["hour"] == a
 
 
 async def test_run_pass_end_to_end() -> None:

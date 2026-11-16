@@ -14,6 +14,9 @@ from perf.run_p import DURATION_S, RATE_HZ
 
 TARGET_VEHICLES, TARGET_FPS = 10, 1000  # 10 vehicles x 100 Hz
 RESTART_S = 30.0  # outage a restarted worker must make up: this many seconds of target load
+CATCHUP_MAX_S = (
+    60.0  # ruling G4-16: "fast enough" = the backlog clears within this (capacity >= 1.5x load)
+)
 OUT = REPO / "docs" / "perf" / "scaling.md"
 
 
@@ -36,37 +39,64 @@ def catch_up_s(backlog_frames: float, capacity: float, load: float) -> float:
     return backlog_frames / (capacity - load) if capacity > load else math.inf
 
 
+def _rest(totals: Mapping[str, float]) -> tuple[float, float]:
+    return totals["redis_bytes_per_vehicle_hour"] * TARGET_VEHICLES / 1e6, totals["insert_ms"]
+
+
 def extrapolate(totals: Mapping[str, float]) -> Scaling:
-    cap = capacity_fps(totals["fps"], totals["cpu_fraction"])
+    cpu = totals["cpu_fraction"]
+    if not cpu > 0:  # no samples or an idle reading: nothing to extrapolate from
+        return Scaling(math.nan, math.nan, *_rest(totals), math.nan)
+    cap = capacity_fps(totals["fps"], cpu)
     return Scaling(
         cap,
         TARGET_FPS / cap,
-        totals["redis_bytes_per_vehicle_hour"] * TARGET_VEHICLES / 1e6,
-        totals["insert_ms"],
+        *_rest(totals),
         catch_up_s(RESTART_S * TARGET_FPS, cap, TARGET_FPS),
     )
 
 
+def _num(x: float, fmt: str) -> str:
+    return "not measured" if math.isnan(x) else format(x, fmt)
+
+
 def render(s: Scaling) -> str:
-    headroom = (
-        "Headroom: a restarted worker is fast enough to catch up with the missed and ongoing "
-        "load: "
-        f"{RESTART_S:.0f} s of backlog clears in {s.catch_up:.1f} s."
-        if math.isfinite(s.catch_up)
-        else "Capacity does not exceed the load, so a restarted worker never catches up "
-        "(metastable failure, Huang et al. 2022 p. 7): add workers before 10 vehicles."
+    if math.isnan(s.catch_up):
+        headroom = "Not measured: no usable worker CPU samples in the run."
+    elif s.catch_up <= CATCHUP_MAX_S:
+        headroom = (
+            "Headroom: a restarted worker is fast enough to catch up with the missed and "
+            f"ongoing load: {RESTART_S:.0f} s of backlog clears in {s.catch_up:.1f} s "
+            f"(limit {CATCHUP_MAX_S:.0f} s)."
+        )
+    else:
+        headroom = (
+            "Headroom: a restarted worker is not fast enough to catch up with the missed and "
+            f"ongoing load: {RESTART_S:.0f} s of backlog needs "
+            f"{'never' if math.isinf(s.catch_up) else f'{s.catch_up:.1f} s'} "
+            f"(limit {CATCHUP_MAX_S:.0f} s). If capacity does not exceed the load the backlog "
+            "never clears (metastable failure, Huang et al. 2022 p. 7): add workers."
+        )
+    headroom += (
+        f"\n\nModel: backlog = {RESTART_S:.0f} s of {TARGET_FPS} frames/s; capacity = one worker "
+        "at 100 % of a core; catch-up = backlog / (capacity - load); metastable when capacity "
+        "<= load."
     )
-    redis = "not measured" if math.isnan(s.redis_mb_hour) else f"{s.redis_mb_hour:.1f} MB/hour"
+    cpu = (
+        "not measured"
+        if math.isnan(s.cpu_at_target)
+        else f"{s.cpu_at_target * 100:.0f} % of one core"
+    )
+    cap = _num(s.capacity, ".0f")
     return (
         "# Scaling analysis (D-PERF-09)\n\n"
         f"Extrapolated linearly from run P ({len(VEHICLES)} vehicles x {RATE_HZ} Hz, "
         f"{DURATION_S} s) to {TARGET_VEHICLES} vehicles x {RATE_HZ} Hz = {TARGET_FPS} frames/s. "
         "No per-stage instrumentation (SR-06).\n\n"
         "| Quantity | At 1000 frames/s |\n|---|---|\n"
-        f"| Worker CPU | {s.cpu_at_target * 100:.0f} % of one core "
-        f"(capacity {s.capacity:.0f} frames/s) |\n"
-        f"| Redis growth | {redis} |\n"
-        f"| Ingest time p95 | {s.insert_ms:.1f} ms |\n\n"
+        f"| Worker CPU | {cpu} (capacity {cap} frames/s) |\n"
+        f"| Redis growth | {_num(s.redis_mb_hour, '.1f')} MB/hour |\n"
+        f"| Ingest time p95 | {_num(s.insert_ms, '.1f')} ms |\n\n"
         f"## Headroom\n\n{headroom}\n\n"
         "## First bottleneck and fix\n\n"
         "1. The engine per vehicle is single-threaded: split it by parameter group.\n"

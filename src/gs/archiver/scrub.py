@@ -7,7 +7,12 @@ import psycopg
 from minio.error import S3Error
 
 from gs.archiver.hours import object_key
-from gs.archiver.job import ArchiverCtx, corrupt_key, flag_corrupt  # noqa: F401  (re-export)
+from gs.archiver.job import (  # noqa: F401  (corrupt_key: re-export)
+    ArchiverCtx,
+    corrupt_key,
+    flag_corrupt,
+    object_local,
+)
 from gs.archiver.plan import ArchiveRow, Key
 from gs.archiver.s3 import get
 
@@ -32,18 +37,26 @@ async def _found(ctx: ArchiverCtx, vehicle: str, hour: Any, version: int) -> str
 
 async def scrub_pass(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], k: int = SCRUB_K) -> int:
     """Check up to `k` objects, oldest `last_checked_at` first; returns how many were checked. S3
-    trouble raises with that row's `last_checked_at` untouched."""
+    trouble raises with that row's `last_checked_at` untouched; an S3 error local to one object
+    (job.object_local) skips that row, unchecked, so it is first again next pass."""
     cur = await conn.execute(_PICK, (k,))
+    checked = 0
     for r in await cur.fetchall():
         row = ArchiveRow(*r)
-        found = await _found(ctx, row.vehicle, row.hour, row.version)
+        try:
+            found = await _found(ctx, row.vehicle, row.hour, row.version)
+        except S3Error as e:
+            if await object_local(ctx, row.vehicle, row.hour, e):
+                continue
+            raise
         if found != row.sha256:
             await flag_corrupt(conn, row, found)
         await conn.execute(
             "update archive_object set last_checked_at = clock_timestamp()"
             " where vehicle = %s and hour = %s", (row.vehicle, row.hour),
         )  # fmt: skip
-    return cur.rowcount
+        checked += 1
+    return checked
 
 
 _UNRESOLVED = (

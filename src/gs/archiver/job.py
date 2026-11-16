@@ -1,5 +1,6 @@
 """Archive one vehicle-hour: write, read back, compare bytes and rows, only then record it."""
 
+import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass, field
@@ -24,7 +25,7 @@ from gs.archiver.parquet import (
     sort_rows,
 )
 from gs.archiver.plan import ArchiveRow
-from gs.archiver.s3 import get, put
+from gs.archiver.s3 import S3_ERRORS, get, put
 from gs.common.hooks import Hooks
 from gs.common.time import iso_z
 from gs.ingest.events import GroundEvent, insert_events
@@ -69,6 +70,33 @@ class ArchiverCtx:
     refused: set[tuple[str, datetime]] = field(
         default_factory=set
     )  # hours whose hot delete was refused
+
+
+async def bucket_answers(ctx: ArchiverCtx) -> bool:
+    """MinIO lists the bucket (the health probe's request)."""
+
+    def listing() -> None:
+        list(ctx.s3.list_objects(ctx.bucket, prefix="healthz/"))
+
+    try:
+        await asyncio.to_thread(listing)
+    except S3_ERRORS:
+        return False
+    return True
+
+
+async def object_local(ctx: ArchiverCtx, vehicle: str, hour: datetime, e: S3Error) -> bool:
+    """An S3 error answer about one hour's object while the bucket still answers is that hour's
+    trouble: logged, the hour counts as refused (/healthz degraded) and the pass goes on. False
+    (the caller re-raises, the pass stops, nothing more is deleted) when MinIO as a whole fails."""
+    if not await bucket_answers(ctx):
+        return False
+    ctx.refused.add((vehicle, hour))
+    log.error(
+        "archiver skipped %s %s this pass, S3 error on its object: %s", vehicle, hour, e,
+        extra={"vehicle": vehicle, "hour": iso_z(hour)},
+    )  # fmt: skip
+    return True
 
 
 def _fail(vehicle: str, hour: datetime, why: str) -> None:

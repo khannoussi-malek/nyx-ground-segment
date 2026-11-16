@@ -743,7 +743,18 @@ def _dead_ctx() -> Any:
     )  # fmt: skip
 
 
-async def test_minio_down_pass_deletes_nothing() -> None:
+def _wrong_key_ctx() -> Any:  # MinIO answers, but every request gets an S3 error (not object-local)
+    from minio import Minio
+
+    env = dotenv()
+    return archiver_ctx(
+        s3=Minio(f"127.0.0.1:{env['MINIO_HOST_PORT']}", "archiver", "wrong-secret", secure=False,
+                 region="us-east-1")
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("outage", [_dead_ctx, _wrong_key_ctx], ids=["unreachable", "wrong_key"])
+async def test_minio_down_pass_deletes_nothing(outage: Any) -> None:
     from gs.archiver.main import run_pass
 
     v = vid()
@@ -753,7 +764,7 @@ async def test_minio_down_pass_deletes_nothing() -> None:
             hot_hour(v, h, n=20, db=db)
         async with app_conn(db) as c:
             assert await archive_hour(archiver_ctx(), c, v, old) is not None  # verified, delete due
-            res = await run_pass(_dead_ctx(), c)
+            res = await run_pass(outage(), c)
             assert res.failed and res.deleted == 0
             assert [stored_in(v, h, db) for h in (old, older, oldest)] == [20, 20, 20]
             assert [r["hour"] for r in archive_rows(v, db)] == [old]
@@ -762,6 +773,57 @@ async def test_minio_down_pass_deletes_nothing() -> None:
             done = {r["hour"]: r["verified_at"] for r in archive_rows(v, db)}
             assert set(done) == {old, older, oldest}
             assert done[oldest] < done[older]  # the oldest due hour was built first
+
+
+def _broken(ctx: Any, monkeypatch: pytest.MonkeyPatch, method: str, key: str) -> None:
+    """`key` alone answers every `method` call with an S3 error (AccessDenied); the rest of the
+    bucket works."""
+    import urllib3
+
+    real = getattr(ctx.s3, method)
+
+    def call(bucket: str, name: str, *a: Any, **k: Any) -> Any:
+        if name == key:
+            raise S3Error(
+                urllib3.HTTPResponse(status=403), "AccessDenied", "Access Denied.", f"/{key}",
+                None, None, bucket, name,
+            )  # fmt: skip
+        return real(bucket, name, *a, **k)
+
+    monkeypatch.setattr(ctx.s3, method, call)
+
+
+@pytest.mark.parametrize("where", ["scrub_get", "archive_put"])
+async def test_one_broken_object_fails_its_hour_and_later_hours_still_archive(
+    where: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Fix 2 item 2: a persistent S3 error on hour A's object (MinIO itself answers) fails only A;
+    the newer hour B archives in the same pass, A keeps its hot rows and /healthz is degraded."""
+    from gs.archiver.main import run_pass
+    from gs.archiver.status import archiver_status
+    from gs.common.time import iso_z
+
+    v = vid()
+    a, b = H - HOUR, H
+    with archive_db() as db:
+        hot_hour(v, a, n=20, db=db)
+        hot_hour(v, b, n=20, db=db)
+        async with app_conn(db) as c:
+            if where == "scrub_get":  # A archived and delete-due: the scrub reads it first
+                assert await archive_hour(archiver_ctx(), c, v, a) is not None
+            ctx = archiver_ctx(retention_h=0.0)
+            _broken(ctx, monkeypatch, where.split("_")[1] + "_object", object_key(v, a))
+            res = await run_pass(ctx, c)
+            assert not res.failed and res.archived == 1 and res.deleted == 0
+            assert [r["hour"] for r in archive_rows(v, db)] == ([a, b] if where[0] == "s" else [b])
+            assert stored_in(v, a, db) == 20 and stored_in(v, b, db) == 20
+            assert all(r["hot_deleted_at"] is None for r in archive_rows(v, db))
+            assert ctx.refused == {(v, a)}
+            now = datetime.now(UTC)
+            state, _ = archiver_status(now, True, True, True, None, 0, len(ctx.refused), now)
+            assert state == "degraded"
+    logged = [r for r in caplog.records if r.__dict__.get("hour") == iso_z(a)]
+    assert logged and logged[-1].__dict__["vehicle"] == v
 
 
 async def test_run_pass_end_to_end() -> None:

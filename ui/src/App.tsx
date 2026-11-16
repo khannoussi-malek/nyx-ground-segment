@@ -4,6 +4,7 @@ import { armAudio, beep, beepsFor, tone, toneActive, toneKeys, type ToneState } 
 import { sessionKeySet } from "./keySet";
 import { AlarmList, AlarmSummary } from "./AlarmList";
 import { Board, useLayout } from "./Board";
+import { PANE_HELP } from "./paneHelp";
 import { ChartPanel, type PlotPick } from "./Chart";
 import { CommandPanel } from "./CommandPanel";
 import { EventStrip } from "./EventStrip";
@@ -143,12 +144,12 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
         update={update}
         editing={editing}
         panes={{
-          alarms: { title: "Alarms", node: <AlarmList store={store} mission={mission} user={user} /> },
-          live: { title: "Vehicles", node: <main><LiveTable store={store} mission={mission} probe={probe} /></main> },
-          chart: { title: "Chart", node: <ChartPanel store={store} mission={mission} value={plot} onChange={setPlot} /> },
-          commands: { title: "Commands", node: <CommandPanel store={store} mission={mission} /> },
-          sessions: { title: "Sessions", node: <SessionPanel store={store} mission={mission} /> },
-          events: { title: "Events", node: <EventStrip store={store} /> },
+          alarms: { title: "Alarms", help: PANE_HELP.alarms, node: <AlarmList store={store} mission={mission} user={user} /> },
+          live: { title: "Vehicles", help: PANE_HELP.live, node: <main><LiveTable store={store} mission={mission} probe={probe} /></main> },
+          chart: { title: "Chart", help: PANE_HELP.chart, node: <ChartPanel store={store} mission={mission} value={plot} onChange={setPlot} /> },
+          commands: { title: "Commands", help: PANE_HELP.commands, node: <CommandPanel store={store} mission={mission} /> },
+          sessions: { title: "Sessions", help: PANE_HELP.sessions, node: <SessionPanel store={store} mission={mission} /> },
+          events: { title: "Events", help: PANE_HELP.events, node: <EventStrip store={store} /> },
         }}
       />
     </div>

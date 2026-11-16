@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { DEFAULT_LAYOUT, moveBefore, moveBy, parseLayout, setHeight, toggleWide, type Layout, type PaneId } from "./layout";
 
 export const LAYOUT_KEY = "nyx.layout.v1";
@@ -33,8 +33,9 @@ const EARLIER = "M10 3 5 8l5 5";
 const LATER = "M6 3l5 5-5 5";
 const WIDTH = "M1.5 8h13M4.5 5l-3 3 3 3M11.5 5l3 3-3 3";
 const GRIP = "M6 3.5h.01M10 3.5h.01M6 8h.01M10 8h.01M6 12.5h.01M10 12.5h.01";
+const INFO = "M8 1.75a6.25 6.25 0 1 0 0 12.5 6.25 6.25 0 0 0 0-12.5ZM8 7.25v4M8 4.75h.01";
 
-export type PaneDef = { title: string; node: ReactNode };
+export type PaneDef = { title: string; help: string; node: ReactNode };
 
 /** The console panes in the operator's order, each under its title. In edit mode (the top bar's Edit layout) each bar
  *  also has a grip to drag the pane onto another, buttons to move it with the keyboard and a full / half width
@@ -72,7 +73,8 @@ export function Board({ panes, layout, update, editing }: {
   return (
     <div ref={board} className="board" data-editing={editing || undefined}>
       {layout.order.map((id, i) => {
-        const { title, node } = panes[id];
+        const { title, help, node } = panes[id];
+        const anchor = `--help-${id}`; // the note opens under its own button (CSS anchor positioning; centred where unsupported)
         const height = layout.heights[id];
         return (
           <div
@@ -120,6 +122,14 @@ export function Board({ panes, layout, update, editing }: {
                 </span>
               )}
               <span className="pane-title" aria-hidden="true">{title}</span>
+              {/* a native popover: opens by click or keyboard, closes with Esc or a click outside */}
+              <button type="button" className="help" popoverTarget={`help-${id}`} aria-label={`About ${title}`} title={`About ${title}`} style={{ anchorName: anchor } as CSSProperties}>
+                <Icon d={INFO} />
+              </button>
+              <div id={`help-${id}`} popover="auto" className="help-note" style={{ positionAnchor: anchor } as CSSProperties}>
+                <strong>{title}</strong>
+                <p>{help}</p>
+              </div>
               {editing && (
                 <>
                   <button type="button" aria-label={`Move ${title} earlier`} title="Move earlier" disabled={i === 0} onClick={() => update((l) => moveBy(l, id, -1))}>

@@ -5,6 +5,7 @@ One page for the person at the console. All times are UTC and end in `Z`, for ex
 ## Read the console
 ![The console during a cabin leak: the RED LOW cabin pressure alarm on NYX-TA1 at the top of the alarm list](img/console-leak.png)
 
+- Not sure what a pane is for? Press the small **ⓘ** next to its title for a short note on what it shows and what you can do there; Esc or a click elsewhere closes it.
 - The top bar always shows the unacknowledged alarms (for example **2 RED · 1 YELLOW unacknowledged**); click it to jump to the alarm list.
 - Arrange the console your way: press **Edit layout** in the top bar, then drag a pane by its grip onto another, or use its arrow buttons; the double arrow switches it between full and half width, and its bottom-right corner sets its height (the pane beside it follows). **Done** locks the layout again; **Reset layout** brings back the default. The layout is kept in this browser only.
 - Click a parameter's name, in a vehicle card or an alarm row, to show it in the chart.

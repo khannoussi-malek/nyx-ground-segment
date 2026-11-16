@@ -20,7 +20,7 @@ afterEach(() => {
   host.remove();
 });
 
-const PANE_DEFS = Object.fromEntries(PANES.map((p) => [p, { title: p.toUpperCase(), node: <p className="body">{p}</p> }])) as Record<PaneId, { title: string; node: React.ReactNode }>;
+const PANE_DEFS = Object.fromEntries(PANES.map((p) => [p, { title: p.toUpperCase(), help: `what ${p} does`, node: <p className="body">{p}</p> }])) as Record<PaneId, { title: string; help: string; node: React.ReactNode }>;
 function Harness({ editing = true }: { editing?: boolean }) {
   const { layout, update, reset } = useLayout();
   return (
@@ -103,7 +103,7 @@ test("outside edit mode the panes keep their titles but offer no grip, move or w
   mount(false);
   expect(host.querySelector(".board")!.hasAttribute("data-editing")).toBe(false);
   expect(host.querySelectorAll(".pane-title")).toHaveLength(PANES.length);
-  expect(host.querySelector(".grip, .pane-bar button")).toBeNull();
+  expect(host.querySelector(".grip, .pane-bar button:not(.help)")).toBeNull(); // the info button stays
   mount(true);
   expect(host.querySelector(".board")!.getAttribute("data-editing")).toBe("true");
   expect(host.querySelectorAll(".grip")).toHaveLength(PANES.length);
@@ -125,4 +125,15 @@ test("drag and drop: a pane dropped on another takes its place, and the drop tar
   expect(order().slice(0, 3)).toEqual(["alarms", "events", "live"]);
   expect(host.querySelector("[data-drop]")).toBeNull();
   expect(fire(pane("chart"), "dragover").defaultPrevented).toBe(false); // nothing dragged: not a drop target
+});
+
+test("every pane has an info button, also outside edit mode, that opens a short note on what it does", () => {
+  mount(false);
+  for (const id of PANES) {
+    const b = host.querySelector<HTMLButtonElement>(`[data-pane="${id}"] button.help`)!;
+    expect(b.getAttribute("aria-label")).toBe(`About ${id.toUpperCase()}`);
+    const note = host.querySelector(`#${b.getAttribute("popovertarget")}`)!;
+    expect(note.getAttribute("popover")).toBe("auto");
+    expect(note.textContent).toContain(`what ${id} does`);
+  }
 });

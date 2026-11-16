@@ -99,3 +99,22 @@ test("the chart: hovering reads the value, a drag zooms into history, Older move
   await page.getByRole("button", { name: "Live" }).click();
   await expect(range).toContainText("LIVE");
 });
+
+test("every pane's info button opens a short note under it; Esc closes it; the keyboard reaches it", async ({ page }) => {
+  await page.getByRole("button", { name: "Done" }).click(); // the notes are there outside edit mode too
+  for (const title of ["Alarms", "Vehicles", "Chart", "Commands", "Sessions", "Events"]) {
+    await expect(page.getByRole("button", { name: `About ${title}` })).toBeVisible();
+  }
+  const info = page.getByRole("button", { name: "About Chart" });
+  await info.click();
+  const note = page.locator("#help-chart");
+  await expect(note).toBeVisible();
+  await expect(note).toContainText("Hover to read a value");
+  const [b, n] = [(await info.boundingBox())!, (await note.boundingBox())!];
+  expect(n.y).toBeGreaterThanOrEqual(b.y + b.height - 1); // opens under its button
+  await page.keyboard.press("Escape");
+  await expect(note).toBeHidden();
+  await info.focus();
+  await page.keyboard.press("Enter");
+  await expect(note).toBeVisible();
+});

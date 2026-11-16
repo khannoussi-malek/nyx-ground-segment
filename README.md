@@ -1,11 +1,11 @@
 # Nyx Ground Segment
 
-![The console during a cabin leak](docs/img/console.png)
+![The Nyx console](docs/img/console.png)
 
 ## What it is
 A ground segment for a test campaign: it ingests telemetry from two simulated test articles (NYX-TA1 and NYX-TA2, 10 Hz each, with fault injection), stores every frame once, classifies each value against limits with hysteresis and persistence, raises and tracks alarms with acknowledgement, sends commands with a confirmation and a 2 s interlock, runs test sessions with a frozen report, archives finished hours to verified Parquet files and replays them. Python backend, React + TypeScript console, everything in Docker Compose. Requirements are in [docs/requirements.md](docs/requirements.md), the design in [docs/design.md](docs/design.md).
 
-Status: Gate 4, test readiness: the archiver, replay, session re-freeze, alarm-quality metrics, test hooks and the performance runs. [CHANGELOG.md](CHANGELOG.md) says what is in per gate.
+Status: Gate 4, test readiness. In: the archiver, replay, session re-freeze, alarm-quality metrics and test hooks. Run P, the scaling analysis and the 2 h soak count are landing in this gate; their commands are documented in the ATP procedures. [CHANGELOG.md](CHANGELOG.md) says what is in per gate.
 
 ## Run
 Needs only Docker and make.

@@ -21,8 +21,15 @@ README_HEADINGS = [
     "Next steps",
 ]
 ATPS = ["ATP-01", "ATP-07", "ATP-08"]
-# Targets and files that other Gate 4 tasks and Gate 5 add; remove each when it lands.
-LANDING = {"soak", "perf-p", "docs/perf/scaling.md", "docs/atp-report.md"}
+# Things a doc names that other Gate 4 tasks (19-21) and Gate 5 add, per doc: "make <target>" or a
+# path. test_landing_entries_are_removed_when_they_land fails once an entry exists.
+LANDING = {
+    "README.md": {"docs/perf/scaling.md"},
+    "ATP-01.md": {"make soak", "docs/atp-report.md"},
+    "ATP-07.md": {"docs/atp-report.md"},
+    "ATP-08.md": {"make perf-p", "docs/perf/scaling.md", "docs/atp-report.md"},
+    "dev-guide.md": {"make perf-p", "make soak"},
+}
 DOCS = [REPO / "README.md", REPO / "CHANGELOG.md", *sorted((REPO / "docs/atp").glob("*.md"))]
 DOCS += [REPO / "docs/operator-guide.md", REPO / "docs/dev-guide.md"]
 
@@ -102,7 +109,8 @@ def test_atp07_retains_a_recent_hour_and_counts_frames_with_the_dropout() -> Non
 
 def test_atp01_soak_owns_the_sessions_and_states_the_quality_pass_rule() -> None:
     text = _atp("ATP-01")
-    assert "make soak" in text and "starts" in text
+    assert "make soak" in text
+    assert "starts a session on NYX-TA1 and one on NYX-TA2" in text
     assert "Start session" not in text  # a second start on a vehicle is refused (D-DB-07)
     assert "0 false raises" in text and "no chattering" in text
 
@@ -135,7 +143,7 @@ def test_readme_curl_bodies_are_valid_simulator_requests() -> None:
     assert dropout and json.loads(dropout[0])["params"] == {"duration_s": 10}
 
 
-def test_every_make_target_in_the_docs_exists_or_is_marked_in_progress() -> None:
+def test_every_make_target_in_the_docs_exists_or_is_landing() -> None:
     """`make x` in a code span must be a Makefile target (or one Tasks 19-21 are adding)."""
     targets = set(re.findall(r"^([a-z][\w-]*):", (REPO / "Makefile").read_text(), re.M))
     checked, bad = 0, []
@@ -143,13 +151,13 @@ def test_every_make_target_in_the_docs_exists_or_is_marked_in_progress() -> None
         for n, line in enumerate(doc.read_text().splitlines(), 1):
             for t in re.findall(r"`make ([a-z][\w-]*)", line):
                 checked += 1
-                if t not in targets and t not in LANDING:
+                if t not in targets and f"make {t}" not in LANDING.get(doc.name, set()):
                     bad.append(f"{doc.name}:{n}: make {t}")
     assert checked >= 8  # the check must not pass by finding nothing
     assert bad == []
 
 
-def test_documented_paths_exist_or_are_marked_in_progress() -> None:
+def test_documented_paths_exist_or_are_landing() -> None:
     """A `docs/...`, `scripts/...`, `src/...` or `perf/...` path in a code span must exist."""
     bad, checked = [], 0
     for doc in DOCS:
@@ -158,13 +166,50 @@ def test_documented_paths_exist_or_are_marked_in_progress() -> None:
                 if "*" in p or "<" in p:
                     continue
                 checked += 1
-                if not (REPO / p).exists() and p not in LANDING:
+                if not (REPO / p).exists() and p not in LANDING.get(doc.name, set()):
                     bad.append(f"{doc.name}:{n}: {p}")
     assert checked >= 8
     assert bad == []
 
 
-def test_documents_never_name_the_other_project() -> None:
-    for doc in DOCS[:-2]:  # the guides legitimately name the AOS event
+def test_readme_changelog_and_atps_do_not_mention_aos() -> None:
+    """The guides legitimately name the AOS event; the other documents must not use the word,
+    which was the name of a different project."""
+    docs = [REPO / "README.md", REPO / "CHANGELOG.md", *(REPO / "docs/atp").glob("*.md")]
+    for doc in docs:
         text = doc.read_text().replace("acquisition of signal", "")
         assert not re.search(r"\baos\b", text, re.I), doc
+
+
+def test_landing_entries_are_removed_when_they_land() -> None:
+    targets = set(re.findall(r"^([a-z][\w-]*):", (REPO / "Makefile").read_text(), re.M))
+    landed = [
+        f"{doc}: {e}"
+        for doc, entries in LANDING.items()
+        for e in entries
+        if (e.startswith("make ") and e[5:] in targets)
+        or (not e.startswith("make ") and (REPO / e).exists())
+    ]
+    assert landed == [], "remove these from LANDING, they exist now"
+    assert set(LANDING) <= {d.name for d in DOCS}
+
+
+def test_unbuilt_work_is_worded_as_landing_in_this_gate() -> None:
+    text = (REPO / "CHANGELOG.md").read_text() + (REPO / "README.md").read_text()
+    assert "landing in this gate" in text
+
+
+def test_atp07_counts_hot_rows_before_the_archiver_starts_and_names_the_crash_hour() -> None:
+    step = _atp("ATP-07").split("**Kill the archiver", 1)[1].split("\n5. ", 1)[0]
+    first_count = step.index("select count(*)")
+    start = step.index("GS_TEST_HOOKS=1 ARCHIVER_CRASH_AT")
+    assert step.index("gs-sim backfill") < first_count < start
+    assert step.count("select count(*)") >= 1 and "107900" in step  # 71900 + one full hour
+    assert "logs archiver" in step and "NYX-TA9" in step.split("logs archiver", 1)[1]
+    assert step.index("docker compose up -d --force-recreate archiver") > start
+
+
+def test_atp07_waits_for_ingest_before_the_archiver_pass_in_step_1() -> None:
+    text = _atp("ATP-07")
+    step1 = text.split("1. **Backfill", 1)[1].split("\n2. ", 1)[0]
+    assert "71900" in step1 and "select count(*)" in step1

@@ -16,6 +16,22 @@ const ALL = "ALL";
 const CHANGED = "Alarm changed – review it before acknowledging";
 
 /** Open alarms, sticky until CLEARED (a returned one stays until acknowledged), with the ACK request's own status. */
+/** Header line: the unacknowledged alarms by severity, always in view whatever the pane order; a click goes to the list. */
+export function AlarmSummary({ store, onClick }: { store: Store; onClick: () => void }) {
+  const alarms = useSyncExternalStore(store.subscribe, store.alarms, store.alarms);
+  const open = alarms.filter((a) => a.state !== "ACKED");
+  const red = open.filter((a) => a.severity === "RED").length;
+  const yellow = open.length - red;
+  const parts = [red && `${red} RED`, yellow && `${yellow} YELLOW`].filter(Boolean);
+  const tone = red ? "red" : yellow ? "yellow" : "nominal";
+  return (
+    <button type="button" className="alarm-summary" data-tone={tone} onClick={onClick}>
+      {tone !== "nominal" && <Glyph kind={tone} />}
+      {parts.length ? `${parts.join(" · ")} unacknowledged` : "No unacknowledged alarms"}
+    </button>
+  );
+}
+
 export function AlarmList({ store, mission, user }: { store: Store; mission: MissionDb | null; user: string }) {
   const alarms = useSyncExternalStore(store.subscribe, store.alarms, store.alarms);
   const link = useSyncExternalStore(store.subscribe, store.link, store.link);
@@ -94,7 +110,11 @@ export function AlarmList({ store, mission, user }: { store: Store; mission: Mis
                       {a.severity}
                     </th>
                     <td>{a.vehicle}</td>
-                    <td>{(mission && Object.hasOwn(mission.parameters, a.param) && mission.parameters[a.param].description) || a.param}</td>
+                    <td>
+                    <button type="button" className="plot-link" data-plot-vehicle={a.vehicle} data-plot-param={a.param} title="Show in the chart">
+                      {(mission && Object.hasOwn(mission.parameters, a.param) && mission.parameters[a.param].description) || a.param}
+                    </button>
+                  </td>
                     <td className="text">{alarmText(a, mission)}</td>
                     <td className="hash">{hashText(a)}</td>
                     <td><time dateTime={a.opened_at}>{utcClock(a.opened_at)}</time></td>

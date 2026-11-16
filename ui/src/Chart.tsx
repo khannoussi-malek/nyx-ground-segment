@@ -4,6 +4,7 @@ import "uplot/dist/uPlot.min.css";
 import { fetchBuckets, type MissionDb } from "./api";
 import { bucketMsFor, clampWidth, limitLabels, refreshMs, toSeries, WINDOWS, type Series, type WindowKey } from "./chartSeries";
 import { formatValue } from "./format";
+import { paramViews } from "./params";
 import type { Limits } from "./gauge";
 import type { Store } from "./store";
 import { utcClock } from "./time";
@@ -190,14 +191,20 @@ function drawLimits(u: uPlot, limits: Limits | undefined): void {
   ctx.restore();
 }
 
-/** Pick a vehicle and parameter; the limits come from the mission db. */
-export function ChartPanel({ store, mission }: { store: Store; mission: MissionDb | null }) {
+export type PlotPick = { vehicle: string; param: string };
+
+/** Pick a vehicle and parameter (or click one in a card or an alarm: the console owns the pick); the limits come
+ *  from the mission db. The picker names each parameter, in mission-db order. */
+export function ChartPanel({ store, mission, value, onChange }: {
+  store: Store;
+  mission: MissionDb | null;
+  value: PlotPick;
+  onChange: (p: PlotPick) => void;
+}) {
   const vehicles = useSyncExternalStore(store.subscribe, store.vehicles, store.vehicles);
-  const [v, setV] = useState("");
-  const [p, setP] = useState("");
-  const vehicle = vehicles.includes(v) ? v : (vehicles[0] ?? "");
-  const params = Object.keys(store.vehicle(vehicle)?.values ?? {}).sort();
-  const param = params.includes(p) ? p : (params[0] ?? "");
+  const vehicle = vehicles.includes(value.vehicle) ? value.vehicle : (vehicles[0] ?? "");
+  const params = paramViews(store.vehicle(vehicle)?.values ?? {}, mission);
+  const param = params.some((x) => x.id === value.param) ? value.param : (params[0]?.id ?? "");
   const check = mission && Object.hasOwn(mission.limits, param) ? mission.limits[param].checks.find((c) => c.type === "limit") : undefined;
   const unit = mission && Object.hasOwn(mission.parameters, param) ? mission.parameters[param].unit : undefined;
   return (
@@ -208,14 +215,14 @@ export function ChartPanel({ store, mission }: { store: Store; mission: MissionD
           <div className="filters">
             <label>
               Vehicle
-              <select value={vehicle} onChange={(e) => setV(e.target.value)}>
+              <select value={vehicle} onChange={(e) => onChange({ vehicle: e.target.value, param })}>
                 {vehicles.map((x) => <option key={x} value={x}>{x}</option>)}
               </select>
             </label>
             <label>
               Parameter
-              <select value={param} onChange={(e) => setP(e.target.value)}>
-                {params.map((x) => <option key={x} value={x}>{x}</option>)}
+              <select value={param} onChange={(e) => onChange({ vehicle, param: e.target.value })}>
+                {params.map((x) => <option key={x.id} value={x.id}>{x.label || x.id}</option>)}
               </select>
             </label>
           </div>

@@ -273,3 +273,26 @@ test("in the narrow side pane the action sits next to the name, and a long UTC t
   expect(started.textContent).toBe("2026-11-14T10:00:00.000Z"); // the text is unchanged (D-UI-13)
   expect(started.innerHTML).toContain("T<wbr>");
 });
+
+test("the session list filters by vehicle and text (name, conductor, active or ended)", async () => {
+  server([
+    sessionView({ id: 1, name: "leak test", vehicle: "NYX-TA1" }),
+    sessionView({ id: 2, name: "pass 1", vehicle: "NYX-TA2", ended_at: "2026-11-14T10:10:00Z" }),
+  ]);
+  mount();
+  await flush();
+  const filterField = (label: string) =>
+    [...host.querySelectorAll('[role="search"] label')].find((l) => l.textContent?.startsWith(label))!.querySelector("select, input") as HTMLSelectElement & HTMLInputElement;
+  const ids = () => rows().map((r) => r.dataset.sessionId);
+  expect(ids()).toEqual(["1", "2"]);
+  set(filterField("Show"), "NYX-TA2");
+  expect(ids()).toEqual(["2"]);
+  set(filterField("Show"), "");
+  set(filterField("Search"), "active");
+  expect(ids()).toEqual(["1"]);
+  set(filterField("Search"), "ended pass");
+  expect(ids()).toEqual(["2"]);
+  set(filterField("Search"), "zzz");
+  expect(ids()).toEqual([]);
+  expect(host.textContent).toContain("No sessions match the filter");
+});

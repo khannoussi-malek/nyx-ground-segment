@@ -234,3 +234,7 @@ test("an off-scale value marks its pointer with the edge it is pinned to", () =>
 test("every hyphen in a printed limit becomes a true minus (exponents too)", () => {
   expect(row({ ...cabin, limits: { red_low: -1e-7, red_high: 1 } })).toContain(">−1e−7<");
 });
+
+test("a parameter's name is a button that plots it in the chart (vehicle and id ride on it)", () => {
+  expect(row(cabin)).toMatch(/<button type="button" class="plot-link" data-plot-vehicle="NYX-TA1" data-plot-param="cabin_pressure_kpa"[^>]*><span class="label">Cabin total pressure<\/span><\/button>/);
+});

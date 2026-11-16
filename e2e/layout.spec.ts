@@ -1,48 +1,79 @@
-// One-screen console (ui-one-screen): at 1280×720 and up every pane is on screen without page scroll, both
-// vehicle cards show every row, long lists scroll inside their pane, and a pane's resize handle makes it taller
-// (the page may then grow). Read-only: logs in and looks, changes nothing on the stack.
-import { expect, test } from "@playwright/test";
-import { login, VEHICLES } from "./helpers";
+// The operator's board (ui-one-screen): panes in the operator's own order and width, kept in this browser; panes
+// of a row share its height, also after a resize; a click on a parameter plots it. Read-only on the stack: it logs
+// in, rearranges this browser's layout and looks; it sends nothing.
+import { expect, test, type Page } from "@playwright/test";
+import { login } from "./helpers";
 
-const PANES = [".alarms", ".console > main", ".commands", ".chart-panel", ".sessions", ".events"];
+const order = (page: Page) => page.locator(".pane").evaluateAll((ps) => ps.map((p) => (p as HTMLElement).dataset.pane));
+const edit = (page: Page) => page.getByRole("button", { name: "Edit layout" }).click();
+const height = async (page: Page, id: string) => (await page.locator(`.pane[data-pane="${id}"]`).boundingBox())!.height;
 
-for (const [width, height] of [[1280, 720], [1920, 1080]] as const) {
-  test(`${width}×${height}: every pane on one screen, no page scroll`, async ({ page }) => {
-    await page.setViewportSize({ width, height });
-    await login(page, "fc1");
-    const m = await page.evaluate((sels) => ({
-      pageH: document.documentElement.scrollHeight,
-      pageW: document.documentElement.scrollWidth,
-      panes: sels.map((s) => {
-        const r = document.querySelector(s)!.getBoundingClientRect();
-        return { s, top: r.top, bottom: r.bottom, h: r.height };
-      }),
-    }), PANES);
-    expect(m.pageH).toBeLessThanOrEqual(height);
-    expect(m.pageW).toBeLessThanOrEqual(width);
-    for (const p of m.panes) {
-      expect(p.h, `${p.s} has room`).toBeGreaterThan(40);
-      expect(p.bottom, `${p.s} inside the screen`).toBeLessThanOrEqual(height);
-    }
-    // the live cards are never cut: their pane does not scroll
-    const main = page.locator(".console > main");
-    expect(await main.evaluate((e) => e.scrollHeight <= e.clientHeight + 1)).toBe(true);
-    for (const v of VEHICLES) {
-      await expect(page.locator(`[data-vehicle="${v}"][data-param="rate_z_dps"]`)).toBeInViewport();
-    }
-  });
-}
-
-test("a pane's resize handle makes it taller; the page grows instead of cutting it", async ({ page }) => {
-  await page.setViewportSize({ width: 1280, height: 720 });
+test.beforeEach(async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
   await login(page, "fc1");
-  const pane = page.locator(".alarms");
-  await expect(pane).toHaveCSS("resize", "vertical");
-  const box = (await pane.boundingBox())!;
-  await page.mouse.move(box.x + box.width - 4, box.y + box.height - 4); // the native handle, bottom-right
+  await edit(page);
+  await page.getByRole("button", { name: "Reset layout" }).click();
+});
+
+test("the layout is locked until Edit layout: no grips, no resize; Done locks it again", async ({ page }) => {
+  await expect(page.locator(".grip").first()).toBeVisible();
+  await expect(page.locator(".pane").first()).toHaveCSS("resize", "vertical");
+  await page.getByRole("button", { name: "Done" }).click();
+  await expect(page.locator(".grip")).toHaveCount(0);
+  await expect(page.locator(".pane").first()).toHaveCSS("resize", "none");
+  await expect(page.getByRole("button", { name: "Reset layout" })).toHaveCount(0);
+  await expect(page.locator(".pane-title").first()).toHaveText("Alarms");
+});
+
+test("drag a pane by its grip onto another: the order changes and survives a reload; Reset layout restores it", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 2400 }); // both panes on screen: a scroll mid-drag would pick up another grip
+  expect(await order(page)).toEqual(["alarms", "live", "chart", "commands", "sessions", "events"]);
+  await page.locator('.pane[data-pane="events"] .grip').dragTo(page.locator('.pane[data-pane="live"]'));
+  expect(await order(page)).toEqual(["alarms", "events", "live", "chart", "commands", "sessions"]);
+  await page.reload();
+  await expect(page.locator(".pane").nth(1)).toHaveAttribute("data-pane", "events");
+  await edit(page);
+  await page.getByRole("button", { name: "Reset layout" }).click();
+  expect((await order(page))[1]).toBe("live");
+});
+
+test("the keyboard path: move buttons and the width toggle", async ({ page }) => {
+  await page.getByRole("button", { name: "Move Sessions earlier" }).click();
+  expect(await order(page)).toEqual(["alarms", "live", "chart", "sessions", "commands", "events"]);
+  const toggle = page.getByRole("button", { name: "Commands full width" });
+  await expect(toggle).toHaveAttribute("aria-pressed", "false");
+  await toggle.click();
+  await expect(page.locator('.pane[data-pane="commands"]')).toHaveAttribute("data-wide", "true");
+});
+
+test("two panes of a row share its height, also after one is resized by its handle", async ({ page }) => {
+  expect(Math.abs((await height(page, "commands")) - (await height(page, "sessions")))).toBeLessThan(1);
+  await page.locator('.pane[data-pane="commands"]').evaluate((e) => e.scrollIntoView({ block: "start" }));
+  const box = (await page.locator('.pane[data-pane="commands"]').boundingBox())!; // in view: the mouse reaches its corner
+  await page.mouse.move(box.x + box.width - 3, box.y + box.height - 3); // the native handle, bottom-right
   await page.mouse.down();
-  await page.mouse.move(box.x + box.width - 4, box.y + box.height + 200, { steps: 8 });
+  await page.mouse.move(box.x + box.width - 3, box.y + box.height + 200, { steps: 8 });
   await page.mouse.up();
-  expect((await pane.boundingBox())!.height).toBeGreaterThan(box.height + 150);
-  expect(await page.evaluate(() => document.documentElement.scrollHeight)).toBeGreaterThan(720);
+  const [c, s] = [await height(page, "commands"), await height(page, "sessions")];
+  expect(c).toBeGreaterThan(box.height + 150);
+  expect(Math.abs(c - s)).toBeLessThan(1); // the neighbour followed
+  await page.reload();
+  expect(await height(page, "commands")).toBeGreaterThan(box.height + 150); // kept in this browser
+});
+
+test("long lists scroll inside their pane: the page does not grow with the history", async ({ page }) => {
+  const pane = await height(page, "sessions");
+  const list = page.locator(".sessions .scroll");
+  if (await list.count()) {
+    expect((await list.boundingBox())!.height).toBeLessThan(pane);
+  }
+  await expect(page.locator(".sessions [role=search]")).toBeVisible();
+});
+
+test("a click on a parameter in a card plots it; the header counts the unacknowledged alarms", async ({ page }) => {
+  await page.locator('.plot-link[data-plot-vehicle="NYX-TA2"][data-plot-param="cabin_temp_c"]').click();
+  const chart = page.locator(".chart-panel");
+  await expect(chart.getByLabel("Vehicle")).toHaveValue("NYX-TA2");
+  await expect(chart.getByLabel("Parameter")).toHaveValue("cabin_temp_c");
+  await expect(page.locator("header .alarm-summary")).toHaveText(/unacknowledged/);
 });

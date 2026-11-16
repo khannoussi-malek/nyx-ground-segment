@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from "react";
+import { act, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { MissionDb } from "./api";
@@ -206,8 +206,13 @@ function panel(mission: MissionDb | null = null) {
   const store = createStore();
   const tm = (vehicle: string) => ({ kind: "tm", vehicle, seq: 1, t_onboard: "2026-11-14T10:00:00.000000Z", mode: "TEST", last_cmd_id: null, values: { b_param: 1, a_param: 2 }, age_ms: 1, frozen: false });
   ingest(store, "snapshot", { kind: "snapshot", vehicles: { "NYX-TA1": tm("NYX-TA1"), "NYX-TA2": tm("NYX-TA2") }, alarms: [], commands: [], events: [] });
-  act(() => root.render(<ChartPanel store={store} mission={mission} />));
+  act(() => root.render(<Picked store={store} mission={mission} />));
   return store;
+}
+/** the console owns the chart's choice (a click on a parameter elsewhere sets it) */
+function Picked({ store, mission }: { store: ReturnType<typeof createStore>; mission: MissionDb | null }) {
+  const [pick, setPick] = useState({ vehicle: "", param: "" });
+  return <ChartPanel store={store} mission={mission} value={pick} onChange={setPick} />;
 }
 function pick(label: string, value: string) {
   const sel = [...host.querySelectorAll("label")].find((l) => l.textContent?.startsWith(label))!.querySelector("select")!;
@@ -244,7 +249,7 @@ test("the limits and unit come from the mission db; before telemetry the panel w
   FakeRO.all[0]!.resize(600);
   await flush();
   expect(made.plots[0]!.opts.axes[1].label).toBe("a_param (kPa)");
-  act(() => root.render(<ChartPanel store={createStore()} mission={null} />));
+  act(() => root.render(<Picked store={createStore()} mission={null} />));
   expect(host.textContent).toContain("Waiting for telemetry");
 });
 
@@ -293,4 +298,19 @@ test("the y range always includes the limits, with a margin; without data or lim
   expect(range(undefined)(null, 100, 102)).toEqual([99.9, 102.1]);
   expect(range(undefined)(null, null, null)).toEqual([0, 1]);
   expect(range({ red_high: 5 })(null, 5, 5)).toEqual([4, 6]); // a flat line at its limit still gets a range
+});
+
+test("the parameter picker names each parameter, in mission-db order; a choice from outside is shown", async () => {
+  const mission = {
+    parameters: { b_param: { unit: "A", type: "float", description: "Bus current" }, a_param: { unit: "V", type: "float", description: "Bus voltage" } },
+    limits: {},
+  } as unknown as MissionDb;
+  const f = stubBuckets();
+  const store = panel(mission);
+  const opts = [...[...host.querySelectorAll("label")].find((l) => l.textContent?.startsWith("Parameter"))!.querySelectorAll("option")];
+  expect(opts.map((o) => [o.value, o.textContent])).toEqual([["b_param", "Bus current"], ["a_param", "Bus voltage"]]);
+  act(() => root.render(<ChartPanel store={store} mission={mission} value={{ vehicle: "NYX-TA2", param: "a_param" }} onChange={() => {}} />));
+  FakeRO.all.at(-1)!.resize(600);
+  await flush();
+  expect(urls(f).at(-1)!.pathname).toBe("/api/telemetry/NYX-TA2/a_param");
 });

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { getReport, listSessions, reportCsvUrl, startSession, stopSession, type MissionDb, type ReportResult, type SessionReport, type SessionResult, type SessionView } from "./api";
 import { eventText } from "./eventText";
 import { formatValue, sortedEntries } from "./format";
+import { FilterBar, keep, NO_FILTER, vehiclesOf } from "./listFilter";
 import type { Store } from "./store";
 import { utcClock, utcIso } from "./time";
 
@@ -94,6 +95,7 @@ export function SessionPanel({ store, mission }: { store: Store; mission: Missio
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<View | null>(null);
+  const [filter, setFilter] = useState(NO_FILTER);
   const inFlight = useRef(false);
   const target = vehicles.includes(vehicle) ? vehicle : "";
 
@@ -135,6 +137,9 @@ export function SessionPanel({ store, mission }: { store: Store; mission: Missio
   const active = (sessions ?? []).filter((s) => s.ended_at === null);
   const busyVehicle = active.some((s) => s.vehicle === target);
   const canStart = target !== "" && name.trim() !== "" && !busy && !busyVehicle;
+  const visible = (sessions ?? []).filter((s) =>
+    keep(filter, s.vehicle, `${s.name} ${s.vehicle} ${s.conductor} ${s.ended_at === null ? "active" : "ended"}`),
+  );
   return (
     <section className="sessions" aria-label="Sessions">
       <h2>Sessions</h2>
@@ -159,35 +164,39 @@ export function SessionPanel({ store, mission }: { store: Store; mission: Missio
       ) : sessions.length === 0 ? (
         <p className="empty">No sessions yet</p>
       ) : (
-        <div className="scroll">
-          <table>
-            <thead>
-              <tr>{["Session", "Report", "Vehicle", "Started (UTC)", "Ended (UTC)", "Conductor"].map((h) => <th key={h} scope="col">{h}</th>)}</tr>
-            </thead>
-            <tbody>
-              {sessions.map((s) => (
-                <tr key={s.id} data-session-id={s.id} data-active={s.ended_at === null || undefined}>
-                  <th scope="row">{s.name}</th>
-                  <td>
-                    {s.ended_at === null ? (
-                      <button type="button" disabled={busy} onClick={() => void act(() => stopSession(s.id), (x) => void openReport(x.id))}>
-                        Stop {s.name}
-                      </button>
-                    ) : (
-                      <>
-                        <button type="button" onClick={() => void openReport(s.id)}>Report</button>
-                      </>
-                    )}
-                  </td>
-                  <td>{s.vehicle}</td>
-                  <td><time dateTime={s.started_at}>{wrapIso(s.started_at)}</time></td>
-                  <td>{s.ended_at ? <time dateTime={s.ended_at}>{wrapIso(s.ended_at)}</time> : "active"}</td>
-                  <td>{s.conductor}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          <FilterBar what="sessions" value={filter} onChange={setFilter} vehicles={vehiclesOf(sessions)} />
+          {visible.length === 0 && <p className="empty" role="status">No sessions match the filter</p>}
+          <div className="scroll">
+            <table>
+              <thead>
+                <tr>{["Session", "Report", "Vehicle", "Started (UTC)", "Ended (UTC)", "Conductor"].map((h) => <th key={h} scope="col">{h}</th>)}</tr>
+              </thead>
+              <tbody>
+                {visible.map((s) => (
+                  <tr key={s.id} data-session-id={s.id} data-active={s.ended_at === null || undefined}>
+                    <th scope="row">{s.name}</th>
+                    <td>
+                      {s.ended_at === null ? (
+                        <button type="button" disabled={busy} onClick={() => void act(() => stopSession(s.id), (x) => void openReport(x.id))}>
+                          Stop {s.name}
+                        </button>
+                      ) : (
+                        <>
+                          <button type="button" onClick={() => void openReport(s.id)}>Report</button>
+                        </>
+                      )}
+                    </td>
+                    <td>{s.vehicle}</td>
+                    <td><time dateTime={s.started_at}>{wrapIso(s.started_at)}</time></td>
+                    <td>{s.ended_at ? <time dateTime={s.ended_at}>{wrapIso(s.ended_at)}</time> : "active"}</td>
+                    <td>{s.conductor}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
       {view?.state === "loading" && <p role="status">Loading the report…</p>}
       {view?.state === "error" && <p role="alert">{view.message}</p>}

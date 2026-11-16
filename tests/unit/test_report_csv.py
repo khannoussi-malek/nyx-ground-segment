@@ -3,7 +3,7 @@ import io
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from gs.api.bodies import AlarmTransition, ParamStats, SessionReport, SessionView
+from gs.api.bodies import AlarmQuality, AlarmTransition, ParamStats, SessionReport, SessionView
 from gs.api.report import report_csv
 from gs.common.interfaces.sse import CommandView, EventView, TransitionView
 
@@ -110,3 +110,32 @@ def test_formula_cells_are_quoted_but_numbers_are_not() -> None:
     assert param["unit"] == "'-x"
     al = next(x for x in rows if x["section"] == "alarm")
     assert (al["note"], al["value"]) == ("'@sum", "-9.5")
+
+
+def test_alarm_quality_rows() -> None:
+    r = _report().model_copy(
+        update={
+            "alarm_quality": AlarmQuality(
+                raises=3,
+                false_raises=None,
+                psi={"NYX-TA1/p_tank": 0.25},
+                chattering=["NYX-TA1/p_tank"],
+                short_t1=2,
+                short_t0=1,
+                peak_10min={"all": 3, "NYX-TA1": 3},
+                time_in_flood_s=0.0,
+            )
+        }
+    )
+    rows = list(csv.DictReader(io.StringIO(report_csv(r))))
+    metrics = {x["key"]: x["value"] for x in rows if x["section"] == "alarm_quality"}
+    assert metrics == {
+        "raises": "3",
+        "false_raises": "",
+        "short_t1": "2",
+        "short_t0": "1",
+        "time_in_flood_s": "0.0",
+        "peak_10min:all": "3",
+        "peak_10min:NYX-TA1": "3",
+        "psi:NYX-TA1/p_tank": "0.25",
+    }

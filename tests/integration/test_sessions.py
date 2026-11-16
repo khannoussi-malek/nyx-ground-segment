@@ -635,3 +635,91 @@ async def test_refreeze_database_down_is_503(
     finally:
         await bad.close()
     assert (r.status_code, r.json()["error"]) == (503, "UNAVAILABLE")
+
+
+async def test_report_alarm_quality(rep: tuple[httpx.AsyncClient, str]) -> None:
+    c, v = rep
+    sid = _session(v, seconds=30)
+    await ensure_set()
+    # Leak stays raised; temperature raises twice, with a short on/off interval.
+    for param, events in (
+        ("cabin_pressure_kpa", [("RAISE", 1, 1)]),
+        (
+            "cabin_temp_c",
+            [
+                ("RAISE", 2, 2),
+                ("RTN", 4, 4),
+                ("RAISE", 6, 6),
+                ("ACK", None, 7),
+                ("RAISE", None, 8),
+                ("RAISE", 29, 30),
+                ("RAISE", -2, -1),
+            ],
+        ),
+    ):
+        alarm_id = uuid4()
+        _sql(
+            "INSERT INTO alarms (alarm_id, vehicle, param, state, severity, trigger_check,"
+            " limits_sha256, set_sha256, opened_at) VALUES (%s, %s, %s, 'UNACK', 'RED',"
+            " 'limit', %s, %s, %s)",
+            alarm_id, v, param, SET.limits_sha256, SET.set_sha256, T0,
+        )  # fmt: skip
+        for kind, trigger, processed in events:
+            _sql(
+                "INSERT INTO alarm_events (key, alarm_id, vehicle, param, kind,"
+                " trigger_t_onboard, processed_at, limits_sha256, set_sha256)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                str(uuid4()), alarm_id, v, param, kind,
+                None if trigger is None else T0 + trigger * SEC, T0 + processed * SEC,
+                SET.limits_sha256, SET.set_sha256,
+            )  # fmt: skip
+    response = await c.get(f"/api/sessions/{sid}/report")
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert [a["transition"]["kind"] for a in result["alarms"]] == [
+        "RAISE", "RAISE", "RTN", "RAISE", "ACK", "RAISE",
+    ]  # fmt: skip
+    assert result["alarm_quality"] == {
+        "raises": 3,
+        "false_raises": None,
+        "psi": {f"{v}/cabin_pressure_kpa": 0.0, f"{v}/cabin_temp_c": 0.25},
+        "chattering": [f"{v}/cabin_temp_c"],
+        "short_t1": 1,
+        "short_t0": 1,
+        "peak_10min": {"all": 3, v: 3},
+        "time_in_flood_s": 0.0,
+    }
+    downloaded = await c.get(f"/api/sessions/{sid}/report.csv")
+    assert downloaded.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(downloaded.text)))
+    metrics = {x["key"]: x["value"] for x in rows if x["section"] == "alarm_quality"}
+    assert metrics == {
+        "raises": "3",
+        "false_raises": "",
+        "short_t1": "1",
+        "short_t0": "1",
+        "time_in_flood_s": "0.0",
+        "peak_10min:all": "3",
+        f"peak_10min:{v}": "3",
+        f"psi:{v}/cabin_pressure_kpa": "0.0",
+        f"psi:{v}/cabin_temp_c": "0.25",
+    }
+
+
+async def test_old_stored_report_still_served(rep: tuple[httpx.AsyncClient, str]) -> None:
+    c, v = rep
+    sid = _session(v)
+    response = await c.get(f"/api/sessions/{sid}/report")
+    assert response.status_code == 200
+    old = response.json()
+    old.pop("alarm_quality", None)
+    _sql(
+        "UPDATE session_report SET report = %s, csv = %s WHERE session_id = %s",
+        Jsonb(old),
+        "old stored csv\n",
+        sid,
+    )
+    served = await c.get(f"/api/sessions/{sid}/report")
+    assert served.status_code == 200, served.text
+    assert served.json() == {**old, "alarm_quality": None}
+    assert (await c.get(f"/api/sessions/{sid}/report.csv")).text == "old stored csv\n"

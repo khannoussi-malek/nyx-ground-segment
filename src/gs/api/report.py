@@ -10,7 +10,15 @@ from typing import Literal
 import psycopg
 from psycopg import sql
 
-from gs.api.bodies import AlarmTransition, ParamStats, ReportConflict, SessionReport, SessionView
+from gs.alarms.quality import QEvent, quality
+from gs.api.bodies import (
+    AlarmQuality,
+    AlarmTransition,
+    ParamStats,
+    ReportConflict,
+    SessionReport,
+    SessionView,
+)
 from gs.api.dbguard import utc
 from gs.common.audit import audit
 from gs.common.interfaces.sse import TransitionView
@@ -77,15 +85,18 @@ async def _stats(
     return int(row[0]), stats
 
 
-async def _transitions(conn: psycopg.AsyncConnection, s: SessionView) -> list[AlarmTransition]:
+async def _transitions(
+    conn: psycopg.AsyncConnection, s: SessionView
+) -> tuple[list[AlarmTransition], AlarmQuality]:
     cur = await conn.execute(
         "SELECT alarm_id, param, key, kind, coalesce(trigger_t_onboard, processed_at), alert,"
-        " by_user, note, check_kind, level, value FROM alarm_events"
+        " by_user, note, check_kind, level, value, trigger_t_onboard FROM alarm_events"
         " WHERE vehicle = %s AND alarm_id IS NOT NULL AND processed_at >= %s AND processed_at < %s"
         " ORDER BY id",
         (s.vehicle, s.started_at, _end(s)),
     )
-    return [
+    rows = list(map(utc, await cur.fetchall()))
+    alarms = [
         AlarmTransition(
             alarm_id=r[0], param=r[1],
             transition=TransitionView(
@@ -93,8 +104,17 @@ async def _transitions(conn: psycopg.AsyncConnection, s: SessionView) -> list[Al
                 check_kind=r[8], level=r[9], value=r[10],
             ),
         )
-        for r in map(utc, await cur.fetchall())
+        for r in rows
     ]  # fmt: skip
+    metrics = quality(
+        [QEvent(s.vehicle, r[1], r[3], r[11], r[0]) for r in rows if r[11] is not None],
+        fault_windows=None,
+    )
+    return alarms, AlarmQuality(
+        raises=metrics.raises, false_raises=metrics.false_raises, psi=dict(metrics.psi),
+        chattering=list(metrics.chattering), short_t1=metrics.short_t1, short_t0=metrics.short_t0,
+        peak_10min=dict(metrics.peak_10min), time_in_flood_s=metrics.time_in_flood_s,
+    )  # fmt: skip
 
 
 async def build_report(
@@ -108,12 +128,13 @@ async def build_report(
     # views are newest first; a report reads in time order
     events = await event_views(conn, kinds=LINK_KINDS, **window)  # type: ignore[arg-type]
     commands = await command_views(conn, **window)  # type: ignore[arg-type]
+    alarms, alarm_quality = await _transitions(conn, s)
     return SessionReport(
         session=s, complete=complete,
         note=None if complete else f"incomplete: {frames} of {expected} frames",
         frozen_at=now, duration_s=duration, frames=frames, expected=expected,
-        parameters=parameters, link_events=events[::-1], alarms=await _transitions(conn, s),
-        commands=commands[::-1],
+        parameters=parameters, link_events=events[::-1], alarms=alarms,
+        commands=commands[::-1], alarm_quality=alarm_quality,
     )  # fmt: skip
 
 
@@ -240,7 +261,7 @@ def _t(v: datetime | None) -> str:
 
 
 def report_csv(r: SessionReport) -> str:
-    """Rows of five sections in one table; every time is iso_z, None is an empty field."""
+    """Report sections in one table; every time is iso_z, None is an empty field."""
     s = r.session
     rows: list[dict[str, object]] = [
         {"section": "summary", "key": s.id, "vehicle": s.vehicle, "name": s.name,
@@ -271,6 +292,15 @@ def report_csv(r: SessionReport) -> str:
          "state": c.state, "outcome": c.outcome, "note": c.reason}
         for c in r.commands
     ]  # fmt: skip
+    if (q := r.alarm_quality) is not None:
+        metrics: dict[str, object] = {
+            "raises": q.raises, "false_raises": q.false_raises,
+            "short_t1": q.short_t1, "short_t0": q.short_t0,
+            "time_in_flood_s": q.time_in_flood_s,
+        }  # fmt: skip
+        metrics.update((f"peak_10min:{k}", v) for k, v in q.peak_10min.items())
+        metrics.update((f"psi:{k}", v) for k, v in q.psi.items())
+        rows += [{"section": "alarm_quality", "key": k, "value": v} for k, v in metrics.items()]
     out = io.StringIO()
     w = csv.writer(out, lineterminator="\n")
     w.writerow(CSV_COLUMNS)

@@ -194,22 +194,30 @@ def test_landing_entries_are_removed_when_they_land() -> None:
     assert set(LANDING) <= {d.name for d in DOCS}
 
 
-def test_unbuilt_work_is_worded_as_landing_in_this_gate() -> None:
-    text = (REPO / "CHANGELOG.md").read_text() + (REPO / "README.md").read_text()
-    assert "landing in this gate" in text
+@pytest.mark.parametrize("name", ["README.md", "CHANGELOG.md"])
+def test_unbuilt_work_is_worded_as_landing_in_this_gate(name: str) -> None:
+    text = (REPO / name).read_text()
+    assert re.search(r"run P.{0,120}landing in this gate", text, re.I | re.S), name
+    assert not re.search(r"\b(in|are in): .*run P", text), name
 
 
-def test_atp07_counts_hot_rows_before_the_archiver_starts_and_names_the_crash_hour() -> None:
+def test_atp07_counts_hot_rows_before_the_archiver_starts_and_checks_what_is_pending() -> None:
     step = _atp("ATP-07").split("**Kill the archiver", 1)[1].split("\n5. ", 1)[0]
     first_count = step.index("select count(*)")
     start = step.index("GS_TEST_HOOKS=1 ARCHIVER_CRASH_AT")
     assert step.index("gs-sim backfill") < first_count < start
-    assert step.count("select count(*)") >= 1 and "107900" in step  # 71900 + one full hour
-    assert "logs archiver" in step and "NYX-TA9" in step.split("logs archiver", 1)[1]
+    assert "107900" in step  # 71900 + one full hour
+    # a check the operator can run: the archive_object rows, and the one log line the hook writes
+    assert "from archive_object where vehicle='NYX-TA9'" in step
+    assert "test hook CRASH_AT=archive:after_put" in step
+    assert "restart: unless-stopped" in step
+    assert "names the NYX-TA9" not in step  # the archiver does not log the hour
     assert step.index("docker compose up -d --force-recreate archiver") > start
 
 
-def test_atp07_waits_for_ingest_before_the_archiver_pass_in_step_1() -> None:
+def test_atp07_step1_waits_for_ingest_before_step_2() -> None:
     text = _atp("ATP-07")
-    step1 = text.split("1. **Backfill", 1)[1].split("\n2. ", 1)[0]
-    assert "71900" in step1 and "select count(*)" in step1
+    step1 = text.split("1. **Backfill", 1)[1].split("\n2. **", 1)[0]
+    count = step1.index("select count(*)")
+    assert step1.index("gs-sim backfill") < step1.index("reaches 71900") < count
+    assert "the archiver is running" in step1  # the wait is not claimed to prevent a pass

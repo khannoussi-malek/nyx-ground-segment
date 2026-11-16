@@ -41,6 +41,7 @@ async def test_run_wires_tc_loop_and_send_loop(monkeypatch: pytest.MonkeyPatch) 
     buf = send[0]
     for v, tick, tcl in zip(vs, calls["tick"], calls["tc"], strict=True):
         box = tick[-1]["box"]
+        assert tick[-1]["period_s"] == 0.1  # SIM_RATE_HZ default 10
         assert isinstance(box, CommandBox) and tcl[2] is box  # the same box per vehicle
         assert tick[1] is buf  # acks leave through step(), in the frames' ordered buffer
         assert tcl[1] == v

@@ -44,7 +44,8 @@ def p95_ci(xs: Sequence[float]) -> tuple[float, float] | None:
 
 
 def pooled(samples: Mapping[str, Sequence[float]]) -> list[float]:
-    """Raw concatenation across vehicles and runs; never an average of per-series p95s."""
+    """Raw concatenation across vehicles and runs; never an average of per-series p95s.
+    Pass only runs from the same configuration (rate, duration, faults)."""
     return [x for xs in samples.values() for x in xs]
 
 

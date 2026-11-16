@@ -44,7 +44,8 @@ ENV = {
     },
     "migrate": {"DATABASE_URL", "MISSION_DB"},
     "simulator": {
-        "REDIS_URL", "SIM_VEHICLES", "SIM_SEED", "BIND_HOST", "HEALTH_PORT", "MISSION_DB",
+        "REDIS_URL", "SIM_VEHICLES", "SIM_SEED", "SIM_RATE_HZ", "BIND_HOST", "HEALTH_PORT",
+        "MISSION_DB",
     },
     "archiver": {
         "DATABASE_URL", "REDIS_URL", "S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET",

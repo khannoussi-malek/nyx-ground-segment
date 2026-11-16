@@ -72,8 +72,9 @@ async def tick_loop(
     now: Callable[[], datetime] = _utcnow,
     faults: FaultBoard | None = None,
     box: CommandBox | None = None,
+    period_s: float = PERIOD_S,
 ) -> None:
-    """Tick n fires at start + n*PERIOD_S; stalls are caught up, grid fixed (D-SIM-01).
+    """Tick n fires at start + n*period_s; stalls are caught up, grid fixed (D-SIM-01).
 
     With a `box`, each tick runs <= 1 command after its frame; the frame carries the command
     executed in an earlier tick (D-SIM-06) and its acks follow the frame in the same buffer.
@@ -85,7 +86,7 @@ async def tick_loop(
     cabin, prev_mono = Cabin(), start
     stream = f"tm:{vehicle}"
     while not stop.is_set():
-        await sleep(max(0, start + n * PERIOD_S - monotonic()))
+        await sleep(max(0, start + n * period_s - monotonic()))
         t = now()  # stamped at the tick, before the frame enters the buffer
         mono = monotonic()
         cabin, prev_mono = cabin_tick(cabin, mono - prev_mono, mono), mono

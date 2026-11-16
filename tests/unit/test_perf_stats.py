@@ -53,7 +53,7 @@ def test_csv_times_end_in_z(tmp_path: Path) -> None:
 def test_p95_ci_ranks() -> None:
     assert ci_ranks(120) == (109, 120) and ci_ranks(60) is None
     assert ci_ranks(119) is None  # the design value: a two-sided CI only from n = 120
-    assert ci_ranks(1000) is not None
+    assert ci_ranks(200) == (183, 198) and ci_ranks(1000) == (936, 965)
 
 
 def test_p95_ci_values_are_the_ranked_samples() -> None:

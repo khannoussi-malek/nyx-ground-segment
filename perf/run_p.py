@@ -65,8 +65,8 @@ def lag_verdict(rows: Sequence[LagRow]) -> Verdict:
 
 def totals(
     cpu: Mapping[str, Sequence[float]],
-    mem_before: int,
-    mem_after: int,
+    mem_before: int | None,
+    mem_after: int | None,
     ingest_ms: Sequence[float],
     frames: int,
     vehicles: int,
@@ -78,7 +78,11 @@ def totals(
         "redis_used_memory": {
             "before": mem_before,
             "after": mem_after,
-            "per_vehicle_hour": (mem_after - mem_before) / hours,
+            "per_vehicle_hour": (
+                None
+                if mem_before is None or mem_after is None
+                else (mem_after - mem_before) / hours
+            ),
         },  # fmt: skip
         "ingest_ms": {
             "p50": nearest_rank(ingest_ms, 0.5) if ingest_ms else None,
@@ -99,13 +103,24 @@ def set_sim_rate(rate: int) -> None:
     _compose("up", "-d", "--force-recreate", "--wait", "simulator", rate=rate)
 
 
+def parse_cpu(stdout: str, ids: Mapping[str, str]) -> dict[str, float]:
+    """`<id> <cpu%>` lines per worker; a bad line ("--", blank, mid-restart) is skipped."""
+    pct: dict[str, float] = {}
+    for ln in stdout.splitlines():
+        try:
+            i, p = ln.split()
+            pct[i[:12]] = float(p.rstrip("%"))
+        except ValueError:
+            continue
+    return {w: pct[i[:12]] for w, i in ids.items() if i[:12] in pct}
+
+
 def _cpu_once(ids: Mapping[str, str]) -> dict[str, float]:
     r = subprocess.run(
         ["docker", "stats", "--no-stream", "--format", "{{.ID}} {{.CPUPerc}}", *ids.values()],
         capture_output=True, text=True, check=False,
     )  # fmt: skip
-    pct = {i[:12]: float(p.rstrip("%")) for i, p in (ln.split() for ln in r.stdout.splitlines())}
-    return {w: pct[i[:12]] for w, i in ids.items() if i[:12] in pct}
+    return parse_cpu(r.stdout, ids)
 
 
 def _cpu_sampler(stop: threading.Event, out: dict[str, list[float]]) -> None:
@@ -125,7 +140,11 @@ def _cpu_sampler(stop: threading.Event, out: dict[str, list[float]]) -> None:
             nxt += SAMPLE_EVERY_S
             stop.wait(max(0.0, nxt - time.monotonic()))
     for f in futures:
-        for w, v in f.result().items():
+        try:  # a failed call loses one sample; incomplete() judges the count
+            got = f.result()
+        except OSError:
+            continue
+        for w, v in got.items():
             out[w].append(v)
 
 
@@ -221,7 +240,7 @@ def main() -> None:
     cpu: dict[str, list[float]] = {w: [] for w in WORKERS}
     errors: list[str] = []
     stop, queries, ing, alarms = threading.Event(), [], [], []
-    mem0 = mem1 = 0
+    mem0 = mem1 = None
     t0 = datetime.now(UTC)
     try:
         set_sim_rate(RATE_HZ)

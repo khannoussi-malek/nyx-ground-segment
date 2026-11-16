@@ -45,6 +45,7 @@ def test_totals_from_hand_built_samples() -> None:
         "after": 160_000_000,
         "per_vehicle_hour": 360_000_000,
     }
+    assert totals({}, None, 5, [], 0, 2, 300)["redis_used_memory"]["per_vehicle_hour"] is None
     assert t["ingest_ms"] == {"p50": 50.0, "p95": 95.0} and t["frames_stored"] == 60_000
 
 
@@ -74,13 +75,14 @@ class _Db:
 def _run(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    rates: list[int],
     *,
     time_lag: float = 0.1,
     restore_fails: bool = False,
     steps_fail: bool = False,
     cpu: bool = True,
-) -> list[int]:
-    rates: list[int] = []
+    lag_fails: bool = False,
+) -> None:
 
     def set_rate(rate: int) -> None:
         rates.append(rate)
@@ -88,6 +90,8 @@ def _run(
             raise RuntimeError("compose up failed")
 
     def lag(r: Any, db: Any, rows: dict[str, list[run_p.LagRow]], until: float) -> None:
+        if lag_fails:
+            raise ConnectionError("redis gone")
         for v in run_n.VEHICLES:
             rows[v].extend((T, 0, 0, time_lag) for _ in range(N))
 
@@ -118,7 +122,6 @@ def _run(
     monkeypatch.setattr(redis, "Redis", lambda **kw: object())
     monkeypatch.setattr(psycopg, "connect", lambda *a, **kw: _Db())
     run_p.main()
-    return rates
 
 
 def _summary(tmp_path: Path) -> str:
@@ -128,7 +131,9 @@ def _summary(tmp_path: Path) -> str:
 def test_clean_run_restores_10hz_and_writes_every_artifact(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    assert _run(monkeypatch, tmp_path) == [100, 10]
+    rates: list[int] = []
+    _run(monkeypatch, tmp_path, rates)
+    assert rates == [100, 10]
     out = next((tmp_path / "docs" / "perf").glob("run-p-*"))
     assert {p.name for p in out.iterdir()} == {
         "lag.csv",
@@ -138,22 +143,27 @@ def test_clean_run_restores_10hz_and_writes_every_artifact(
         "totals.json",
         "summary.md",
     }
-    assert "**PASS**" in (out / "summary.md").read_text()
+    assert (
+        "**ING-10 lag**: max time lag 0.100 s against 1 s: **PASS**"
+        in (out / "summary.md").read_text()
+    )
 
 
 def test_failed_ing10_exits_nonzero_but_writes_the_summary(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    rates: list[int] = []
     with pytest.raises(SystemExit, match="ING-10"):
-        _run(monkeypatch, tmp_path, time_lag=1.5)
-    assert "**FAIL**" in _summary(tmp_path)
+        _run(monkeypatch, tmp_path, rates, time_lag=1.5)
+    assert rates == [100, 10] and "**FAIL**" in _summary(tmp_path)
 
 
 def test_restore_failure_still_writes_artifacts_marked_incomplete(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    rates: list[int] = []
     with pytest.raises(SystemExit, match="INCOMPLETE"):
-        _run(monkeypatch, tmp_path, restore_fails=True)
+        _run(monkeypatch, tmp_path, rates, restore_fails=True)
     s = _summary(tmp_path)
     assert "INCOMPLETE RUN" in s and "compose up failed" in s
 
@@ -161,16 +171,28 @@ def test_restore_failure_still_writes_artifacts_marked_incomplete(
 def test_background_step_driver_failure_is_captured(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    rates: list[int] = []
     with pytest.raises(SystemExit, match="INCOMPLETE"):
-        _run(monkeypatch, tmp_path, steps_fail=True)
-    assert "sim POST 500" in _summary(tmp_path)
+        _run(monkeypatch, tmp_path, rates, steps_fail=True)
+    assert rates == [100, 10] and "sim POST 500" in _summary(tmp_path)
+
+
+def test_sampling_loop_failure_restores_10hz_and_writes_artifacts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    rates: list[int] = []
+    with pytest.raises(SystemExit, match="INCOMPLETE"):
+        _run(monkeypatch, tmp_path, rates, lag_fails=True)
+    assert rates == [100, 10] and "redis gone" in _summary(tmp_path)
+    assert (next((tmp_path / "docs" / "perf").glob("run-p-*")) / "totals.json").exists()
 
 
 def test_missing_cpu_samples_make_the_run_incomplete(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    rates: list[int] = []
     with pytest.raises(SystemExit, match="INCOMPLETE"):
-        _run(monkeypatch, tmp_path, cpu=False)
+        _run(monkeypatch, tmp_path, rates, cpu=False)
     assert "ingest-1" in _summary(tmp_path)
 
 
@@ -180,3 +202,106 @@ def test_incomplete_names_every_short_series() -> None:
     assert run_p.incomplete(lag, cpu, 10, 300) == []
     short = run_p.incomplete({**lag, "NYX-TA1": []}, {**cpu, "ingest-2": []}, 0, 300)
     assert len(short) == 3
+
+
+# --- the real pieces: parsers, the 1 Hz schedules, the compose call ------------------------
+import subprocess  # noqa: E402
+import time  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+
+IDS = {"ingest-1": "aaaaaaaaaaaa1111", "ingest-2": "bbbbbbbbbbbb2222"}
+STATS = "aaaaaaaaaaaa 12.50%\nbbbbbbbbbbbb --\n\ngarbage\n"
+
+
+def test_parse_cpu_skips_bad_lines_and_keeps_good_ones() -> None:
+    assert run_p.parse_cpu(STATS, IDS) == {"ingest-1": 12.5}
+    assert run_p.parse_cpu("aaaaaaaaaaaa 1.0%\nbbbbbbbbbbbb 2.0%", IDS) == {
+        "ingest-1": 1.0,
+        "ingest-2": 2.0,
+    }
+
+
+def _fake_run(stats: Callable[[], str]) -> Callable[..., Any]:
+    def run(cmd: list[str], **kw: Any) -> Any:
+        if cmd[:3] == ["docker", "compose", "ps"]:
+            return SimpleNamespace(stdout=IDS[cmd[-1]] + "\n")
+        if cmd[:2] == ["docker", "stats"]:
+            return SimpleNamespace(stdout=stats())
+        raise AssertionError(cmd)
+
+    return run
+
+
+def test_cpu_sampler_ticks_on_a_grid_and_survives_a_bad_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = []
+
+    def stats() -> str:
+        calls.append(time.monotonic())
+        if len(calls) == 2:
+            raise OSError("docker hiccup")
+        return STATS if len(calls) == 3 else "aaaaaaaaaaaa 1.0%\nbbbbbbbbbbbb 2.0%"
+
+    monkeypatch.setattr(run_p, "SAMPLE_EVERY_S", 0.05)
+    monkeypatch.setattr(subprocess, "run", _fake_run(stats))
+    stop = threading.Event()
+    out: dict[str, list[float]] = {w: [] for w in run_p.WORKERS}
+    threading.Timer(0.5, stop.set).start()
+    run_p._cpu_sampler(stop, out)
+    assert 8 <= len(calls) <= 12  # 0.5 s at 0.05 s ticks; slow calls do not stretch the grid
+    assert len(out["ingest-1"]) == len(calls) - 1  # only the raising call is lost
+    assert len(out["ingest-2"]) == len(calls) - 2  # and the "--" line
+
+
+def test_sample_lag_is_one_row_per_vehicle_per_tick(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(run_p, "SAMPLE_EVERY_S", 0.02)
+    streams = []
+
+    class R:
+        def xinfo_groups(self, name: str) -> list[dict[str, Any]]:
+            streams.append(name)
+            return [{"name": "ingest", "lag": 4, "pending": 2}]
+
+    class Db:
+        def execute(self, q: str, args: tuple[str]) -> Any:
+            assert q == run_p.TIME_LAG_SQL
+            return SimpleNamespace(fetchone=lambda: (0.25,))
+
+    rows: dict[str, list[run_p.LagRow]] = {v: [] for v in run_n.VEHICLES}
+    run_p._sample_lag(R(), Db(), rows, time.monotonic() + 0.2)  # type: ignore[arg-type]
+    n = len(rows["NYX-TA1"])
+    assert 8 <= n <= 11 and len(rows["NYX-TA2"]) == n
+    assert set(streams) == {"tm:NYX-TA1", "tm:NYX-TA2"}
+    assert rows["NYX-TA1"][0][1:] == (4, 2, 0.25)
+
+
+def test_time_lag_without_a_row_is_infinite_so_ing10_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class R:
+        def xinfo_groups(self, name: str) -> list[dict[str, Any]]:
+            return []
+
+    class Db:
+        def execute(self, q: str, args: tuple[str]) -> Any:
+            return SimpleNamespace(fetchone=lambda: (None,))
+
+    monkeypatch.setattr(run_p, "SAMPLE_EVERY_S", 0.01)
+    rows: dict[str, list[run_p.LagRow]] = {v: [] for v in run_n.VEHICLES}
+    run_p._sample_lag(R(), Db(), rows, time.monotonic() + 0.03)  # type: ignore[arg-type]
+    assert rows["NYX-TA1"][0][3] == float("inf")
+
+
+def test_set_sim_rate_puts_the_rate_in_the_compose_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[Any] = []
+
+    def run(cmd: list[str], **kw: Any) -> Any:
+        seen.append((cmd, kw))
+        return SimpleNamespace()
+
+    monkeypatch.setattr(subprocess, "run", run)
+    run_p.set_sim_rate(100)
+    cmd, kw = seen[0]
+    assert cmd == ["docker", "compose", "up", "-d", "--force-recreate", "--wait", "simulator"]
+    assert kw["env"]["SIM_RATE_HZ"] == "100" and kw["check"] is True and kw["cwd"] == run_n.REPO

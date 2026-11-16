@@ -28,6 +28,7 @@ from gs.replay.run import replay_messages
 
 MAX_WINDOW = timedelta(hours=24)
 REPLAY_IDLE_S = 60  # a created replay nobody GETs within this long is dropped
+DB_CONNECT_S = 5
 SSE_RETRY_MS = 1000  # as the live /api/events
 STREAM_ERRORS: tuple[type[BaseException], ...] = (psycopg.Error, PoolTimeout, *S3_ERRORS)
 log = logging.getLogger(__name__)
@@ -111,7 +112,12 @@ async def _stream(request: Request, r: Replay) -> AsyncIterator[bytes]:
     try:
         yield f"retry: {SSE_RETRY_MS}\n\n".encode()
         # its own connection: a replay lasts up to hours and must not starve the pool
-        async with await psycopg.AsyncConnection.connect(st.database_url, autocommit=True) as conn:
+        async with await psycopg.AsyncConnection.connect(
+            st.database_url,
+            autocommit=True,
+            connect_timeout=DB_CONNECT_S,
+            options="-c default_transaction_read_only=on",  # D-REP-04: replay never writes
+        ) as conn:
             msgs = replay_messages(
                 conn, st.s3, st.s3_bucket, deps.mission(request), r.id, r.req.vehicle,
                 r.req.t_from, r.req.t_to, r.req.speed, sleep,

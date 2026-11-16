@@ -88,14 +88,15 @@ async def build_snapshot(
     conn: psycopg.AsyncConnection, vehicles: Sequence[str], params: Sequence[str], now: datetime
 ) -> Snapshot:
     """Last values (with FROZEN), the open alarms of each vehicle, and the newest
-    SNAPSHOT_COMMANDS commands and SNAPSHOT_EVENTS events overall (+ each vehicle's newest
+    SNAPSHOT_COMMANDS commands and SNAPSHOT_EVENTS events across the live `vehicles` (G4-19:
+    never a recorded-only vehicle) (+ each vehicle's newest
     LOS/AOS and FROZEN), newest first (ruling R-r;
     the console keeps the order). The one snapshot function for connect, reconnect, resync,
     broker up and overflow (D-UI-02)."""
     alarms: list[AlarmView] = []
     for v in vehicles:
         alarms += await alarm_views(conn, vehicle=v)
-    events = await event_views(conn, limit=SNAPSHOT_EVENTS)
+    events = await event_views(conn, vehicles=vehicles, limit=SNAPSHOT_EVENTS)
     # + each vehicle's newest LOS/AOS and FROZEN when they fell out of the newest (an open LOS
     # carries its last frame's time): the console's LOS banner and its LOS / FROZEN tones read
     # them. Older than every event above, so appending keeps newest first.
@@ -108,7 +109,7 @@ async def build_snapshot(
     return Snapshot(
         vehicles=await _last_values(conn, vehicles, params, now),
         alarms=alarms,
-        commands=await command_views(conn, limit=SNAPSHOT_COMMANDS),
+        commands=await command_views(conn, vehicles=vehicles, limit=SNAPSHOT_COMMANDS),
         events=events,
     )
 

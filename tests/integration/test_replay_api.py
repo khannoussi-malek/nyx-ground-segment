@@ -215,25 +215,63 @@ async def test_idle_replay_expires(live_api: LiveApi, monkeypatch: pytest.Monkey
 
 def _live_msg(kind: str, v: str | None) -> dict[str, Any]:
     t = H.isoformat()
-    last = {"key": "k", "kind": "RAISE", "t": t, "alert": True, "by_user": "system", "note": None,
-            "check_kind": None, "level": None, "value": None}  # fmt: skip
-    alarm = {"alarm_id": str(uuid4()), "vehicle": v, "param": "cabin_temp_c", "state": "UNACK",
-             "severity": "RED", "level": "RED", "value": 1.0, "trigger_check": "limits",
-             "limits_sha256": "a", "set_sha256": "b", "opened_at": t, "closed_at": None,
-             "last": last, "ack_request": None}  # fmt: skip
-    cmd = {"cmd_id": str(uuid4()), "vehicle": v, "name": "vent_cabin", "args": {},
-           "hazardous": True,
-           "reason": None, "issued_by": "fc1", "state": "QUEUED", "failure_reason": None,
-           "queued_at": t, "sent_at": None, "received_at": None, "verified_at": None,
-           "failed_at": None, "late_verified_at": None, "late_ack_at": None,
-           "late_ack_accepted": None, "outcome": None}  # fmt: skip
-    return {
+    last: dict[str, Any] = {
+        "key": "k",
+        "kind": "RAISE",
+        "t": t,
+        "alert": True,
+        "by_user": "system",
+        "note": None,
+        "check_kind": None,
+        "level": None,
+        "value": None,
+    }
+    alarm: dict[str, Any] = {
+        "alarm_id": str(uuid4()),
+        "vehicle": v,
+        "param": "cabin_temp_c",
+        "state": "UNACK",
+        "severity": "RED",
+        "level": "RED",
+        "value": 1.0,
+        "trigger_check": "limits",
+        "limits_sha256": "a",
+        "set_sha256": "b",
+        "opened_at": t,
+        "closed_at": None,
+        "last": last,
+        "ack_request": None,
+    }
+    cmd: dict[str, Any] = {
+        "cmd_id": str(uuid4()),
+        "vehicle": v,
+        "name": "vent_cabin",
+        "args": {},
+        "hazardous": True,
+        "reason": None,
+        "issued_by": "fc1",
+        "state": "QUEUED",
+        "failure_reason": None,
+        "queued_at": t,
+        "sent_at": None,
+        "received_at": None,
+        "verified_at": None,
+        "failed_at": None,
+        "late_verified_at": None,
+        "late_ack_at": None,
+        "late_ack_accepted": None,
+        "outcome": None,
+    }
+    out: dict[str, dict[str, Any]] = {
         "alarm": {"kind": "alarm", "alarm": alarm},
         "cmd": {"kind": "cmd", "command": cmd},
-        "link": {"kind": "link", "event": {"key": "e", "vehicle": v, "kind": "LOS",
-                                           "t_onboard": t, "details": {}}},
+        "link": {
+            "kind": "link",
+            "event": {"key": "e", "vehicle": v, "kind": "LOS", "t_onboard": t, "details": {}},
+        },
         "resync": {"kind": "resync", "vehicle": v},
-    }[kind]  # fmt: skip
+    }
+    return out[kind]
 
 
 async def _through_hub(live: LiveApi, msg: dict[str, Any]) -> list[bytes]:

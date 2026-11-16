@@ -1,5 +1,17 @@
+import subprocess
+import threading
+import time
+from collections.abc import Callable
 from datetime import UTC, datetime
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
+import psycopg
+import pytest
+import redis
+
+from perf import run_n, run_p
 from perf.run_p import DURATION_S, LAG_LIMIT_S, RATE_HZ, lag_row, lag_verdict, totals
 
 T = datetime(2026, 11, 15, 12, tzinfo=UTC)
@@ -49,17 +61,7 @@ def test_totals_from_hand_built_samples() -> None:
     assert t["ingest_ms"] == {"p50": 50.0, "p95": 95.0} and t["frames_stored"] == 60_000
 
 
-# --- lifecycle: main() with every external dependency faked --------------------------------
-import threading  # noqa: E402
-from collections.abc import Callable  # noqa: E402
-from pathlib import Path  # noqa: E402
-from typing import Any  # noqa: E402
-
-import psycopg  # noqa: E402
-import pytest  # noqa: E402
-import redis  # noqa: E402
-
-from perf import run_n, run_p  # noqa: E402
+# --- lifecycle: main() with every external dependency faked ---
 
 N = 5  # DURATION_S patched to 5 s: the run must hold >= 80 % of 5 samples per series
 
@@ -205,10 +207,6 @@ def test_incomplete_names_every_short_series() -> None:
 
 
 # --- the real pieces: parsers, the 1 Hz schedules, the compose call ------------------------
-import subprocess  # noqa: E402
-import time  # noqa: E402
-from types import SimpleNamespace  # noqa: E402
-
 IDS = {"ingest-1": "aaaaaaaaaaaa1111", "ingest-2": "bbbbbbbbbbbb2222"}
 STATS = "aaaaaaaaaaaa 12.50%\nbbbbbbbbbbbb --\n\ngarbage\n"
 
@@ -233,15 +231,17 @@ def _fake_run(stats: Callable[[], str]) -> Callable[..., Any]:
 
 
 def test_cpu_sampler_ticks_on_a_grid_and_survives_a_bad_call(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     calls = []
 
     def stats() -> str:
         calls.append(time.monotonic())
-        if len(calls) == 2:
+        n = len(calls)
+        time.sleep(0.2)  # a real docker stats takes 1-2 s: 4x the grid step here
+        if n == 2:
             raise OSError("docker hiccup")
-        return STATS if len(calls) == 3 else "aaaaaaaaaaaa 1.0%\nbbbbbbbbbbbb 2.0%"
+        return STATS if n == 3 else "aaaaaaaaaaaa 1.0%\nbbbbbbbbbbbb 2.0%"
 
     monkeypatch.setattr(run_p, "SAMPLE_EVERY_S", 0.05)
     monkeypatch.setattr(subprocess, "run", _fake_run(stats))
@@ -249,9 +249,11 @@ def test_cpu_sampler_ticks_on_a_grid_and_survives_a_bad_call(
     out: dict[str, list[float]] = {w: [] for w in run_p.WORKERS}
     threading.Timer(0.5, stop.set).start()
     run_p._cpu_sampler(stop, out)
-    assert 8 <= len(calls) <= 12  # 0.5 s at 0.05 s ticks; slow calls do not stretch the grid
+    # 0.5 s at 0.05 s ticks; synchronous 0.2 s calls would manage 3, the pool reaches ~10
+    assert 8 <= len(calls) <= 12
     assert len(out["ingest-1"]) == len(calls) - 1  # only the raising call is lost
     assert len(out["ingest-2"]) == len(calls) - 2  # and the "--" line
+    assert "docker hiccup" in caplog.text
 
 
 def test_sample_lag_is_one_row_per_vehicle_per_tick(monkeypatch: pytest.MonkeyPatch) -> None:

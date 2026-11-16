@@ -4,6 +4,7 @@ lag `clock_timestamp() - max(t_onboard)` per vehicle), the other metrics are inf
 `make perf-p` runs it against the stack that is up and restores the 10 Hz simulator."""
 
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -38,6 +39,7 @@ from perf.run_n import (
 )
 from perf.stats import Verdict, after_warmup, nearest_rank, write_csv
 
+log = logging.getLogger(__name__)
 DURATION_S, RATE_HZ, SAMPLE_EVERY_S, LAG_LIMIT_S = 300, 100, 1.0, 1.0
 MIN_SAMPLE_FRAC = 0.8
 WORKERS = ("ingest-1", "ingest-2")
@@ -142,7 +144,8 @@ def _cpu_sampler(stop: threading.Event, out: dict[str, list[float]]) -> None:
     for f in futures:
         try:  # a failed call loses one sample; incomplete() judges the count
             got = f.result()
-        except OSError:
+        except OSError as e:
+            log.warning("cpu sample lost: %s", e)
             continue
         for w, v in got.items():
             out[w].append(v)

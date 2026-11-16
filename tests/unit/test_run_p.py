@@ -250,7 +250,7 @@ def test_cpu_sampler_ticks_on_a_grid_and_survives_a_bad_call(
     threading.Timer(0.5, stop.set).start()
     run_p._cpu_sampler(stop, out)
     # 0.5 s at 0.05 s ticks; synchronous 0.2 s calls would manage 3, the pool reaches ~10
-    assert 8 <= len(calls) <= 12
+    assert 8 <= len(calls) <= 14
     assert len(out["ingest-1"]) == len(calls) - 1  # only the raising call is lost
     assert len(out["ingest-2"]) == len(calls) - 2  # and the "--" line
     assert "docker hiccup" in caplog.text

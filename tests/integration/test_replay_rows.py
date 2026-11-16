@@ -207,3 +207,89 @@ async def test_recorded_events_use_vehicle_time_and_exclude_ground(
     got = await recorded_event_rows(conn, v, t, t + timedelta(seconds=2))
     assert [e.kind for e in got] == ["GAP", "AOS"]
     assert got[0].t_onboard == t
+
+
+async def test_historical_trigger_check_and_hashes_ignore_future_transition(
+    conn: psycopg.AsyncConnection,
+) -> None:
+    from dataclasses import replace
+
+    from gs.alarms.contract import Level
+    from gs.ingest.events import insert_set
+    from gs.replay.rows import initial_alarms
+
+    v = vid()
+    r = Recorder(conn, v)
+    (raised,) = await r.frames(YELLOW_T)
+    await r.ack()
+    after_ack = r.t(r.seq)  # ACK is before this cutoff; ROC is already stored but later.
+    future = r.t(r.seq + 5)
+    new_set_hash, new_limits_hash = uuid4().hex * 2, uuid4().hex * 2
+    await insert_set(conn, replace(MDB, set_sha256=new_set_hash, limits_sha256=new_limits_hash))
+    await write_transitions(
+        conn,
+        new_set_hash,
+        [
+            replace(
+                raised,
+                key=str(uuid4()),
+                kind="ESCALATE",
+                check_kind="roc",
+                trigger_check="roc",
+                level="RED_RISING",
+                severity=Level.RED,
+                alarm_state="UNACK",
+                alert=True,
+                trigger_seq=r.seq + 5,
+                trigger_t=future,
+            )
+        ],
+    )
+    (current,) = await alarm_views(conn, vehicle=v)
+    assert (current.trigger_check, current.set_sha256) == ("roc", new_set_hash)
+    (historic,) = await initial_alarms(conn, v, after_ack)
+    assert (
+        historic.trigger_check,
+        historic.state,
+        historic.limits_sha256,
+        historic.set_sha256,
+    ) == (
+        "limit",
+        "ACKED",
+        MDB.limits_sha256,
+        MDB.set_sha256,
+    )
+    for start in (r.epoch, after_ack):
+        msgs = [
+            m
+            async for m in replay_messages(
+                conn,
+                s3_client("replay"),
+                "archive",
+                MDB,
+                uuid4(),
+                v,
+                start,
+                future,
+                10,
+                sleep=no_sleep,
+            )
+        ]
+        views = [a for m in msgs if isinstance(m, ReplayStart) for a in m.alarms]
+        views += [m.alarm for m in msgs if isinstance(m, ReplayAlarm)]
+        assert views
+        assert all(
+            (a.trigger_check, a.limits_sha256, a.set_sha256)
+            == (
+                "limit",
+                MDB.limits_sha256,
+                MDB.set_sha256,
+            )
+            for a in views
+        )
+    (later,) = await initial_alarms(conn, v, future + timedelta(microseconds=1))
+    assert (later.trigger_check, later.limits_sha256, later.set_sha256) == (
+        "roc",
+        new_limits_hash,
+        new_set_hash,
+    )

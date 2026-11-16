@@ -250,3 +250,37 @@ async def test_event_only_window_advances_to_end(fake: Any) -> None:
     msgs = await collect(f, T0, at(2.0), speed=10)
     assert [m.kind for m in msgs] == ["replay_start", "clock", "link", "clock", "replay_end"]
     assert sum(f.sleeps) == pytest.approx(0.2)
+
+
+async def test_recorded_trigger_check_tracks_transitions_and_keeps_it_after_ack(fake: Any) -> None:
+    transitions = [
+        ("RAISE", "limit", "YELLOW_HIGH", "YELLOW", False),
+        ("ACK", None, None, "YELLOW", False),
+        ("ESCALATE", "roc", "RED_RISING", "RED", False),
+        ("DEESCALATE", "limit", "YELLOW_HIGH", "YELLOW", False),
+        ("RTN", None, None, "NOMINAL", False),
+        ("ACK", None, None, "YELLOW", True),
+    ]
+    rows = [
+        alarm_row(
+            i,
+            kind,
+            check_kind=check,
+            level=level,
+            severity=severity,
+            closes=closes,
+            trigger_check="roc",
+            trigger_seq=i,
+            trigger_t_onboard=at(i),
+            after_seq=i,
+            after_t_onboard=at(i),
+            closed_at=at(6),
+            alert=kind == "ESCALATE",
+        )
+        for i, (kind, check, level, severity, closes) in enumerate(transitions, start=1)
+    ]
+    f = fake(Fake([table([0.0])], alarms=rows))
+    msgs = await collect(f, T0, at(7))
+    alarms = [m.alarm for m in msgs if isinstance(m, ReplayAlarm)]
+    assert [a.trigger_check for a in alarms] == ["limit", "limit", "roc", "limit", "limit", "limit"]
+    assert [a.state for a in alarms] == ["UNACK", "ACKED", "UNACK", "UNACK", "RTN_UNACK", "CLEARED"]

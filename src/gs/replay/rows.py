@@ -13,7 +13,7 @@ from gs.common.views import _rows
 # Closing ACKs follow RTN in an alarm's append-only history; apply time is not replay position.
 _HISTORY = """
 WITH history AS (
- SELECT e.*, a.trigger_check, a.opened_at, a.closed_at,
+ SELECT e.*, a.opened_at, a.closed_at,
         lag(e.kind) OVER (PARTITION BY e.alarm_id ORDER BY e.id) AS previous_kind
  FROM alarm_events e JOIN alarms a USING (alarm_id)
  WHERE e.vehicle = %(vehicle)s
@@ -62,10 +62,14 @@ def alarm_after(prev: AlarmView | None, row: dict[str, Any]) -> AlarmView:
     severity = prev.severity if prev else row["severity"]
     if row["level"] and row["level"] != "NOMINAL":
         level, value, severity = row["level"], row["value"], row["severity"]
+    trigger_check = row["check_kind"]
+    if trigger_check is None:
+        assert prev is not None
+        trigger_check = prev.trigger_check
     t = position("ack" if row["kind"] == "ACK" else "alarm", row)[0]
     return AlarmView(
         alarm_id=row["alarm_id"], vehicle=row["vehicle"], param=row["param"], state=state,
-        severity=severity, level=level, value=value, trigger_check=row["trigger_check"],
+        severity=severity, level=level, value=value, trigger_check=trigger_check,
         limits_sha256=row["limits_sha256"], set_sha256=row["set_sha256"],
         opened_at=row["opened_at"],
         closed_at=(row["closed_at"] if row["kind"] == "ACK" else t)

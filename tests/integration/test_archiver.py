@@ -462,6 +462,35 @@ async def test_late_frame_before_delete_gives_v1() -> None:
     assert stored_in(v, H) == 0 and archive_rows(v)[0]["version"] == 1
 
 
+async def test_v1_keeps_the_archived_value_of_an_edited_hot_row(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """G4-17: with a verified recorded object, v+1 is the archived rows plus the hot rows not
+    archived yet; a hot row that shares a key but differs loses to the archived one (warned), as
+    in merge_late."""
+    from gs.common.time import iso_z
+
+    v = vid()
+    hot_hour(v, H, n=100)
+    col = param_columns()[0]
+    async with app_conn() as c:
+        assert await archive_hour(archiver_ctx(), c, v, H) is not None
+        with psycopg.connect(admin_dsn("gs"), autocommit=True) as a:
+            a.execute(f"update telemetry set {col} = -1 where vehicle=%s and seq=5", (v,))  # noqa: S608
+        late_row(v, H + timedelta(seconds=7, milliseconds=5), 100)
+        with caplog.at_level(logging.WARNING, logger="gs.archiver.job"):
+            v1 = await archive_hour(archiver_ctx(), c, v, H, version=1)
+    assert v1 is not None and v1.rows == 101
+
+    def at_seq5(version: int) -> list[Any]:
+        t = pq.read_table(io.BytesIO(object_bytes(object_key(v, H, version))))
+        return list(t.filter(pc.equal(t["seq"], 5))[col].to_pylist())
+
+    assert at_seq5(1) == at_seq5(0) != [-1.0]
+    warn = [r for r in caplog.records if "differ" in r.getMessage()]
+    assert warn and (warn[0].__dict__.get("vehicle"), warn[0].__dict__.get("hour")) == (v, iso_z(H))
+
+
 async def test_v1_needs_a_superset_of_the_old_version() -> None:
     v = vid()
     hot_hour(v, H, n=300)

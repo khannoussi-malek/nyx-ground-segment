@@ -14,7 +14,12 @@ Choose the hours first. Run `date -u +%Y-%m-%dT%H:00:00Z`: that is H, the start 
    PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -e PGPASSWORD db \
      psql -h 127.0.0.1 -U gs_app -d gs -c "select count(*) from telemetry where vehicle='NYX-TA9'"
    ```
-2. **Wait for the archiver.** Hours that ended are archived at the next loop, every `ARCHIVE_LOOP_S` (300 s). Watch `docker compose logs -f archiver`, or check the object list in step 3. Hot rows stay until the hour is more than `HOT_RETENTION_H` old.
+2. **Wait for the archiver.** Hours that ended are archived at the next loop, every `ARCHIVE_LOOP_S` (300 s). Watch `docker compose logs -f archiver`, or check the object list in step 3. Hot rows stay until the hour is more than `HOT_RETENTION_H` old. Wait until both backfilled hours are recorded:
+   ```
+   PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -e PGPASSWORD db \
+     psql -h 127.0.0.1 -U gs_app -d gs -c "select hour from archive_object where vehicle='NYX-TA9' order by hour"
+   ```
+   Expected rows (psql prints timestamptz like this; use your backfill date): `2026-11-16 08:00:00+00` and `2026-11-16 09:00:00+00`.
 3. **Verify an object and its sidecar** with the MinIO client inside the stack (no secret leaves the container):
    ```
    docker compose run --rm --no-deps --entrypoint bash minio-init -c '
@@ -37,10 +42,15 @@ Choose the hours first. Run `date -u +%Y-%m-%dT%H:00:00Z`: that is H, the start 
    PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -e PGPASSWORD db \
      psql -h 127.0.0.1 -U gs_app -d gs -c "select count(*) from telemetry where vehicle='NYX-TA9'"
    ```
-   Only now arm the crash and start the archiver:
+   Still before arming, list the recorded hours:
+   ```
+   PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -e PGPASSWORD db \
+     psql -h 127.0.0.1 -U gs_app -d gs -c "select hour from archive_object where vehicle='NYX-TA9' order by hour"
+   ```
+   It shows only `2026-11-16 08:00:00+00` and `2026-11-16 09:00:00+00`, no hour 10. Only now arm the crash and start the archiver:
    ```
    GS_TEST_HOOKS=1 ARCHIVER_CRASH_AT=archive:after_put ARCHIVE_LOOP_S=2 docker compose up -d archiver
    ```
-   The archiver dies right after an upload and before it records the object; `docker compose logs archiver` shows the line `test hook CRASH_AT=archive:after_put`. It does not log which hour: the plan builds the oldest pending hour first, and hours 08 and 09 of NYX-TA9 were recorded in step 2, so before the kill check that `select hour from archive_object where vehicle='NYX-TA9'` (same `psql` call as the count) lists only 08 and 09. Compose then brings the archiver back by itself (`restart: unless-stopped`, same environment); the hook fires once per container, so it does not crash again. Run the hot row count again: it is still 107900. Then restart it without the hook, in a shell where the three variables are not set: `docker compose up -d --force-recreate archiver`. Pass: within one loop the same `archive_object` query lists 08, 09 and 10, the sidecar of hour 10 verifies as in step 3, and the hot row count is still 107900.
+   Within seconds the archiver dies right after uploading hour 10 and before it records the object; `docker compose logs archiver` shows the line `test hook CRASH_AT=archive:after_put` (it names no hour; the plan builds the oldest pending hour first and hours 08 and 09 were already recorded). Compose brings the archiver back by itself (`restart: unless-stopped`, same environment); the hook fires once per container, so it does not crash again, and the restarted pass rebuilds hour 10 and records it within seconds. You cannot see the state in between; check the outcome. Pass: the hook log line is present, the `archive_object` query now lists `2026-11-16 08:00:00+00`, `2026-11-16 09:00:00+00` and `2026-11-16 10:00:00+00` (hour 10 was absent before arming, so the crash did not lose it), the sidecar of hour 10 verifies as in step 3, and the hot row count is still 107900. Clean up by restarting without the hook, in a shell where the three variables are not set: `docker compose up -d --force-recreate archiver`.
 5. **Replay a 20 min window at 10x.** In the console press Replay in the top bar, choose NYX-TA9, from `2026-11-16T08:00` to `2026-11-16T08:20` (UTC), speed 10x, **Start**. Expected: the purple REPLAY banner stays and cannot be dismissed, the leak raises its alarms at 10 min of replay time, the 10 s dropout at 15 min shows STALE and LOSS OF SIGNAL on replay time, and the replay ends after about 2 min. A window over an object that fails its hash check is refused with 409 "archive object failed hash check".
 6. Record the result in `docs/atp-report.md` (Gate 5).

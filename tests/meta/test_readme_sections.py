@@ -208,7 +208,11 @@ def test_atp07_counts_hot_rows_before_the_archiver_starts_and_checks_what_is_pen
     assert step.index("gs-sim backfill") < first_count < start
     assert "107900" in step  # 71900 + one full hour
     # a check the operator can run: the archive_object rows, and the one log line the hook writes
-    assert "from archive_object where vehicle='NYX-TA9'" in step
+    query = "select hour from archive_object where vehicle='NYX-TA9' order by hour"
+    assert first_count < step.index(query) < start, "list the recorded hours before arming"
+    assert step.count(query) == 1 and "2026-11-16 10:00:00+00" in step
+    assert "no hour 10" in step and "Pass:" in step and "hook log line is present" in step
+    assert step.index("Pass:") < step.index("--force-recreate")  # cleanup, not part of the pass
     assert "test hook CRASH_AT=archive:after_put" in step
     assert "restart: unless-stopped" in step
     assert "names the NYX-TA9" not in step  # the archiver does not log the hour
@@ -221,3 +225,9 @@ def test_atp07_step1_waits_for_ingest_before_step_2() -> None:
     count = step1.index("select count(*)")
     assert step1.index("gs-sim backfill") < step1.index("reaches 71900") < count
     assert "the archiver is running" in step1  # the wait is not claimed to prevent a pass
+
+
+def test_atp07_step2_waits_for_both_hours_to_be_recorded() -> None:
+    step2 = _atp("ATP-07").split("\n2. **", 1)[1].split("\n3. **", 1)[0]
+    assert "from archive_object where vehicle='NYX-TA9'" in step2
+    assert "2026-11-16 08:00:00+00" in step2 and "2026-11-16 09:00:00+00" in step2

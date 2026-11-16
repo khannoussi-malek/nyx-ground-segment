@@ -27,8 +27,8 @@ from gs.common.interfaces import Ground, Snapshot, Tm, UiEvent
 from gs.common.interfaces.base import StrictModel
 from gs.common.interfaces.dlq import schema_reject
 from gs.common.interfaces.render import schema_sha12
-from gs.common.interfaces.sse import AlarmView, EventView
-from gs.common.interfaces.ui_event import Resync
+from gs.common.interfaces.sse import Alarm, AlarmView, Cmd, EventView, Link
+from gs.common.interfaces.ui_event import Resync, UiMessage
 from gs.common.uievents import UI_EVENTS
 from gs.common.views import alarm_views, command_views, event_views
 from gs.ingest.events import GroundEvent, insert_events, mismatch_key, to_link
@@ -111,6 +111,18 @@ async def build_snapshot(
         commands=await command_views(conn, limit=SNAPSHOT_COMMANDS),
         events=events,
     )
+
+
+def _vehicle(msg: UiMessage) -> str | None:
+    match msg:
+        case Tm() | Resync():
+            return msg.vehicle
+        case Alarm():
+            return msg.alarm.vehicle
+        case Cmd():
+            return msg.command.vehicle
+        case Link():
+            return msg.event.vehicle
 
 
 @dataclass(eq=False)
@@ -250,6 +262,8 @@ class Hub:
         except ValidationError as e:
             await self._reject(entry_id, data, str(e))
             return
+        if (v := _vehicle(msg)) is not None and v not in self.vehicles:
+            return  # recorded-only vehicles (NYX-TA9) never reach the live console
         if isinstance(msg, Resync):  # a worker (re)started: everyone reloads (D-UI-18)
             await self._broadcast_snapshot()
             return

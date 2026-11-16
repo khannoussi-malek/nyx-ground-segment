@@ -1,7 +1,9 @@
 #!/bin/bash
 # One-shot MinIO setup (run by the minio-init service): the archive bucket, the least-privilege
 # `archiver` user (put/get/list on that bucket only, no delete; D-ARC-09) and the get-only `replay`
-# user the API reads the archive with (get/list, T4-l). Idempotent: safe to re-run.
+# user the API reads the archive with (get/list, T4-l). `replay` keeps s3:ListBucket on purpose: without
+# it S3 answers a missing key 403 AccessDenied, and the replay reader needs the 404 NoSuchKey to treat
+# a gone object as ArchiveCorrupt (409) rather than a permission fault. Idempotent: safe to re-run.
 set -euo pipefail
 export MC_CONFIG_DIR="${MC_CONFIG_DIR:-/tmp/mc}"
 

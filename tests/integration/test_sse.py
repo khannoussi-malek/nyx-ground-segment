@@ -9,7 +9,7 @@ import pytest
 
 from gs.api import events
 from tests.integration.conftest import LiveApi
-from tests.support.env import until, vid
+from tests.support.env import until
 from tests.support.redisx import client
 from tests.support.sse import Stream, publish_tm, seed_row, sse, validate
 
@@ -48,7 +48,7 @@ async def test_event_committed_during_snapshot_is_a_delta(
 ) -> None:
     orig = events.build_snapshot
 
-    v = vid()
+    v = live_api.vehicle  # only the API's own vehicles reach a console
 
     async def racing(*a, **k):  # type: ignore[no-untyped-def]
         publish_tm(v, seq=7)

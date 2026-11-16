@@ -1,0 +1,223 @@
+"""POST/GET/DELETE /api/replays against the in-process live server, and the live-stream vehicle
+filter (Track RP Task 13). Rows are seeded hot (or archived) for a vid() vehicle."""
+
+import asyncio
+import json
+from collections.abc import AsyncIterator, Iterator
+from contextlib import asynccontextmanager
+from datetime import UTC, datetime, timedelta
+from typing import Any
+
+import httpx
+import psycopg
+import pytest
+
+from gs.api import replays
+from gs.archiver.hours import HOUR, hour_of, object_key
+from gs.archiver.s3 import get as real_get
+from tests.integration.conftest import LiveApi
+from tests.integration.test_window_reader import archive_and_delete, flip
+from tests.support.archive import (  # noqa: F401  (archiver_paused is the module fixture)
+    app_conn,
+    archiver_paused,
+    hot_hour,
+)
+from tests.support.env import until, vid
+from tests.support.http import CLIENT_HEADERS, FC2_PW, login
+from tests.support.pg import admin_dsn
+from tests.support.s3 import s3_client
+from tests.support.sse import publish_tm, sse
+
+pytestmark = pytest.mark.usefixtures("archiver_paused")
+H = hour_of(datetime.now(UTC)) - timedelta(hours=40)
+SPAN = timedelta(seconds=30)
+_made: list[str] = []
+
+
+def vehicle() -> str:
+    _made.append(v := vid())
+    return v
+
+
+@pytest.fixture(autouse=True)
+def _cleanup() -> Iterator[None]:
+    yield
+    root = s3_client("root")
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
+        for v in _made:
+            for t in ("archive_object", "telemetry"):
+                c.execute(f"delete from {t} where vehicle = %s", (v,))  # noqa: S608
+            for o in root.list_objects("archive", prefix=f"{v}/", recursive=True):
+                root.remove_object("archive", o.object_name)
+    _made.clear()
+
+
+def body(
+    v: str, t_from: datetime = H, t_to: datetime = H + SPAN, speed: int = 10
+) -> dict[str, Any]:
+    return {"vehicle": v, "from": t_from.isoformat(), "to": t_to.isoformat(), "speed": speed}
+
+
+@asynccontextmanager
+async def client(live: LiveApi, cookie: str | None = None) -> AsyncIterator[httpx.AsyncClient]:
+    async with httpx.AsyncClient(
+        base_url=live.url, cookies={"session": cookie or live.cookie}, headers=CLIENT_HEADERS
+    ) as c:
+        yield c
+
+
+async def create(c: httpx.AsyncClient, payload: dict[str, Any]) -> str:
+    r = await c.post("/api/replays", json=payload)
+    assert r.status_code == 201, r.text
+    return str(r.json()["replay_id"])
+
+
+async def frames(r: httpx.Response) -> AsyncIterator[tuple[str, dict[str, Any]]]:
+    kind = ""
+    async for line in r.aiter_lines():
+        if line.startswith("event: "):
+            kind = line[7:]
+        elif line.startswith("data: "):
+            yield kind, json.loads(line[6:])
+
+
+def registry(live: LiveApi) -> dict[Any, Any]:
+    reg: dict[Any, Any] = live.app.state.replays
+    return reg
+
+
+async def test_create_and_stream_hot_window(live_api: LiveApi) -> None:
+    v = vehicle()
+    hot_hour(v, H, n=40, rate_hz=1.0)  # 10 s of it lie outside the window
+    async with client(live_api) as c:
+        rid = await create(c, body(v))
+        async with c.stream("GET", f"/api/replays/{rid}/events", timeout=20) as r:
+            assert r.status_code == 200
+            assert r.headers["content-type"].startswith("text/event-stream")
+            got = [f async for f in frames(r)]
+    kinds = [k for k, _ in got]
+    assert kinds[0] == "replay_start" and kinds[-1] == "replay_end"
+    assert got[-1][1]["reason"] == "done"
+    assert [d["seq"] for k, d in got if k == "tm"] == list(range(30))
+    assert all(d["replay"] is True for _, d in got)
+    assert registry(live_api) == {}
+
+
+async def test_no_data_404(live_api: LiveApi) -> None:
+    async with client(live_api) as c:
+        r = await c.post("/api/replays", json=body(vehicle()))
+    assert r.status_code == 404
+    assert r.json() == {"error": "NO_DATA", "message": "no data in window"}
+
+
+async def test_corrupt_hour_409(live_api: LiveApi) -> None:
+    v = vehicle()
+    hot_hour(v, H, n=50, rate_hz=1.0)
+    async with app_conn() as conn:
+        await archive_and_delete(conn, v, H)
+    flip(object_key(v, H))
+    async with client(live_api) as c:
+        r = await c.post("/api/replays", json=body(v))
+    assert r.status_code == 409
+    assert r.json() == {"error": "ARCHIVE_CORRUPT", "message": "archive object failed hash check"}
+    assert registry(live_api) == {}
+
+
+async def test_window_rules_400(live_api: LiveApi) -> None:
+    v = vehicle()
+    async with client(live_api) as c:
+        same = await c.post("/api/replays", json=body(v, H, H))
+        back = await c.post("/api/replays", json=body(v, H + SPAN, H))
+        big = await c.post("/api/replays", json=body(v, H, H + timedelta(hours=24, seconds=1)))
+    assert [r.status_code for r in (same, back, big)] == [400, 400, 400]
+    assert [r.json()["error"] for r in (same, back, big)] == [
+        "INVALID_WINDOW", "INVALID_WINDOW", "WINDOW_TOO_LARGE",
+    ]  # fmt: skip
+
+
+async def test_other_user_404_and_second_get_404(live_api: LiveApi) -> None:
+    v = vehicle()
+    hot_hour(v, H, n=30, rate_hz=1.0)
+    async with client(live_api) as c, httpx.AsyncClient(base_url=live_api.url) as other:
+        assert (await login(other, "fc2", FC2_PW)).status_code == 204
+        o = httpx.AsyncClient(base_url=live_api.url, cookies=other.cookies, headers=CLIENT_HEADERS)
+        try:
+            rid = await create(c, body(v, speed=1))
+            url = f"/api/replays/{rid}/events"
+            assert (await o.get(url)).status_code == 404
+            assert (await o.delete(f"/api/replays/{rid}")).status_code == 404
+            async with c.stream("GET", url, timeout=20) as first:
+                assert first.status_code == 200
+                assert (await c.get(url)).status_code == 404  # taken by the first GET
+                assert (await c.get(f"/api/replays/{uuid_zero()}/events")).status_code == 404
+            await until(lambda: registry(live_api) == {}, 3)
+        finally:
+            await o.aclose()
+
+
+def uuid_zero() -> str:
+    return "00000000-0000-0000-0000-000000000000"
+
+
+async def test_delete_stops_replay(live_api: LiveApi) -> None:
+    v = vehicle()
+    hot_hour(v, H, n=30, rate_hz=1.0)
+    async with client(live_api) as c:
+        rid = await create(c, body(v, speed=1))
+        async with c.stream("GET", f"/api/replays/{rid}/events", timeout=20) as r:
+            it = frames(r)
+            assert (await anext(it))[0] == "replay_start"
+            assert (await c.delete(f"/api/replays/{rid}")).status_code == 204
+            rest = [f async for f in it]
+        assert rest[-1][0] == "replay_end" and rest[-1][1]["reason"] == "stopped"
+        assert registry(live_api) == {}
+        assert (await c.delete(f"/api/replays/{rid}")).status_code == 404
+
+
+async def test_disconnect_stops_replay(live_api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    v = vehicle()
+    for h in (H, H + HOUR):  # one hour's gap after the first: the stream sleeps between objects
+        hot_hour(v, h, n=20, rate_hz=1.0)
+    async with app_conn() as conn:
+        for h in (H, H + HOUR):
+            await archive_and_delete(conn, v, h)
+    gets: list[str] = []
+    async with client(live_api) as c:
+        rid = await create(c, body(v, H, H + HOUR + SPAN, speed=10))
+
+        async def counting(*a: Any) -> bytes:
+            gets.append(a[2])
+            return await real_get(*a)
+
+        monkeypatch.setattr("gs.archiver.window.get", counting)
+        async with c.stream("GET", f"/api/replays/{rid}/events", timeout=20) as r:
+            async for k, _ in frames(r):
+                if k == "tm":
+                    break
+        seen = len(gets)
+        assert seen == 1 and len(registry(live_api)) <= 1
+        await until(lambda: registry(live_api) == {}, 1)
+        await asyncio.sleep(1.5)
+        assert len(gets) == seen  # the generator was closed: the second hour was never read
+
+
+async def test_idle_replay_expires(live_api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    v = vehicle()
+    hot_hour(v, H, n=30, rate_hz=1.0)
+    monkeypatch.setattr(replays, "REPLAY_IDLE_S", 0.3)
+    async with client(live_api) as c:
+        rid = await create(c, body(v))
+        assert len(registry(live_api)) == 1
+        await until(lambda: registry(live_api) == {}, 2)
+        assert (await c.get(f"/api/replays/{rid}/events")).status_code == 404
+
+
+async def test_hub_drops_vehicles_outside_api_vehicles(live_api: LiveApi) -> None:
+    outside = vid()  # not in the API's VEHICLES (stands in for NYX-TA9)
+    async with sse(live_api) as s:
+        await s.next_of("snapshot")
+        publish_tm(outside, seq=1)
+        publish_tm(live_api.vehicle, seq=2)
+        while (await s.next_of("tm"))[1]["vehicle"] != live_api.vehicle:
+            pass
+    assert {d["vehicle"] for k, d in s.seen if k == "tm"} == {live_api.vehicle}

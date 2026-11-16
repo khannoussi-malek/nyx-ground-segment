@@ -65,19 +65,23 @@ def test_zero_or_missing_cpu_is_not_measured() -> None:
     for cpu in (0.0, math.nan):
         text = scaling.render(scaling.extrapolate({**TOTALS, "cpu_fraction": cpu}))
         assert "not measured" in text and "fast enough" not in text
+        assert "| Worker CPU | not measured |\n" in text
     got = scaling.flatten(
         {"cpu_pct": {}, "redis_used_memory": {"per_vehicle_hour": 1.0}, "ingest_ms": {"p95": None}}
     )
     text = scaling.render(scaling.extrapolate(got))
     assert "nan" not in text and "not measured" in text
+    assert "| Ingest time p95 | not measured |\n" in text
 
 
 def test_fast_enough_boundary() -> None:
     assert scaling.CATCHUP_MAX_S == 60.0
     at = scaling.render(_scaling(60.0))
-    assert "is fast enough to catch up" in at and "60 s" in at
+    assert "clears in 60.00 s (limit 60 s)." in at
+    assert "clears in 60.04 s" not in at  # 60.04 s must not render as "60.0 s"
+    assert "needs 60.04 s (limit 60 s)" in scaling.render(_scaling(60.04))
     over = scaling.render(_scaling(60.1))
-    assert "is not fast enough" in over and "60.1 s" in over
+    assert "is not fast enough" in over and "60.10 s" in over
     # capacity 1500 vs load 1000 is exactly the 60 s boundary
     assert scaling.catch_up_s(30000, 1500, 1000) == 60.0
     assert scaling.extrapolate({**TOTALS, "cpu_fraction": 0.2 * 1000 / 1001}).catch_up > 60

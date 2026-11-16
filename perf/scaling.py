@@ -56,8 +56,8 @@ def extrapolate(totals: Mapping[str, float]) -> Scaling:
     )
 
 
-def _num(x: float, fmt: str) -> str:
-    return "not measured" if math.isnan(x) else format(x, fmt)
+def _num(x: float, fmt: str, unit: str = "") -> str:
+    return "not measured" if math.isnan(x) else f"{x:{fmt}}{unit}"
 
 
 def render(s: Scaling) -> str:
@@ -66,14 +66,14 @@ def render(s: Scaling) -> str:
     elif s.catch_up <= CATCHUP_MAX_S:
         headroom = (
             "Headroom: a restarted worker is fast enough to catch up with the missed and "
-            f"ongoing load: {RESTART_S:.0f} s of backlog clears in {s.catch_up:.1f} s "
+            f"ongoing load: {RESTART_S:.0f} s of backlog clears in {s.catch_up:.2f} s "
             f"(limit {CATCHUP_MAX_S:.0f} s)."
         )
     else:
         headroom = (
             "Headroom: a restarted worker is not fast enough to catch up with the missed and "
             f"ongoing load: {RESTART_S:.0f} s of backlog needs "
-            f"{'never' if math.isinf(s.catch_up) else f'{s.catch_up:.1f} s'} "
+            f"{'never' if math.isinf(s.catch_up) else f'{s.catch_up:.2f} s'} "
             f"(limit {CATCHUP_MAX_S:.0f} s). If capacity does not exceed the load the backlog "
             "never clears (metastable failure, Huang et al. 2022 p. 7): add workers."
         )
@@ -85,18 +85,17 @@ def render(s: Scaling) -> str:
     cpu = (
         "not measured"
         if math.isnan(s.cpu_at_target)
-        else f"{s.cpu_at_target * 100:.0f} % of one core"
+        else f"{s.cpu_at_target * 100:.0f} % of one core (capacity {s.capacity:.0f} frames/s)"
     )
-    cap = _num(s.capacity, ".0f")
     return (
         "# Scaling analysis (D-PERF-09)\n\n"
         f"Extrapolated linearly from run P ({len(VEHICLES)} vehicles x {RATE_HZ} Hz, "
         f"{DURATION_S} s) to {TARGET_VEHICLES} vehicles x {RATE_HZ} Hz = {TARGET_FPS} frames/s. "
         "No per-stage instrumentation (SR-06).\n\n"
         "| Quantity | At 1000 frames/s |\n|---|---|\n"
-        f"| Worker CPU | {cpu} (capacity {cap} frames/s) |\n"
-        f"| Redis growth | {_num(s.redis_mb_hour, '.1f')} MB/hour |\n"
-        f"| Ingest time p95 | {_num(s.insert_ms, '.1f')} ms |\n\n"
+        f"| Worker CPU | {cpu} |\n"
+        f"| Redis growth | {_num(s.redis_mb_hour, '.1f', ' MB/hour')} |\n"
+        f"| Ingest time p95 | {_num(s.insert_ms, '.1f', ' ms')} |\n\n"
         f"## Headroom\n\n{headroom}\n\n"
         "## First bottleneck and fix\n\n"
         "1. The engine per vehicle is single-threaded: split it by parameter group.\n"

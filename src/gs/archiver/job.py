@@ -87,10 +87,11 @@ async def archive_hour(
     table = await hot_table(conn, w, schema)
     if table.num_rows == 0:
         return None
-    if not await _may_replace_recorded(ctx, conn, vehicle, w.start, version, table):
+    body = encode(table)
+    if not await _may_replace_recorded(ctx, conn, vehicle, w.start, version, table, body):
         return None
     key = object_key(vehicle, w.start, version)
-    sha = await put(ctx.s3, ctx.bucket, key, encode(table))
+    sha = await put(ctx.s3, ctx.bucket, key, body)
     ctx.hooks.fire("archive:after_put")
 
     stored = await get(ctx.s3, ctx.bucket, key)
@@ -146,13 +147,15 @@ async def _recorded_table(
 
 async def _may_replace_recorded(
     ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], vehicle: str, hour: datetime,
-    version: int, table: pa.Table,
+    version: int, table: pa.Table, body: bytes,
 ) -> bool:  # fmt: skip
     """Checked BEFORE the PUT. Without a row anything goes. With one: only a strictly newer version,
     and never once the hot rows are deleted (the object is then the only copy; late rows go
     through merge_late). The new version must contain every row of the recorded one (hot rows are
     a superset only if nothing was lost since), which also implies min <= old t_min, max >= old
-    t_max and rows >= old rows."""
+    t_max and rows >= old rows. A corrupt or missing recorded object cannot show what it held, so
+    only a candidate `body` that hashes to the recorded sha256 (exactly the archived rows) may
+    replace it."""
     old = await _recorded(conn, vehicle, hour)
     if old is None:
         return True
@@ -166,12 +169,11 @@ async def _may_replace_recorded(
         return False
     prev = await _recorded_table(ctx, conn, old)
     if prev is None:
-        # corrupt or missing, and the hot rows are still here: they are the truth, a new version
-        # heals it (the ARCHIVE_CORRUPT resolves when the row's sha256 changes). The object cannot
-        # prove the new version drops nothing, the row can: same count and range at least.
-        t_min, t_max = table["t_onboard"][0].as_py(), table["t_onboard"][-1].as_py()
-        if table.num_rows < old.rows or t_min > old.t_min or t_max < old.t_max:
-            _fail(vehicle, hour, "the hot rows no longer cover the corrupt version's rows or range")
+        # corrupt or missing: count and range can't tell a swapped or edited row, the recorded hash
+        # can. ponytail: a late row (or a pyarrow upgrade, D-ARC-02) also refuses; the hot rows and
+        # the open ARCHIVE_CORRUPT then stay for an operator.
+        if hashlib.sha256(body).hexdigest() != old.sha256:
+            _fail(vehicle, hour, "the hot rows are not exactly the corrupt version's rows")
             return False
         return True
     if not set(keys(prev)) <= set(keys(table)):

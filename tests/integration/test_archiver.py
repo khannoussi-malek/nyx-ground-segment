@@ -28,6 +28,7 @@ from tests.support.archive import (  # noqa: F401  (archiver_paused is the modul
     archiver_paused,
     hot_hour,
     insert_late,
+    param_columns,
     stored_in,
 )
 from tests.support.env import dotenv
@@ -725,9 +726,8 @@ async def test_new_version_resolves_corrupt() -> None:
             _flip(object_key(v, H))
             await scrub_pass(archiver_ctx(), c)
             assert await unresolved_corrupt(c, v) == 1
-            insert_late(v, [{"t_onboard": H + timedelta(minutes=30), "seq": 5000}], db)
-            row = await archive_hour(archiver_ctx(), c, v, H, version=1)
-            assert row is not None and row.version == 1 and row.rows == 101
+            row = await archive_hour(archiver_ctx(), c, v, H, version=1)  # the exact archived rows
+            assert row is not None and row.version == 1 and row.rows == 100
             assert await unresolved_corrupt(c, v) == 0
             await scrub_pass(archiver_ctx(), c)
             assert await unresolved_corrupt(c, v) == 0
@@ -858,6 +858,48 @@ async def test_heal_refused_when_the_hot_rows_lost_the_old_range(lose: Any) -> N
             assert await unresolved_corrupt(c, v) == 1
 
 
+def _swap(v: str, db: str) -> None:  # one interior row lost, one late row inside: count, range same
+    insert_late(v, [{"t_onboard": H + timedelta(seconds=5, milliseconds=50), "seq": 8890}], db)
+    with psycopg.connect(admin_dsn(db), autocommit=True) as a:
+        a.execute("delete from telemetry where vehicle=%s and seq=50", (v,))
+
+
+def _edit(v: str, db: str) -> None:  # same keys, one value changed
+    with psycopg.connect(admin_dsn(db), autocommit=True) as a:
+        col = param_columns()[0]
+        a.execute(f"update telemetry set {col} = {col} + 1 where vehicle=%s and seq=50", (v,))  # noqa: S608
+
+
+def _late_only(v: str, db: str) -> None:  # a legitimate late row: refused too (accepted cost)
+    insert_late(v, [{"t_onboard": H + timedelta(seconds=5, milliseconds=50), "seq": 8890}], db)
+
+
+@pytest.mark.parametrize("change", [_swap, _edit, _late_only], ids=["swap", "edit", "late"])
+async def test_corrupt_hour_heals_only_from_exactly_the_archived_rows(change: Any) -> None:
+    """Fix 2 item 1: a corrupt or missing object is replaced only by a candidate whose encoding
+    hashes to the recorded sha256; anything else keeps the row, the hot rows and the open event."""
+    from gs.archiver.main import run_pass
+    from gs.archiver.scrub import unresolved_corrupt
+
+    v = vid()
+    with archive_db() as db:
+        hot_hour(v, H, n=100, db=db)
+        async with app_conn(db) as c:
+            row = await archive_hour(archiver_ctx(), c, v, H)
+            assert row is not None
+            _flip(object_key(v, H))
+            change(v, db)
+            hot = stored_in(v, H, db)
+            ctx = archiver_ctx(retention_h=0.0)
+            for _ in range(2):  # the refusal holds pass after pass: never healed, never deleted
+                res = await run_pass(ctx, c)
+                assert (res.archived, res.deleted, res.failed) == (0, 0, False)
+            r = archive_rows(v, db)[0]
+            assert (r["version"], r["sha256"], r["hot_deleted_at"]) == (0, row.sha256, None)
+            assert stored_in(v, H, db) == hot
+            assert await unresolved_corrupt(c, v) == 1
+
+
 async def test_hash_failures_in_delete_and_replace_write_the_event() -> None:
     from gs.archiver.job import corrupt_key
     from gs.archiver.scrub import unresolved_corrupt
@@ -878,8 +920,7 @@ async def test_hash_failures_in_delete_and_replace_write_the_event() -> None:
             ]
             assert await archive_hour(ctx, c, w, H) is not None
             _flip(object_key(w, H))
-            insert_late(w, [{"t_onboard": H + timedelta(minutes=1), "seq": 9}], db)
-            assert await archive_hour(ctx, c, w, H, version=1) is not None  # healed
+            assert await archive_hour(ctx, c, w, H, version=1) is not None  # healed (exact rows)
             assert rows("select key from events where vehicle=%s", w, db=db)  # and recorded
 
 

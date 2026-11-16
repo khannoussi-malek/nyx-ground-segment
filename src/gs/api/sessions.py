@@ -10,7 +10,7 @@ from fastapi import APIRouter, Request, Response
 from gs.api.bodies import ReportConflict, SessionReport, SessionStart, SessionView
 from gs.api.dbguard import connect, db_503, utc
 from gs.api.deps import ApiError, User, errors, mission, vehicles
-from gs.api.report import frozen_report, stored_csv
+from gs.api.report import frozen_report, refreeze, stored_csv
 from gs.common.audit import audit
 
 router = APIRouter()
@@ -18,10 +18,6 @@ REPORT_ERRORS: dict[int | str, dict[str, Any]] = {
     **errors(401, 404, 422, 503),
     409: {"model": ReportConflict},
 }
-
-
-def _todo(what: str) -> ApiError:
-    return ApiError(HTTPStatus.NOT_IMPLEMENTED, "NOT_IMPLEMENTED", what)
 
 
 _COLS = "id, vehicle, name, conductor, started_at, ended_at, ended_by"
@@ -118,7 +114,18 @@ async def get_report(session_id: int, request: Request, user: User) -> SessionRe
 )
 async def refreeze_report(session_id: int, request: Request, user: User) -> SessionReport:
     """D-DB-10, T4-m: rebuild an incomplete frozen report while the session's hot rows exist."""
-    raise _todo("report refreeze (Track SR Task 16)")
+    with db_503(request):
+        async with connect(request) as conn, conn.transaction():
+            got = await refreeze(conn, session_id, mission(request), user, datetime.now(UTC))
+    if got is None:
+        raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"no session {session_id}")
+    if got == "gone":
+        raise ApiError(
+            HTTPStatus.GONE, "HOT_DATA_GONE", "hot rows of the session window were deleted"
+        )
+    if isinstance(got, ReportConflict):
+        raise ApiError(HTTPStatus.CONFLICT, got.error, got.message, body=got)
+    return got
 
 
 @router.get(

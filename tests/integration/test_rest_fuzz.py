@@ -35,10 +35,9 @@ schema: Any = schemathesis.openapi.from_asgi("/openapi.json", app)  # Any: stubs
 # POST /api/commands would reach a real vehicle path; only a vid() target is allowed on the
 # test stack, and the fuzzer cannot promise that, so the check leaves the operation out
 schema = schema.exclude(method="POST", path="/api/commands")
-# Task 11's 501 route stubs: the track that implements one removes it here (Track SR Task 16,
-# Track RP Task 13); test_stubs_still_unimplemented fails once a stub stops answering 501
+# Task 11's 501 route stubs: the track that implements one removes it here (Track RP Task 13);
+# test_stubs_still_unimplemented fails once a stub stops answering 501
 STUBS = {
-    ("POST", "/api/sessions/{session_id}/report/refreeze"): None,
     ("POST", "/api/replays"): {
         "vehicle": "NYX-TA1", "from": "2026-11-15T10:00:00Z", "to": "2026-11-15T11:00:00Z",
         "speed": 1,

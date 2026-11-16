@@ -71,9 +71,31 @@ test("long lists scroll inside their pane: the page does not grow with the histo
 });
 
 test("a click on a parameter in a card plots it; the header counts the unacknowledged alarms", async ({ page }) => {
-  await page.locator('.plot-link[data-plot-vehicle="NYX-TA2"][data-plot-param="cabin_temp_c"]').click();
+  await page.locator('main .plot-link[data-plot-vehicle="NYX-TA2"][data-plot-param="cabin_temp_c"]').click();
   const chart = page.locator(".chart-panel");
   await expect(chart.getByLabel("Vehicle")).toHaveValue("NYX-TA2");
   await expect(chart.getByLabel("Parameter")).toHaveValue("cabin_temp_c");
   await expect(page.locator("header .alarm-summary")).toHaveText(/unacknowledged/);
+});
+
+test("the chart: hovering reads the value, a drag zooms into history, Older moves back, Live returns to now", async ({ page }) => {
+  await page.locator('main .plot-link[data-plot-vehicle="NYX-TA1"][data-plot-param="cabin_pressure_kpa"]').click();
+  await page.locator('.pane[data-pane="chart"]').evaluate((e) => e.scrollIntoView({ block: "start" }));
+  const range = page.locator(".chart .range");
+  await expect(range).toContainText("LIVE");
+  await expect(page.locator(".chart canvas").first()).toBeVisible();
+  const over = (await page.locator(".chart .u-over").boundingBox())!;
+  await page.mouse.move(over.x + over.width * 0.7, over.y + over.height / 2);
+  await expect(page.locator(".chart-tip")).toContainText(/\d\d:\d\d:\d\d\.\dZ/);
+  await expect(page.locator(".chart-tip")).toContainText("kPa");
+  await page.mouse.move(over.x + over.width * 0.4, over.y + 30);
+  await page.mouse.down();
+  await page.mouse.move(over.x + over.width * 0.6, over.y + 30, { steps: 6 });
+  await page.mouse.up();
+  await expect(range).toContainText("HISTORY");
+  const zoomed = await range.textContent();
+  await page.getByRole("button", { name: "Older" }).click();
+  await expect(range).not.toHaveText(zoomed!);
+  await page.getByRole("button", { name: "Live" }).click();
+  await expect(range).toContainText("LIVE");
 });

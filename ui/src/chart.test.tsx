@@ -9,12 +9,16 @@ import { createStore, ingest } from "./store";
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
 // uPlot needs a real canvas: replaced by a recorder, the geometry is tested through its hooks
-const made = vi.hoisted(() => ({ plots: [] as { opts: any; data: any; el: HTMLElement; setData: any; setSize: any; destroy: any }[] }));
+const made = vi.hoisted(() => ({ plots: [] as { opts: any; data: any; el: HTMLElement; setData: any; setSize: any; destroy: any; setScale: any; setSelect: any; over: HTMLElement }[] }));
 vi.mock("uplot", () => ({
   default: class {
     setData = vi.fn();
     setSize = vi.fn();
     destroy = vi.fn();
+    setScale = vi.fn();
+    setSelect = vi.fn();
+    // the plotting area: 800 px wide, 40 px from the chart's left edge (the y axis)
+    over = Object.assign(document.createElement("div"), { getBoundingClientRect: () => ({ left: 40, width: 800 }) });
     constructor(public opts: unknown, public data: unknown, public el: HTMLElement) {
       made.plots.push(this as never);
     }
@@ -313,4 +317,87 @@ test("the parameter picker names each parameter, in mission-db order; a choice f
   FakeRO.all.at(-1)!.resize(600);
   await flush();
   expect(urls(f).at(-1)!.pathname).toBe("/api/telemetry/NYX-TA2/a_param");
+});
+
+// ---- navigation: zoom, history, hover ----------------------------------------------------------------------------
+const ranges = (f: ReturnType<typeof stubBuckets>) => urls(f).map((u) => `${u.searchParams.get("from")!.slice(11, 19)}-${u.searchParams.get("to")!.slice(11, 19)}`);
+const press = (label: string) => act(async () => host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!.click());
+
+test("zoom in halves the span and stays live at now; zoom out doubles it", async () => {
+  const f = await mountChart();
+  await press("Zoom in");
+  await flush();
+  expect(ranges(f).at(-1)).toBe("10:09:00-10:10:00");
+  await press("Zoom out");
+  await press("Zoom out");
+  await flush();
+  expect(ranges(f).at(-1)).toBe("10:06:00-10:10:00");
+  expect(host.querySelector(".range")!.textContent).toContain("LIVE");
+});
+
+test("Older goes back half a span and stops following the clock; Newer comes back; Live returns to now", async () => {
+  const f = await mountChart();
+  await press("Older");
+  await flush();
+  expect(ranges(f).at(-1)).toBe("10:07:00-10:09:00");
+  expect(host.querySelector(".range")!.textContent).not.toContain("LIVE");
+  const n = f.mock.calls.length;
+  await act(async () => void vi.advanceTimersByTime(10_000));
+  expect(f.mock.calls.length).toBe(n); // history does not refresh
+  expect(host.querySelector<HTMLButtonElement>('button[aria-label="Newer"]')!.disabled).toBe(false);
+  await press("Live");
+  await flush();
+  expect(ranges(f).at(-1)).toBe("10:08:10-10:10:10");
+  expect(host.querySelector<HTMLButtonElement>('button[aria-label="Newer"]')!.disabled).toBe(true);
+});
+
+test("the range under the toolbar is printed in UTC with its date", async () => {
+  await mountChart();
+  expect(host.querySelector(".range")!.textContent).toContain("2026-11-14 10:08:00Z – 10:10:00Z");
+});
+
+test("a range dragged on the plot becomes the view", async () => {
+  const f = await mountChart();
+  const p = made.plots[0]!;
+  const t0 = Date.parse("2026-11-14T10:08:00Z") / 1000;
+  const u = { select: { left: 200, width: 200 }, posToVal: (px: number) => t0 + (px / 800) * 120, setSelect: p.setSelect };
+  await act(async () => p.opts.hooks.setSelect[0](u));
+  await flush();
+  expect(ranges(f).at(-1)).toBe("10:08:30-10:09:00");
+  expect(p.setSelect).toHaveBeenCalledWith({ left: 0, top: 0, width: 0, height: 0 }, false); // the selection box goes away
+});
+
+test("hovering shows the time, the value with its unit and the bucket's min and max; leaving hides it", async () => {
+  await mountChart();
+  const p = made.plots[0]!;
+  const t = Date.parse("2026-11-14T10:09:12.300Z") / 1000;
+  const u = { cursor: { idx: 1, left: 100, top: 30 }, data: [[t - 1, t], [101.2, 101.31], [101.1, 101.25], [101.4, 101.4]], over: { offsetLeft: 40, offsetTop: 8 } };
+  act(() => p.opts.hooks.setCursor[0](u));
+  const tip = host.querySelector<HTMLElement>(".chart-tip")!;
+  expect(tip.textContent).toContain("10:09:12.3Z");
+  expect(tip.textContent).toContain("101.31 kPa");
+  expect(tip.textContent).toContain("min 101.25 · max 101.40");
+  act(() => p.opts.hooks.setCursor[0]({ ...u, cursor: { idx: null, left: -10, top: -10 } }));
+  expect(host.querySelector(".chart-tip")).toBeNull();
+});
+
+test("Ctrl/⌘ + wheel zooms at the cursor; Shift + wheel or a sideways swipe moves in time; a plain wheel scrolls the page", async () => {
+  const f = await mountChart();
+  const plotEl = host.querySelector(".plot")!;
+  const wheel = (init: WheelEventInit) => {
+    const e = new WheelEvent("wheel", { bubbles: true, cancelable: true, ...init });
+    // happy-dom keeps only the deltas of a WheelEventInit; a browser sets these from the init too
+    for (const k of ["ctrlKey", "metaKey", "shiftKey", "clientX"] as const) Object.defineProperty(e, k, { value: init[k] ?? (k === "clientX" ? 0 : false) });
+    act(() => void plotEl.dispatchEvent(e));
+    return e;
+  };
+  expect(wheel({ deltaY: 100, clientX: 440 }).defaultPrevented).toBe(false); // the page scrolls
+  expect(wheel({ deltaY: -100, ctrlKey: true, clientX: 440 }).defaultPrevented).toBe(true); // zoom in at the middle
+  await act(async () => void vi.advanceTimersByTime(200));
+  expect(ranges(f).at(-1)).toBe("10:08:12-10:09:48");
+  expect(made.plots[0]!.setScale).toHaveBeenCalled(); // the plot moved at once, before the request
+  wheel({ deltaX: 400, clientX: 440 }); // a swipe forward by half the plot: past now, so live again (span 96 s)
+  wheel({ deltaY: -400, shiftKey: true, clientX: 440 }); // Shift + wheel up: half a span back in time
+  await act(async () => void vi.advanceTimersByTime(200));
+  expect(ranges(f).at(-1)).toBe("10:07:36-10:09:12"); // both moves, one request
 });

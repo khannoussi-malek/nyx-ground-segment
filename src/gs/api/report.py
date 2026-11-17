@@ -164,12 +164,24 @@ async def _complete(conn: psycopg.AsyncConnection, s: SessionView) -> bool:
     return mark is not None and mark[0] >= _end(s)
 
 
+async def _hot_gone(conn: psycopg.AsyncConnection, s: SessionView) -> bool:
+    """An archived hour of the session window is hot-deleted: the rows a report counts are gone."""
+    cur = await conn.execute(
+        "SELECT 1 FROM archive_object WHERE vehicle = %s AND hot_deleted_at IS NOT NULL"
+        " AND hour < %s AND hour + interval '1 hour' > %s LIMIT 1",
+        (s.vehicle, _end(s), s.started_at),
+    )
+    return await cur.fetchone() is not None
+
+
 async def frozen_report(
     conn: psycopg.AsyncConnection, session_id: int, mdb: MissionDb, now: datetime
-) -> SessionReport | ReportConflict | None:
-    """None: no such session. A stored report wins; running and not-yet-final sessions are a
-    ReportConflict. Freezing is INSERT ... ON CONFLICT DO NOTHING and then reading the stored
-    row back, so concurrent readers share one copy (R-p)."""
+) -> SessionReport | ReportConflict | Literal["gone"] | None:
+    """None: no such session. "gone": hot rows were deleted before the first freeze, so none is
+    stored (same rule as refreeze; checked after the build, so a deletion before it is seen).
+    A stored report wins; running and not-yet-final sessions are a ReportConflict.
+    Freezing is INSERT ... ON CONFLICT DO NOTHING and then reading the stored row back,
+    so concurrent readers share one copy (R-p)."""
     if (done := await _stored(conn, session_id)) is not None:
         return done
     s = await _load(conn, session_id)
@@ -188,6 +200,8 @@ async def frozen_report(
             frames=frames, expected=expected,
         )  # fmt: skip
     built = await build_report(conn, s, mdb, complete, now)
+    if await _hot_gone(conn, s):
+        return "gone"
     await conn.execute(
         "INSERT INTO session_report (session_id, report, csv) VALUES (%s, %s, %s)"
         " ON CONFLICT (session_id) DO NOTHING",
@@ -218,12 +232,7 @@ async def refreeze(
         return ReportConflict(error="REPORT_COMPLETE", message="the report is already complete")
     s = await _load(conn, session_id)
     assert s is not None  # session_report.session_id references test_session
-    cur = await conn.execute(
-        "SELECT 1 FROM archive_object WHERE vehicle = %s AND hot_deleted_at IS NOT NULL"
-        " AND hour < %s AND hour + interval '1 hour' > %s LIMIT 1",
-        (s.vehicle, _end(s), s.started_at),
-    )
-    if await cur.fetchone() is not None:
+    if await _hot_gone(conn, s):
         return "gone"
     built = await build_report(conn, s, mdb, await _complete(conn, s), now)
     await conn.execute(

@@ -592,6 +592,26 @@ async def test_refreeze_after_hot_delete_410(
     assert (await c.post(f"/api/sessions/{sid}/report/refreeze")).status_code == 200
 
 
+async def test_first_freeze_after_hot_delete_is_410_and_stores_nothing(
+    rep: tuple[httpx.AsyncClient, str],
+) -> None:
+    c, v = rep  # nobody read the report before the archiver deleted the hot rows (C1)
+    sid = _session(v)
+    _watermark(v, T0 + 20 * SEC)  # complete by the watermark rule
+    _sql(
+        "INSERT INTO archive_object (vehicle, hour, sha256, rows, verified_at, hot_deleted_at,"
+        " t_min, t_max) VALUES (%s, %s, 'x', 1, now(), now(), %s, %s)",
+        v, T0.replace(minute=0, second=0), T0, T0,
+    )  # fmt: skip
+    for path in ("report", "report.csv"):
+        r = await c.get(f"/api/sessions/{sid}/{path}")
+        assert (r.status_code, r.json()["error"]) == (410, "HOT_DATA_GONE")
+    with psycopg.connect(app_dsn("gs")) as check:
+        assert check.execute(
+            "SELECT count(*) FROM session_report WHERE session_id = %s", (sid,)
+        ).fetchone() == (0,)
+
+
 async def test_refreeze_ignores_hot_deleted_hours_outside_the_window(
     rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -2252,6 +2252,15 @@ export interface operations {
                     "application/json": components["schemas"]["ReportConflict"];
                 };
             };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description Unprocessable Content */
             422: {
                 headers: {
@@ -2317,6 +2326,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReportConflict"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
             /** @description Unprocessable Content */

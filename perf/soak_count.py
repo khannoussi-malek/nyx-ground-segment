@@ -143,7 +143,7 @@ def sent_frames(r: redis.Redis, v: str, start: datetime, end: datetime) -> set[F
     stream (the broker record of what was sent, read as admin, ingest has no XRANGE;
     360k entries are kept, 10 h at 10 Hz)."""
     key = f"tm:{v}"
-    info = cast(dict[str, Any], r.xinfo_stream(key))
+    info = r.xinfo_stream(key)
     first_ms = (
         int(str(info["first-entry"][0]).split("-")[0]) if info["first-entry"] else sys.maxsize
     )

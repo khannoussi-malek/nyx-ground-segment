@@ -1,6 +1,7 @@
 """gs-sim: two-vehicle 10 Hz telemetry simulator writing tm:<vehicle> streams."""
 
 import asyncio
+import os
 import random
 import signal
 import time
@@ -12,7 +13,7 @@ import redis.asyncio
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
-from gs.common.config import require, require_int, vehicle_list
+from gs.common.config import ConfigError, require, require_int, vehicle_list
 from gs.common.health import State, serve_health
 from gs.common.logs import setup_logging
 from gs.common.missiondb import load_dir
@@ -21,8 +22,19 @@ from gs.simulator.commands import CommandBox, tc_loop
 from gs.simulator.faults import FaultBoard, fault_routes
 from gs.simulator.frames import tick_loop
 
+DEFAULT_RATE_HZ, MAX_RATE_HZ = 10, 100  # D-PERF-05: run P drives 100 Hz
 MAXLEN = 360_000  # ~10 h at 10 Hz per vehicle (D-ING-06)
 DEGRADED_BACKLOG = 50  # frames queued: Redis unreachable for more than ~1.5 s with 2 vehicles
+
+
+def _rate_hz() -> int:
+    """Optional SIM_RATE_HZ, 1..100, default 10."""
+    if not os.environ.get("SIM_RATE_HZ"):
+        return DEFAULT_RATE_HZ
+    rate = require_int("SIM_RATE_HZ")
+    if not 1 <= rate <= MAX_RATE_HZ:
+        raise ConfigError(f"SIM_RATE_HZ must be 1..{MAX_RATE_HZ}, got {rate}")
+    return rate
 
 
 @dataclass(frozen=True)
@@ -33,6 +45,7 @@ class SimSettings:
     bind_host: str
     health_port: int
     mission_db: Path
+    rate_hz: int = DEFAULT_RATE_HZ
 
     @classmethod
     def from_env(cls) -> SimSettings:
@@ -43,6 +56,7 @@ class SimSettings:
             bind_host=require("BIND_HOST"),
             health_port=require_int("HEALTH_PORT"),
             mission_db=Path(require("MISSION_DB")),
+            rate_hz=_rate_hz(),
         )
 
 
@@ -85,7 +99,9 @@ async def run(s: SimSettings, stop: asyncio.Event) -> None:
         async with asyncio.TaskGroup() as tg:
             for v in s.vehicles:
                 rng = random.Random(f"{s.seed}:{v}")
-                tg.create_task(tick_loop(v, buf, rng, stop, faults=board, box=boxes[v]))
+                tg.create_task(
+                    tick_loop(v, buf, rng, stop, faults=board, box=boxes[v], period_s=1 / s.rate_hz)
+                )
                 tg.create_task(tc_loop(r, v, boxes[v], stop))
             tg.create_task(send_loop(buf, lambda st, d: xadd_tm(r, st, d), stop))
     finally:

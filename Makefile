@@ -1,7 +1,7 @@
 # Host needs only Docker + make (ENG-01); secrets are generated in a throwaway container.
 ENV_INIT = docker run --rm --user "$$(id -u):$$(id -g)" -v "$(CURDIR)":/w -w /w python:3.14-slim python scripts/init_env.py
 
-.PHONY: env up down reset migrate gen e2e perf
+.PHONY: env up down reset migrate gen e2e perf perf-p soak
 
 env:
 	@$(ENV_INIT)
@@ -27,3 +27,9 @@ e2e:
 
 perf:
 	uv run python -m perf.run_n
+
+perf-p:
+	uv run python -m perf.run_p
+
+soak:
+	uv run python -m perf.soak_count --hours 2

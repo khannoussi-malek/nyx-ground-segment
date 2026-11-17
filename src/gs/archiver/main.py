@@ -158,7 +158,8 @@ async def run_pass(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any]) -> Pass
         for a in plan_pass(now, counts, rows, ctx.retention_h, corrupt):
             try:
                 ok = await _act(ctx, conn, a, rows)
-                ctx.unreadable.discard((a.vehicle, a.hour))
+                if not isinstance(a, Anomaly):  # an Anomaly never reads the object
+                    ctx.unreadable.discard((a.vehicle, a.hour))
             except S3_ERRORS as e:
                 if not await object_local(ctx, a.vehicle, a.hour, e):
                     raise

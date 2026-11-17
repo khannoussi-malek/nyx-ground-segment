@@ -883,6 +883,61 @@ async def test_one_broken_object_fails_its_hour_and_later_hours_still_archive(
             assert archive_rows(v, db)[1]["hour"] == a
 
 
+def _state(ctx: Any) -> str:
+    from gs.archiver.status import archiver_status
+
+    now = datetime.now(UTC)
+    return archiver_status(now, True, True, True, None, 0, ctx.degraded_hours(), now)[0]
+
+
+async def test_an_anomaly_does_not_clear_an_unreadable_mark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m1: an hour that lost hot rows (Anomaly) and whose object fails stays degraded: the Anomaly
+    action never reads the object, so it cannot say the object works again."""
+    from gs.archiver.main import run_pass
+
+    v = vid()
+    with archive_db() as db:
+        hot_hour(v, H, n=20, db=db)
+        async with app_conn(db) as c:
+            assert await archive_hour(archiver_ctx(), c, v, H) is not None
+            await c.execute("delete from telemetry where vehicle=%s and seq=7", (v,))
+            ctx = archiver_ctx(retention_h=0.0)
+            _broken(ctx, monkeypatch, "get_object", object_key(v, H), "s3")
+            res = await run_pass(ctx, c)
+            assert not res.failed and res.anomalies == 1
+            assert ctx.unreadable == {(v, H)} and _state(ctx) == "degraded"
+            assert stored_in(v, H, db) == 19
+
+
+async def test_the_scrub_alone_clears_an_unreadable_hot_deleted_hour(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m2: a hot-deleted hour has no action, only the scrub reads it: unreadable -> degraded; a
+    later scrub read that works clears it."""
+    from gs.archiver.main import run_pass
+    from gs.archiver.plan import plan_pass as plan
+
+    v = vid()
+    with archive_db() as db:
+        hot_hour(v, H, n=20, db=db)
+        async with app_conn(db) as c:
+            row = await archive_hour(archiver_ctx(), c, v, H)
+            assert row is not None and await delete_hot(archiver_ctx(), c, row, hour_bounds(v, H))
+            assert plan(datetime.now(UTC), {}, {(v, H): archive_row(v, db)}, 0.0) == []
+            ctx = archiver_ctx(retention_h=0.0)
+            _broken(ctx, monkeypatch, "get_object", object_key(v, H), "s3")
+            res = await run_pass(ctx, c)
+            assert not res.failed and res.scrubbed == 0
+            assert ctx.unreadable == {(v, H)} and _state(ctx) == "degraded"
+            assert archive_rows(v, db)[0]["last_checked_at"] is None
+            monkeypatch.undo()
+            res = await run_pass(ctx, c)
+            assert not res.failed and res.scrubbed == 1
+            assert not ctx.unreadable and _state(ctx) == "ok"
+
+
 async def test_run_pass_end_to_end() -> None:
     from gs.archiver.main import run_pass
 

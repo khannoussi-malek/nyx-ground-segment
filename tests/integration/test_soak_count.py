@@ -54,7 +54,7 @@ async def test_window_bounds_and_the_two_sides_agree() -> None:
     with psycopg.connect(app_dsn("gs")) as db:
         start = b1 - timedelta(seconds=5)
         sent, held = sent_frames(_ingest_redis(), v, start, end), stored_frames(db, v, start, end)
-        assert len(sent) == 50 and sent == held
+        assert len(sent) == 50 and set(sent) == held
         # [start, end) is half open: seq 0..9 are before b1 + 1 s, seq 10 (exactly 1 s) is not
         cut = b1 + timedelta(seconds=1)
         assert {s for _, s in sent_frames(_ingest_redis(), v, start, cut)} == set(range(10))

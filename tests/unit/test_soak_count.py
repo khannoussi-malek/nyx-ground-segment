@@ -54,6 +54,14 @@ def test_sent_vs_stored_sees_head_tail_and_reset_loss() -> None:
     assert _lost(sent + sent[:3], sent) == 0  # a sender retry (same frame twice) is one frame
 
 
+def test_onboard_clock_step_back_is_not_a_reset() -> None:
+    # soak 2026-11-17: the VM clock stepped back 1.6 s mid-run; every frame was stored, but
+    # ordering by t_onboard split the epoch and counted 5 and 6 "lost" frames
+    sent = _f(E1, range(10)) + [(t - timedelta(seconds=1.6), s) for t, s in _f(E1, range(10, 20))]
+    assert _lost(sent, sent) == 0
+    assert _lost(sent, sent[:12] + sent[13:]) == 1  # a real hole is still seen
+
+
 def test_every_kind_of_loss_fails_the_soak() -> None:
     sent = _f(E1, range(100)) + _f(E2, range(50))
     for stored in (sent[5:], sent[:-7], sent[:140] + sent[145:], sent[:100] + sent[140:]):

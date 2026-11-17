@@ -355,3 +355,10 @@ main.login label { display: grid; gap: 0.25rem; font-size: 0.875rem; font-weight
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* the replay page: a purple frame and a banner that stays (D-REP-04, D-UI-16) */
+.replay-frame { border: 6px solid var(--replay); min-height: 60vh; }
+.replay-banner { display: flex; gap: 1.5rem; align-items: center; padding: 0.5rem 1.5rem; background: var(--replay); color: var(--on-replay); }
+.replay-controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; padding: 1rem 1.5rem 0; }
+.replay-controls label { display: flex; gap: 0.5rem; align-items: center; }
+.replay-progress, .replay-frame > [role="alert"] { padding: 0 1.5rem; }

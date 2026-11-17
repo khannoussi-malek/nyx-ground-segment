@@ -8,6 +8,7 @@ import { CommandPanel } from "./CommandPanel";
 import { EventStrip } from "./EventStrip";
 import { SessionPanel } from "./SessionPanel";
 import { LiveTable } from "./LiveTable";
+import { ReplayPage } from "./ReplayPage";
 import { Login } from "./Login";
 import { bootUser, checkSession, loadMission, safeLogout } from "./session";
 import { connectEvents } from "./sse";
@@ -113,6 +114,7 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
       store.stop();
     };
   }, [store, onLogout]);
+  const [replay, setReplay] = useState(false); // the live store, SSE, beep and tone stay mounted either way
   const running = useRunning(ctx);
   const { beeps, lastTone } = useAudio(store, ctx, running);
   return (
@@ -120,17 +122,24 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
       <header>
         <h1>Nyx</h1>
         <SoundBadge ctx={ctx} running={running} onArm={setCtx} />
+        <button onClick={() => setReplay((r) => !r)}>{replay ? "Live" : "Replay"}</button>
         <span>{user}</span>
         <button onClick={() => void safeLogout(logout).then(onLogout)}>Log out</button>
       </header>
-      <AlarmList store={store} mission={mission} user={user} />
-      <SessionPanel store={store} mission={mission} />
-      <CommandPanel store={store} mission={mission} />
-      <main>
-        <LiveTable store={store} mission={mission} probe={probe} />
-      </main>
-      <ChartPanel store={store} mission={mission} />
-      <EventStrip store={store} />
+      {replay ? (
+        <ReplayPage live={store} mission={mission} user={user} />
+      ) : (
+        <>
+          <AlarmList store={store} mission={mission} user={user} />
+          <SessionPanel store={store} mission={mission} />
+          <CommandPanel store={store} mission={mission} />
+          <main>
+            <LiveTable store={store} mission={mission} probe={probe} />
+          </main>
+          <ChartPanel store={store} mission={mission} />
+          <EventStrip store={store} />
+        </>
+      )}
     </div>
   );
 }

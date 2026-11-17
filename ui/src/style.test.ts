@@ -75,3 +75,8 @@ describe("style.css palette (D-UI-07)", () => {
     expect(contrast("#FFFFFF", "#B3141B")).toBeCloseTo(6.92, 1);
   });
 });
+
+it("the replay frame and banner use the REPLAY token only here", () => {
+  expect(css).toMatch(/\.replay-frame \{[^}]*var\(--replay\)/);
+  expect(css).toMatch(/\.replay-banner \{[^}]*var\(--on-replay\)/);
+});

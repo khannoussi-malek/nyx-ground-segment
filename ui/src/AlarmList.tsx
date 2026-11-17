@@ -16,7 +16,7 @@ const ALL = "ALL";
 const CHANGED = "Alarm changed – review it before acknowledging";
 
 /** Open alarms, sticky until CLEARED (a returned one stays until acknowledged), with the ACK request's own status. */
-export function AlarmList({ store, mission, user }: { store: Store; mission: MissionDb | null; user: string }) {
+export function AlarmList({ store, mission, user, readOnly = false }: { store: Store; mission: MissionDb | null; user: string; readOnly?: boolean }) {
   const alarms = useSyncExternalStore(store.subscribe, store.alarms, store.alarms);
   const link = useSyncExternalStore(store.subscribe, store.link, store.link);
   const wired = useSyncExternalStore(store.subscribe, store.hasSnapshot, store.hasSnapshot);
@@ -99,7 +99,7 @@ export function AlarmList({ store, mission, user }: { store: Store; mission: Mis
                   <td>
                     {status && <span className="ack-status">{status.text}</span>}
                     {changedIds.has(a.alarm_id) && <span className="ack-status" role="status">{CHANGED}</span>}
-                    {(a.state === "UNACK" || a.state === "RTN_UNACK") && (
+                    {!readOnly && (a.state === "UNACK" || a.state === "RTN_UNACK") && (
                       <button
                         disabled={status?.pending || !live(a.vehicle)}
                         aria-label={`Acknowledge ${a.vehicle} ${a.param}`}

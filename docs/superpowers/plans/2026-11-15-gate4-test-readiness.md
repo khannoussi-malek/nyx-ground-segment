@@ -869,7 +869,7 @@ def test_totals_from_hand_built_samples(): ...
 - **T4-n** Determinism test compares every `alarm_events` key and the frame-produced event keys; a LOS pair recorded by the wall-clock timer during a backfill pause is excluded (it never resets the engine).
 - **T4-o** Replay banner counter = live UNACK alarms with the RED count.
 - **T4-p** `init_env` appends missing keys to an existing `.env` (never rewrites a line).
-- **T4-q** Archiver `/healthz`: DB unreachable → down; Redis or MinIO unreachable → degraded; a pass that saw an S3 error deletes nothing.
+- **T4-q** Archiver `/healthz`: DB unreachable → down; Redis or MinIO unreachable → degraded; an S3 error local to one object blocks deletes only for that hour, a global one blocks every delete in the pass (ruling G4-18 amends T4-q; the first wording was "a pass that saw an S3 error deletes nothing").
 - **T4-r** `ARCHIVE_LOOP_S` (default 300) and `SIM_RATE_HZ` (default 10, 1–100) join the D-ENG-16 test controls; no injectable clock.
 - **T4-s** Backfill paces by buffer back-pressure, not wall rate, and starts after the last stored TA9 hour (`next_ta9_window`).
 

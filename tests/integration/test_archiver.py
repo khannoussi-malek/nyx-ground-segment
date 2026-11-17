@@ -28,6 +28,7 @@ from tests.support.archive import (  # noqa: F401  (archiver_paused is the modul
     archiver_paused,
     hot_hour,
     insert_late,
+    param_columns,
     stored_in,
 )
 from tests.support.env import dotenv
@@ -461,6 +462,35 @@ async def test_late_frame_before_delete_gives_v1() -> None:
     assert stored_in(v, H) == 0 and archive_rows(v)[0]["version"] == 1
 
 
+async def test_v1_keeps_the_archived_value_of_an_edited_hot_row(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """G4-17: with a verified recorded object, v+1 is the archived rows plus the hot rows not
+    archived yet; a hot row that shares a key but differs loses to the archived one (warned), as
+    in merge_late."""
+    from gs.common.time import iso_z
+
+    v = vid()
+    hot_hour(v, H, n=100)
+    col = param_columns()[0]
+    async with app_conn() as c:
+        assert await archive_hour(archiver_ctx(), c, v, H) is not None
+        with psycopg.connect(admin_dsn("gs"), autocommit=True) as a:
+            a.execute(f"update telemetry set {col} = -1 where vehicle=%s and seq=5", (v,))  # noqa: S608
+        late_row(v, H + timedelta(seconds=7, milliseconds=5), 100)
+        with caplog.at_level(logging.WARNING, logger="gs.archiver.job"):
+            v1 = await archive_hour(archiver_ctx(), c, v, H, version=1)
+    assert v1 is not None and v1.rows == 101
+
+    def at_seq5(version: int) -> list[Any]:
+        t = pq.read_table(io.BytesIO(object_bytes(object_key(v, H, version))))
+        return list(t.filter(pc.equal(t["seq"], 5))[col].to_pylist())
+
+    assert at_seq5(1) == at_seq5(0) != [-1.0]
+    warn = [r for r in caplog.records if "differ" in r.getMessage()]
+    assert warn and (warn[0].__dict__.get("vehicle"), warn[0].__dict__.get("hour")) == (v, iso_z(H))
+
+
 async def test_v1_needs_a_superset_of_the_old_version() -> None:
     v = vid()
     hot_hour(v, H, n=300)
@@ -725,9 +755,8 @@ async def test_new_version_resolves_corrupt() -> None:
             _flip(object_key(v, H))
             await scrub_pass(archiver_ctx(), c)
             assert await unresolved_corrupt(c, v) == 1
-            insert_late(v, [{"t_onboard": H + timedelta(minutes=30), "seq": 5000}], db)
-            row = await archive_hour(archiver_ctx(), c, v, H, version=1)
-            assert row is not None and row.version == 1 and row.rows == 101
+            row = await archive_hour(archiver_ctx(), c, v, H, version=1)  # the exact archived rows
+            assert row is not None and row.version == 1 and row.rows == 100
             assert await unresolved_corrupt(c, v) == 0
             await scrub_pass(archiver_ctx(), c)
             assert await unresolved_corrupt(c, v) == 0
@@ -743,7 +772,18 @@ def _dead_ctx() -> Any:
     )  # fmt: skip
 
 
-async def test_minio_down_pass_deletes_nothing() -> None:
+def _wrong_key_ctx() -> Any:  # MinIO answers, but every request gets an S3 error (not object-local)
+    from minio import Minio
+
+    env = dotenv()
+    return archiver_ctx(
+        s3=Minio(f"127.0.0.1:{env['MINIO_HOST_PORT']}", "archiver", "wrong-secret", secure=False,
+                 region="us-east-1")
+    )  # fmt: skip
+
+
+@pytest.mark.parametrize("outage", [_dead_ctx, _wrong_key_ctx], ids=["unreachable", "wrong_key"])
+async def test_minio_down_pass_deletes_nothing(outage: Any) -> None:
     from gs.archiver.main import run_pass
 
     v = vid()
@@ -753,7 +793,7 @@ async def test_minio_down_pass_deletes_nothing() -> None:
             hot_hour(v, h, n=20, db=db)
         async with app_conn(db) as c:
             assert await archive_hour(archiver_ctx(), c, v, old) is not None  # verified, delete due
-            res = await run_pass(_dead_ctx(), c)
+            res = await run_pass(outage(), c)
             assert res.failed and res.deleted == 0
             assert [stored_in(v, h, db) for h in (old, older, oldest)] == [20, 20, 20]
             assert [r["hour"] for r in archive_rows(v, db)] == [old]
@@ -762,6 +802,140 @@ async def test_minio_down_pass_deletes_nothing() -> None:
             done = {r["hour"]: r["verified_at"] for r in archive_rows(v, db)}
             assert set(done) == {old, older, oldest}
             assert done[oldest] < done[older]  # the oldest due hour was built first
+
+
+def _error(kind: str, key: str) -> Exception:
+    """What one object's request raises: an S3 error answer, retries exhausted on a 503, a stream
+    cut mid-body, a read timeout."""
+    import urllib3
+    from urllib3.exceptions import MaxRetryError, ProtocolError, ReadTimeoutError, ResponseError
+
+    pool = urllib3.HTTPConnectionPool("127.0.0.1")
+    match kind:
+        case "s3":
+            return S3Error(
+                urllib3.HTTPResponse(status=403), "AccessDenied", "Access Denied.", f"/{key}",
+                None, None, "archive", key,
+            )  # fmt: skip
+        case "503":
+            return MaxRetryError(pool, f"/{key}", ResponseError("too many 503 error responses"))
+        case "stream":
+            return ProtocolError("Connection broken: IncompleteRead(3 bytes read)")
+        case _:
+            return ReadTimeoutError(pool, f"/{key}", "Read timed out.")
+
+
+def _broken(ctx: Any, monkeypatch: pytest.MonkeyPatch, method: str, key: str, kind: str) -> None:
+    """`key` alone fails every `method` call with `_error(kind)`; the rest of the bucket works."""
+    real = getattr(ctx.s3, method)
+
+    def call(bucket: str, name: str, *a: Any, **k: Any) -> Any:
+        if name == key:
+            raise _error(kind, key)
+        return real(bucket, name, *a, **k)
+
+    monkeypatch.setattr(ctx.s3, method, call)
+
+
+@pytest.mark.parametrize(
+    ("op", "kind"),
+    [("get", "s3"), ("get", "503"), ("get", "stream"), ("put", "s3"), ("put", "timeout")],
+)
+async def test_one_broken_object_fails_its_hour_and_later_hours_still_archive(
+    op: str, kind: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Fix 2 item 2 / fix 3 I1: a persistent error on hour A's object (MinIO itself still lists)
+    fails only A: the newer hour B archives in the same pass and (G4-18) the verified delete-due
+    hour C is deleted; A keeps its hot rows, /healthz is degraded until A's object works again."""
+    from gs.archiver.main import run_pass
+    from gs.archiver.status import archiver_status
+    from gs.common.time import iso_z
+
+    def state(ctx: Any) -> str:
+        now = datetime.now(UTC)
+        return archiver_status(now, True, True, True, None, 0, ctx.degraded_hours(), now)[0]
+
+    v = vid()
+    c_, a, b = H - 2 * HOUR, H - HOUR, H
+    with archive_db() as db:
+        for h in (c_, a, b):
+            hot_hour(v, h, n=20, db=db)
+        async with app_conn(db) as c:
+            assert await archive_hour(archiver_ctx(), c, v, c_) is not None  # verified, delete-due
+            if op == "get":  # A archived and delete-due: the scrub reads it first
+                assert await archive_hour(archiver_ctx(), c, v, a) is not None
+            ctx = archiver_ctx(retention_h=0.0)
+            _broken(ctx, monkeypatch, op + "_object", object_key(v, a), kind)
+            res = await run_pass(ctx, c)
+            assert not res.failed and (res.archived, res.deleted) == (1, 1)
+            assert [stored_in(v, h, db) for h in (c_, a, b)] == [0, 20, 20]
+            got = {r["hour"]: r for r in archive_rows(v, db)}
+            assert set(got) == ({c_, a, b} if op == "get" else {c_, b})
+            if op == "get":
+                assert got[a]["hot_deleted_at"] is None and got[a]["last_checked_at"] is None
+            assert ctx.unreadable == {(v, a)} and not ctx.refused and state(ctx) == "degraded"
+            logged = [r for r in caplog.records if r.__dict__.get("hour") == iso_z(a)]
+            assert logged and logged[-1].__dict__["vehicle"] == v
+
+            monkeypatch.undo()  # A's object works again: the next pass clears the mark
+            res = await run_pass(ctx, c)
+            assert not res.failed and not ctx.unreadable and state(ctx) == "ok"
+            assert archive_rows(v, db)[1]["hour"] == a
+
+
+def _state(ctx: Any) -> str:
+    from gs.archiver.status import archiver_status
+
+    now = datetime.now(UTC)
+    return archiver_status(now, True, True, True, None, 0, ctx.degraded_hours(), now)[0]
+
+
+async def test_an_anomaly_does_not_clear_an_unreadable_mark(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m1: an hour that lost hot rows (Anomaly) and whose object fails stays degraded: the Anomaly
+    action never reads the object, so it cannot say the object works again."""
+    from gs.archiver.main import run_pass
+
+    v = vid()
+    with archive_db() as db:
+        hot_hour(v, H, n=20, db=db)
+        async with app_conn(db) as c:
+            assert await archive_hour(archiver_ctx(), c, v, H) is not None
+            await c.execute("delete from telemetry where vehicle=%s and seq=7", (v,))
+            ctx = archiver_ctx(retention_h=0.0)
+            _broken(ctx, monkeypatch, "get_object", object_key(v, H), "s3")
+            res = await run_pass(ctx, c)
+            assert not res.failed and res.anomalies == 1
+            assert ctx.unreadable == {(v, H)} and _state(ctx) == "degraded"
+            assert stored_in(v, H, db) == 19
+
+
+async def test_the_scrub_alone_clears_an_unreadable_hot_deleted_hour(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """m2: a hot-deleted hour has no action, only the scrub reads it: unreadable -> degraded; a
+    later scrub read that works clears it."""
+    from gs.archiver.main import run_pass
+    from gs.archiver.plan import plan_pass as plan
+
+    v = vid()
+    with archive_db() as db:
+        hot_hour(v, H, n=20, db=db)
+        async with app_conn(db) as c:
+            row = await archive_hour(archiver_ctx(), c, v, H)
+            assert row is not None and await delete_hot(archiver_ctx(), c, row, hour_bounds(v, H))
+            assert plan(datetime.now(UTC), {}, {(v, H): archive_row(v, db)}, 0.0) == []
+            ctx = archiver_ctx(retention_h=0.0)
+            _broken(ctx, monkeypatch, "get_object", object_key(v, H), "s3")
+            res = await run_pass(ctx, c)
+            assert not res.failed and res.scrubbed == 0
+            assert ctx.unreadable == {(v, H)} and _state(ctx) == "degraded"
+            assert archive_rows(v, db)[0]["last_checked_at"] is None
+            monkeypatch.undo()
+            res = await run_pass(ctx, c)
+            assert not res.failed and res.scrubbed == 1
+            assert not ctx.unreadable and _state(ctx) == "ok"
 
 
 async def test_run_pass_end_to_end() -> None:
@@ -858,6 +1032,48 @@ async def test_heal_refused_when_the_hot_rows_lost_the_old_range(lose: Any) -> N
             assert await unresolved_corrupt(c, v) == 1
 
 
+def _swap(v: str, db: str) -> None:  # one interior row lost, one late row inside: count, range same
+    insert_late(v, [{"t_onboard": H + timedelta(seconds=5, milliseconds=50), "seq": 8890}], db)
+    with psycopg.connect(admin_dsn(db), autocommit=True) as a:
+        a.execute("delete from telemetry where vehicle=%s and seq=50", (v,))
+
+
+def _edit(v: str, db: str) -> None:  # same keys, one value changed
+    with psycopg.connect(admin_dsn(db), autocommit=True) as a:
+        col = param_columns()[0]
+        a.execute(f"update telemetry set {col} = {col} + 1 where vehicle=%s and seq=50", (v,))  # noqa: S608
+
+
+def _late_only(v: str, db: str) -> None:  # a legitimate late row: refused too (accepted cost)
+    insert_late(v, [{"t_onboard": H + timedelta(seconds=5, milliseconds=50), "seq": 8890}], db)
+
+
+@pytest.mark.parametrize("change", [_swap, _edit, _late_only], ids=["swap", "edit", "late"])
+async def test_corrupt_hour_heals_only_from_exactly_the_archived_rows(change: Any) -> None:
+    """Fix 2 item 1: a corrupt or missing object is replaced only by a candidate whose encoding
+    hashes to the recorded sha256; anything else keeps the row, the hot rows and the open event."""
+    from gs.archiver.main import run_pass
+    from gs.archiver.scrub import unresolved_corrupt
+
+    v = vid()
+    with archive_db() as db:
+        hot_hour(v, H, n=100, db=db)
+        async with app_conn(db) as c:
+            row = await archive_hour(archiver_ctx(), c, v, H)
+            assert row is not None
+            _flip(object_key(v, H))
+            change(v, db)
+            hot = stored_in(v, H, db)
+            ctx = archiver_ctx(retention_h=0.0)
+            for _ in range(2):  # the refusal holds pass after pass: never healed, never deleted
+                res = await run_pass(ctx, c)
+                assert (res.archived, res.deleted, res.failed) == (0, 0, False)
+            r = archive_rows(v, db)[0]
+            assert (r["version"], r["sha256"], r["hot_deleted_at"]) == (0, row.sha256, None)
+            assert stored_in(v, H, db) == hot
+            assert await unresolved_corrupt(c, v) == 1
+
+
 async def test_hash_failures_in_delete_and_replace_write_the_event() -> None:
     from gs.archiver.job import corrupt_key
     from gs.archiver.scrub import unresolved_corrupt
@@ -878,8 +1094,7 @@ async def test_hash_failures_in_delete_and_replace_write_the_event() -> None:
             ]
             assert await archive_hour(ctx, c, w, H) is not None
             _flip(object_key(w, H))
-            insert_late(w, [{"t_onboard": H + timedelta(minutes=1), "seq": 9}], db)
-            assert await archive_hour(ctx, c, w, H, version=1) is not None  # healed
+            assert await archive_hour(ctx, c, w, H, version=1) is not None  # healed (exact rows)
             assert rows("select key from events where vehicle=%s", w, db=db)  # and recorded
 
 

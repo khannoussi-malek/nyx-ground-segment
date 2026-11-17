@@ -17,7 +17,14 @@ from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
 from gs.archiver.hours import hour_bounds
-from gs.archiver.job import ArchiverCtx, archive_hour, delete_hot, merge_late
+from gs.archiver.job import (
+    ArchiverCtx,
+    archive_hour,
+    bucket_answers,
+    delete_hot,
+    merge_late,
+    object_local,
+)
 from gs.archiver.plan import (
     Action,
     Anomaly,
@@ -134,8 +141,10 @@ async def _act(
 
 async def run_pass(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any]) -> PassResult:
     """One loop: scrub first, then plan from hot counts, archive rows and the unresolved corrupt
-    hours, then act: builds oldest first, deletes after them. An S3 error ends the pass at once
-    (the scrub runs before any delete, so no delete follows an S3 error: T4-q)."""
+    hours, then act: builds oldest first, deletes after them. S3 trouble local to one hour's
+    object (job.object_local) fails that hour only, other verified hours may still be deleted
+    (G4-18); any other S3 error ends the pass at once (the scrub runs before any delete, so no
+    delete follows a MinIO outage: T4-q as amended by G4-18)."""
     now = datetime.now(UTC)
     cur = await conn.execute(COUNTS)
     counts = {(v, h): int(n) for v, h, n in await cur.fetchall()}
@@ -147,7 +156,14 @@ async def run_pass(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any]) -> Pass
         res = replace(res, scrubbed=await scrub_pass(ctx, conn))
         corrupt = await unresolved_corrupt_keys(conn)
         for a in plan_pass(now, counts, rows, ctx.retention_h, corrupt):
-            ok = await _act(ctx, conn, a, rows)
+            try:
+                ok = await _act(ctx, conn, a, rows)
+                if not isinstance(a, Anomaly):  # an Anomaly never reads the object
+                    ctx.unreadable.discard((a.vehicle, a.hour))
+            except S3_ERRORS as e:
+                if not await object_local(ctx, a.vehicle, a.hour, e):
+                    raise
+                ok = False
             match a:
                 case Archive():
                     res = replace(res, archived=res.archived + ok)
@@ -204,13 +220,8 @@ async def _db_facts(s: ArchiverSettings) -> int | None:
 async def _probe(s: ArchiverSettings, ctx: ArchiverCtx, r: redis.asyncio.Redis) -> Snapshot:
     """Cheap health facts only (the backlog and last_pass come from the pass); the three probes
     run concurrently, each bounded."""
-
-    def listing() -> bool:
-        list(ctx.s3.list_objects(ctx.bucket, prefix="healthz/"))
-        return True
-
     pinged, listed, corrupt = await asyncio.gather(
-        _bounded(r.ping()), _bounded(asyncio.to_thread(listing)), _bounded(_db_facts(s))
+        _bounded(r.ping()), _bounded(bucket_answers(ctx)), _bounded(_db_facts(s))
     )
     return Snapshot(corrupt is not None, bool(pinged), bool(listed), corrupt or 0)
 
@@ -265,7 +276,7 @@ async def run(s: ArchiverSettings, stop: asyncio.Event) -> None:
         snap = box.snap
         return archiver_status(
             datetime.now(UTC), snap.db_ok, snap.redis_ok, snap.s3_ok, snap.oldest_unarchived,
-            snap.corrupt, len(ctx.refused), snap.last_pass,
+            snap.corrupt, ctx.degraded_hours(), snap.last_pass,
         )  # fmt: skip
 
     server = await serve_health(s.bind_host, s.health_port, status)

@@ -88,7 +88,7 @@ async def window_hours(
         if found is not None:
             row = ArchiveRow(*found)
             t = (
-                merged_rows(await _archived(s3, bucket, row), hot, vehicle)
+                merged_rows(await _archived(s3, bucket, row), hot, vehicle, row.hour)
                 if hot.num_rows
                 else (await _archived(s3, bucket, row))
             )

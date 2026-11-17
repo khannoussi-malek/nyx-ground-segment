@@ -1,5 +1,6 @@
 """Archive one vehicle-hour: write, read back, compare bytes and rows, only then record it."""
 
+import asyncio
 import hashlib
 import logging
 from dataclasses import dataclass, field
@@ -24,7 +25,7 @@ from gs.archiver.parquet import (
     sort_rows,
 )
 from gs.archiver.plan import ArchiveRow
-from gs.archiver.s3 import get, put
+from gs.archiver.s3 import S3_ERRORS, get, put
 from gs.common.hooks import Hooks
 from gs.common.time import iso_z
 from gs.ingest.events import GroundEvent, insert_events
@@ -69,6 +70,42 @@ class ArchiverCtx:
     refused: set[tuple[str, datetime]] = field(
         default_factory=set
     )  # hours whose hot delete was refused
+    unreadable: set[tuple[str, datetime]] = field(
+        default_factory=set
+    )  # hours whose object failed on its own last pass (object_local); cleared when it works
+
+    def degraded_hours(self) -> int:
+        """/healthz `delete_refused` (T4-c): refused deletes and hours with an unreadable object."""
+        return len(self.refused | self.unreadable)
+
+
+async def bucket_answers(ctx: ArchiverCtx) -> bool:
+    """MinIO lists the bucket (the health probe's request)."""
+
+    def listing() -> None:
+        list(ctx.s3.list_objects(ctx.bucket, prefix="healthz/"))
+
+    try:
+        await asyncio.to_thread(listing)
+    except S3_ERRORS:
+        return False
+    return True
+
+
+async def object_local(ctx: ArchiverCtx, vehicle: str, hour: datetime, e: BaseException) -> bool:
+    """Any S3 trouble (S3_ERRORS: an error answer, a 5xx after retries, a timeout, a cut stream) on
+    one hour's object while the bucket still lists is that hour's trouble: logged, marked
+    unreadable (/healthz degraded), and the pass goes on (G4-18: other verified hours may still be
+    deleted; every delete re-reads its own object first). False (the caller re-raises, the pass
+    stops, nothing more is deleted) when the listing fails too: MinIO as a whole is in trouble."""
+    if not await bucket_answers(ctx):
+        return False
+    ctx.unreadable.add((vehicle, hour))
+    log.error(
+        "archiver skipped %s %s this pass, S3 error on its object: %s", vehicle, hour, e,
+        extra={"vehicle": vehicle, "hour": iso_z(hour)},
+    )  # fmt: skip
+    return True
 
 
 def _fail(vehicle: str, hour: datetime, why: str) -> None:
@@ -80,32 +117,37 @@ async def archive_hour(
     version: int = 0,
 ) -> ArchiveRow | None:  # fmt: skip
     """The archive_object row is written only after the stored bytes hash to what was sent AND the
-    decoded rows equal a second read of the hot rows. Anything else: log, no row, None. S3 errors
-    propagate (the pass treats them as MinIO trouble and deletes nothing)."""
+    decoded rows equal the expected rows (_replacement) and a second read of the hot rows equals the
+    first. Anything else: log, no row, None. S3 errors propagate (run_pass: job.object_local)."""
     w = hour_bounds(vehicle, hour)
     schema = await hot_schema(conn)
     table = await hot_table(conn, w, schema)
     if table.num_rows == 0:
         return None
-    if not await _may_replace_recorded(ctx, conn, vehicle, w.start, version, table):
+    expected = await _replacement(ctx, conn, vehicle, w.start, version, table)
+    if expected is None:
         return None
     key = object_key(vehicle, w.start, version)
-    sha = await put(ctx.s3, ctx.bucket, key, encode(table))
+    sha = await put(ctx.s3, ctx.bucket, key, encode(expected))
     ctx.hooks.fire("archive:after_put")
 
     stored = await get(ctx.s3, ctx.bucket, key)
     if hashlib.sha256(stored).hexdigest() != sha:
         _fail(vehicle, w.start, f"{key} re-read does not hash to {sha}")
         return None
-    if not same_rows(decode(stored), await hot_table(conn, w, schema)):
+    if not same_rows(decode(stored), expected) or not same_rows(
+        table, await hot_table(conn, w, schema)
+    ):
         _fail(vehicle, w.start, f"{key} rows differ from the hot rows")
         return None
     ctx.hooks.fire("archive:after_reread")
 
     name, body = sidecar(key, sha)
     await put(ctx.s3, ctx.bucket, name, body)
-    t_min, t_max = table["t_onboard"][0].as_py(), table["t_onboard"][-1].as_py()  # sorted
-    cur = await conn.execute(UPSERT, (vehicle, w.start, sha, table.num_rows, t_min, t_max, version))
+    t_min, t_max = expected["t_onboard"][0].as_py(), expected["t_onboard"][-1].as_py()  # sorted
+    cur = await conn.execute(
+        UPSERT, (vehicle, w.start, sha, expected.num_rows, t_min, t_max, version)
+    )
     row = await cur.fetchone()
     if row is None:  # the row moved on (newer version, or hot-deleted) since the pre-PUT check
         _fail(vehicle, w.start, f"{key} not recorded: the archive row changed during the archive")
@@ -144,18 +186,20 @@ async def _recorded_table(
     return decode(data)
 
 
-async def _may_replace_recorded(
+async def _replacement(
     ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], vehicle: str, hour: datetime,
     version: int, table: pa.Table,
-) -> bool:  # fmt: skip
-    """Checked BEFORE the PUT. Without a row anything goes. With one: only a strictly newer version,
-    and never once the hot rows are deleted (the object is then the only copy; late rows go
-    through merge_late). The new version must contain every row of the recorded one (hot rows are
-    a superset only if nothing was lost since), which also implies min <= old t_min, max >= old
-    t_max and rows >= old rows."""
+) -> pa.Table | None:  # fmt: skip
+    """The rows to write as `version`, decided BEFORE the PUT; None refuses. Without a row: the hot
+    rows. With one: only a strictly newer version, and never once the hot rows are deleted (the
+    object is then the only copy; late rows go through merge_late). The hot rows must hold every
+    key of the recorded version (nothing lost since); the new version is the recorded rows plus
+    the hot rows not archived yet, the archived row winning a shared key (G4-17, as merge_late). A
+    corrupt or missing recorded object cannot show what it held, so only hot rows that encode to
+    the recorded sha256 (exactly the archived rows) may replace it."""
     old = await _recorded(conn, vehicle, hour)
     if old is None:
-        return True
+        return table
     if old.hot_deleted_at is not None or version <= old.version:
         _fail(
             vehicle,
@@ -163,21 +207,20 @@ async def _may_replace_recorded(
             f"a row exists (version {old.version}, hot deleted: "
             f"{old.hot_deleted_at is not None}); refusing to overwrite with version {version}",
         )
-        return False
+        return None
     prev = await _recorded_table(ctx, conn, old)
     if prev is None:
-        # corrupt or missing, and the hot rows are still here: they are the truth, a new version
-        # heals it (the ARCHIVE_CORRUPT resolves when the row's sha256 changes). The object cannot
-        # prove the new version drops nothing, the row can: same count and range at least.
-        t_min, t_max = table["t_onboard"][0].as_py(), table["t_onboard"][-1].as_py()
-        if table.num_rows < old.rows or t_min > old.t_min or t_max < old.t_max:
-            _fail(vehicle, hour, "the hot rows no longer cover the corrupt version's rows or range")
-            return False
-        return True
+        # corrupt or missing: count and range can't tell a swapped or edited row, the recorded hash
+        # can. ponytail: a late row (or a pyarrow upgrade, D-ARC-02) also refuses; the hot rows and
+        # the open ARCHIVE_CORRUPT then stay for an operator.
+        if hashlib.sha256(encode(table)).hexdigest() != old.sha256:
+            _fail(vehicle, hour, "the hot rows are not exactly the corrupt version's rows")
+            return None
+        return table
     if not set(keys(prev)) <= set(keys(table)):
         _fail(vehicle, hour, "the new version would drop rows of the recorded version")
-        return False
-    return True
+        return None
+    return merged_rows(prev, table, vehicle, hour)
 
 
 def _refuse(ctx: ArchiverCtx, vehicle: str, hour: datetime, why: str) -> bool:
@@ -238,7 +281,7 @@ async def delete_hot(
     return True
 
 
-def merged_rows(prev: pa.Table, late: pa.Table, vehicle: str) -> pa.Table:
+def merged_rows(prev: pa.Table, late: pa.Table, vehicle: str, hour: datetime) -> pa.Table:
     """The archived rows plus the late rows whose (t_onboard, seq) is not archived yet; on a shared
     key the archived row wins (a differing late copy is logged)."""
     have = {
@@ -259,7 +302,7 @@ def merged_rows(prev: pa.Table, late: pa.Table, vehicle: str) -> pa.Table:
     if differing:
         log.warning(
             "%d late row(s) share a key with an archived row but differ; the archived row is kept",
-            differing, extra={"vehicle": vehicle},
+            differing, extra={"vehicle": vehicle, "hour": iso_z(hour)},
         )  # fmt: skip
     return sort_rows(
         pa.concat_tables(
@@ -283,7 +326,7 @@ async def merge_late(
     late = await hot_table(conn, w, await hot_schema(conn))  # columns added since v0 included
     if late.num_rows == 0:
         return None
-    expected = merged_rows(prev, late, row.vehicle)
+    expected = merged_rows(prev, late, row.vehicle, row.hour)
     version = row.version + 1
     key = object_key(row.vehicle, row.hour, version)
     sha = await put(ctx.s3, ctx.bucket, key, encode(expected))

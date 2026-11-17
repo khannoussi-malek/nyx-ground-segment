@@ -110,19 +110,29 @@ def archive_db() -> Iterator[str]:
         yield name
 
 
-@pytest.fixture(scope="module")
-def archiver_paused() -> Iterator[None]:
+@contextmanager
+def archiver_stopped() -> Iterator[None]:
     """G4-3: the compose archiver would archive and delete the hot hours these tests create.
-    Stopped for the module, started again (and awaited healthy) in finally."""
+    Stopped, and started again (awaited healthy) in finally. CI's test job runs no archiver
+    container: then there is nothing to stop or start."""
+    present = bool(compose("ps", "-aq", "archiver").stdout.strip())
     try:
-        compose("stop", "archiver")
+        if present:
+            compose("stop", "archiver")
         yield
     finally:
-        compose("start", "archiver")
-        deadline = time.monotonic() + 60
-        while inspect_health("archiver") != "healthy" and time.monotonic() < deadline:
-            time.sleep(1)
-        assert inspect_health("archiver") == "healthy", "archiver did not come back healthy"
+        if present:
+            compose("start", "archiver")
+            deadline = time.monotonic() + 60
+            while inspect_health("archiver") != "healthy" and time.monotonic() < deadline:
+                time.sleep(1)
+            assert inspect_health("archiver") == "healthy", "archiver did not come back healthy"
+
+
+@pytest.fixture(scope="module")
+def archiver_paused() -> Iterator[None]:
+    with archiver_stopped():
+        yield
 
 
 TA9 = "NYX-TA9"

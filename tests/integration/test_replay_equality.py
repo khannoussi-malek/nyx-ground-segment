@@ -156,6 +156,22 @@ def recorded_alarm_keys(rec: Recording) -> list[str]:
     ]  # fmt: skip
 
 
+def recorded_alarm_fields(rec: Recording) -> list[tuple[str, str, str, str, str]]:
+    """(key, kind, trigger_check, limits_sha256, set_sha256) per recorded row, read straight from
+    alarm_events: trigger_check is the last non-null check_kind of the alarm (G4-15), the hashes are
+    the row's own (G4-14), never the mutable alarms row."""
+    last: dict[UUID, str] = {}
+    out = []
+    for r in rows(
+        "select * from alarm_events where vehicle=%s order by"
+        " coalesce(trigger_t_onboard, after_t_onboard), coalesce(trigger_seq, after_seq), id",
+        rec.vehicle, db=rec.db,
+    ):  # fmt: skip
+        last[r["alarm_id"]] = r["check_kind"] or last[r["alarm_id"]]
+        out.append((r["key"], r["kind"], last[r["alarm_id"]], r["limits_sha256"], r["set_sha256"]))
+    return out
+
+
 def recorded_events(rec: Recording) -> list[dict[str, Any]]:
     return rows(
         "select key, kind, t_onboard from events where vehicle=%s and t_onboard >= %s"
@@ -174,6 +190,15 @@ async def test_replay_equals_recorded(source: str, recording: Recording) -> None
     event_keys = [m.event.key for m in msgs if isinstance(m, ReplayLink)]
     assert alarm_keys == recorded_alarm_keys(recording)
     assert event_keys == [e["key"] for e in recorded_events(recording)]
+    expected = recorded_alarm_fields(recording)
+    got = [
+        (a.last.key, a.last.kind, a.trigger_check, a.limits_sha256, a.set_sha256)
+        for a in (m.alarm for m in msgs if isinstance(m, ReplayAlarm))
+    ]
+    assert got == expected
+    cur = rows("select * from alarms where vehicle=%s", recording.vehicle, db=recording.db)
+    # G4-14/15: current trigger_check ('limit') differs from the RAISE/ACK rows ('roc')
+    assert {r["trigger_check"] for r in cur} == {"limit"} and expected[0][2] == "roc"
     kinds = [m.alarm.last.kind for m in msgs if isinstance(m, ReplayAlarm)]
     assert kinds[:3] == ["RAISE", "ACK", "ESCALATE"]  # ack-then-escalate
     assert recording.ack_key in alarm_keys

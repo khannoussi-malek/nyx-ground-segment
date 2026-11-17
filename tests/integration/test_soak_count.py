@@ -31,13 +31,13 @@ class SoakApi(FakeApi):
         return "section,key\n"
 
 
-async def _seed(v: str) -> tuple[datetime, datetime, datetime]:
-    """Epoch 1: seq 0..29; epoch 2 (a reset): seq 0..19 ten seconds later; all ingested."""
+async def _seed(v: str, restart: bool = False) -> tuple[datetime, datetime, datetime]:
+    """seq 0..29, then ten seconds later seq 30..49 (restart: a reset to 0..19); all ingested."""
     b1 = time_base()
     b2 = b1 + timedelta(seconds=10)
     for seq in range(30):
         xadd_raw(v, frame(v, seq, b1))
-    for seq in range(20):
+    for seq in range(0 if restart else 30, 20 if restart else 50):
         xadd_raw(v, frame(v, seq, b2))
     async with worker([v]):
         await until(lambda: stored(v) == 50 and drained(v), 10)
@@ -78,7 +78,7 @@ async def test_main_passes_on_a_complete_run(tmp_path: Path) -> None:
 
 async def test_main_fails_on_head_tail_and_reset_loss(tmp_path: Path) -> None:
     v = vid()
-    b1, b2, end = await _seed(v)
+    b1, b2, end = await _seed(v, restart=True)
     with psycopg.connect(admin_dsn("gs"), autocommit=True) as db:
         for lo, hi, base in ((0, 3, b1), (27, 30, b1), (0, 5, b2)):  # head, tail, new boot's head
             for seq in range(lo, hi):
@@ -89,7 +89,8 @@ async def test_main_fails_on_head_tail_and_reset_loss(tmp_path: Path) -> None:
     with pytest.raises(SystemExit):
         _run(v, b1, end, tmp_path)
     text = (tmp_path / "summary.md").read_text()
-    assert "**FAIL**" in text and f"| {v} | 2 | 39 | 11 |" in text
+    # a restart outranks the loss: the run is INCOMPLETE, and the epoch / SEQ_RESET columns show it
+    assert "**INCOMPLETE**" in text and f"| {v} | 2 | 39 | 11 | 0 | 2 | 1 |" in text
 
 
 async def test_overflow_is_gated_on_the_delta_over_the_window(tmp_path: Path) -> None:

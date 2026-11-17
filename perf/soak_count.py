@@ -33,6 +33,7 @@ GAP_SQL = (
     "SELECT count(*) FROM events WHERE vehicle = %s AND kind = 'GAP'"
     " AND t_onboard >= %s AND t_onboard < %s"
 )
+RESET_SQL = GAP_SQL.replace("'GAP'", "'SEQ_RESET'")
 ALARM_SQL = (
     "SELECT vehicle, param, kind, coalesce(trigger_t_onboard, processed_at), alarm_id"
     " FROM alarm_events WHERE alarm_id IS NOT NULL AND vehicle = ANY(%s)"
@@ -46,6 +47,8 @@ class VehicleCount(NamedTuple):
     frames: int  # stored in the window
     lost: int  # by (epoch, seq)
     gaps: int  # GAP events
+    epochs: int = 1  # seq runs the simulator sent in the window (a restart starts a new one)
+    resets: int = 0  # SEQ_RESET events in the window
 
 
 Frame = tuple[datetime, int]  # (t_onboard, seq): one frame as the simulator sent it
@@ -74,6 +77,12 @@ def epoch_rows(
     return [(r[0][0], r[0][1], r[-1][1], sum(f in stored for f in r)) for r in runs]
 
 
+def incomplete(counts: Sequence[VehicleCount]) -> bool:
+    """G4-20: the simulator restarted during the soak (its overflow counter restarted too), so
+    the run proves nothing either way (ATP-01 step 4)."""
+    return any(c.epochs > 1 or c.resets > 0 for c in counts)
+
+
 def passed(counts: Sequence[VehicleCount], q: Quality, overflow: int = 0) -> bool:
     return (
         all(c.lost == 0 for c in counts)
@@ -87,21 +96,27 @@ def render(
     day: datetime, hours: float, counts: Sequence[VehicleCount], overflow: int, q: Quality
 ) -> str:
     rows = "".join(
-        f"| {c.vehicle} | {c.session_id} | {c.frames} | {c.lost} | {c.gaps} |\n" for c in counts
+        f"| {c.vehicle} | {c.session_id} | {c.frames} | {c.lost} | {c.gaps} "
+        f"| {c.epochs} | {c.resets} |\n"
+        for c in counts
     )
+    verdict = (
+        "**INCOMPLETE** (simulator restarted during the soak, rerun)" if incomplete(counts)
+        else "**PASS**" if passed(counts, q, overflow) else "**FAIL**"
+    )  # fmt: skip
     return (
         f"# ATP-01 soak {day:%Y-%m-%d} (ING-01, D-ALM-15)\n\n"
         f"{hours:g} h, sessions on {', '.join(c.vehicle for c in counts)}, nothing injected "
         "(every RAISE is a false raise). Reports: `report-<vehicle>.csv`.\n\n"
-        "| Vehicle | Session | Frames stored | Lost (sent - stored) | GAP events |\n"
-        f"|---|---|---|---|---|\n{rows}\n"
+        "| Vehicle | Session | Frames stored | Lost (sent - stored) | GAP events | Epochs "
+        "| SEQ_RESET |\n"
+        f"|---|---|---|---|---|---|---|\n{rows}\n"
         f"- Simulator overflow (frames dropped during the soak): {overflow}\n"
         f"- RAISEs: {q.raises}, false raises: {q.false_raises}\n"
         f"- Chattering (psi >= 0.05 or alarm < 20 s): {', '.join(q.chattering) or 'none'}\n"
         f"- Peak new alarms in 10 min: {dict(q.peak_10min)}, time in flood: "
         f"{q.time_in_flood_s:.0f} s\n\n"
-        f"Verdict (0 lost, 0 overflow, 0 false raises, no chattering): "
-        f"{'**PASS**' if passed(counts, q, overflow) else '**FAIL**'}\n"
+        f"Verdict (1 epoch, 0 lost, 0 overflow, 0 false raises, no chattering): {verdict}\n"
     )
 
 
@@ -176,10 +191,11 @@ def _count(
     db: psycopg.Connection, r: redis.Redis, v: str, sid: int, start: datetime, end: datetime
 ) -> VehicleCount:
     stored = stored_frames(db, v, start, end)
-    lost = lost_by_epoch(epoch_rows(sent_frames(r, v, start, end), stored))
-    gaps = db.execute(GAP_SQL, (v, start, end)).fetchone()
-    assert gaps is not None
-    return VehicleCount(v, sid, len(stored), lost, int(gaps[0]))
+    sent = sent_frames(r, v, start, end)
+    lost = lost_by_epoch(epochs := epoch_rows(sent, stored))
+    gaps, resets = (db.execute(sql, (v, start, end)).fetchone() for sql in (GAP_SQL, RESET_SQL))
+    assert gaps is not None and resets is not None
+    return VehicleCount(v, sid, len(stored), lost, int(gaps[0]), len(epochs), int(resets[0]))
 
 
 def _start(api: Api, vehicle: str) -> int:
@@ -253,6 +269,8 @@ def main(
     text = render(day, hours, counts, ovf, q)
     (out / "summary.md").write_text(text)
     print(text)
+    if incomplete(counts):
+        sys.exit("soak: ATP-01 INCOMPLETE (simulator restart), rerun")
     if not passed(counts, q, ovf):
         sys.exit("soak: ATP-01 FAIL")
 

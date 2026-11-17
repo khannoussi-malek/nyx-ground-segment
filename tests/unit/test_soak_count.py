@@ -30,8 +30,8 @@ def _q(false_raises: int | None = 0, chattering: tuple[str, ...] = ()) -> Qualit
     return Quality(5, false_raises, {}, chattering, 0, 0, {"all": 1}, 0.0)
 
 
-def _c(lost: int = 0, gaps: int = 0) -> VehicleCount:
-    return VehicleCount("NYX-TA1", 1, 72000, lost, gaps)
+def _c(lost: int = 0, gaps: int = 0, epochs: int = 1, resets: int = 0) -> VehicleCount:
+    return VehicleCount("NYX-TA1", 1, 72000, lost, gaps, epochs, resets)
 
 
 def _f(epoch: datetime, seqs: range) -> list[tuple[datetime, int]]:
@@ -83,6 +83,17 @@ def test_render_states_the_verdict_and_the_numbers() -> None:
     assert "**PASS**" in ok and "72000" in ok and "soak): 0" in ok
     bad = render(E1, 2.0, [_c(lost=3, gaps=1)], 4, _q(chattering=("NYX-TA1/x",)))
     assert "**FAIL**" in bad and "NYX-TA1/x" in bad and "soak): 4" in bad
+
+
+@pytest.mark.parametrize("c", [_c(epochs=2), _c(resets=1)])
+def test_a_simulator_restart_is_incomplete_not_pass(c: VehicleCount) -> None:
+    text = render(E1, 2.0, [_c(), c], 0, _q())  # every other check is clean: the false PASS
+    assert "**INCOMPLETE**" in text and "**PASS**" not in text
+    assert "| 72000 | 0 | 0 | 1 | 0 |" in text and f"| {c.epochs} | {c.resets} |" in text
+
+
+def test_a_restart_does_not_hide_behind_a_fail_verdict() -> None:
+    assert "**INCOMPLETE**" in render(E1, 2.0, [_c(lost=3, epochs=2)], 0, _q())
 
 
 class FakeApi(Api):

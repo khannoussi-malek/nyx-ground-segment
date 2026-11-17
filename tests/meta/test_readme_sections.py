@@ -24,10 +24,9 @@ ATPS = ["ATP-01", "ATP-07", "ATP-08"]
 # Things a doc names that other Gate 4 tasks (19-21) and Gate 5 add, per doc: "make <target>" or a
 # path. test_landing_entries_are_removed_when_they_land fails once an entry exists.
 LANDING = {
-    "README.md": {"docs/perf/scaling.md"},
     "ATP-01.md": {"docs/atp-report.md"},
     "ATP-07.md": {"docs/atp-report.md"},
-    "ATP-08.md": {"docs/perf/scaling.md", "docs/atp-report.md"},
+    "ATP-08.md": {"docs/atp-report.md"},
 }
 DOCS = [REPO / "README.md", REPO / "CHANGELOG.md", *sorted((REPO / "docs/atp").glob("*.md"))]
 DOCS += [REPO / "docs/operator-guide.md", REPO / "docs/dev-guide.md"]

@@ -35,16 +35,21 @@ export function ReplayPage({ live, mission, user }: { live: Store; mission: Miss
   const [speed, setSpeed] = useState<1 | 10>(1);
   const [error, setError] = useState<string | null>(null);
   const [rs, setRs] = useState<ReplayStore | null>(null);
+  const [busy, setBusy] = useState(false); // a create is pending or a stream is running
+  const [stopped, setStopped] = useState(false);
   const run = useRef<{ id: string; close: () => void } | null>(null);
+  const gen = useRef(0); // bumped by every stop and by leaving the page; a create that resolves after it is dropped
+  const starting = useRef(false);
   useEffect(() => {
     void loadVehicles().then((v) => {
       setNames(v);
       setVehicle((cur) => cur || (v[0] ?? ""));
     });
-    return () => run.current?.close(); // leaving the page ends the replay
+    return () => stop(); // leaving the page ends the replay
   }, []);
 
   const stop = () => {
+    gen.current++;
     const r = run.current;
     run.current = null;
     if (!r) return;
@@ -55,10 +60,21 @@ export function ReplayPage({ live, mission, user }: { live: Store; mission: Miss
     const f = utcInput(from);
     const t = utcInput(to);
     if (!vehicle || f === null || t === null) return setError("Pick a vehicle and a from and to time (UTC)");
+    if (starting.current || run.current) return; // double Start
     stop();
+    const g = gen.current;
+    starting.current = true;
+    setBusy(true);
+    setStopped(false);
     setError(null);
-    const res = await createReplay({ vehicle, from: f, to: t, speed });
-    if (!res.ok) return setError(res.message);
+    let res;
+    try {
+      res = await createReplay({ vehicle, from: f, to: t, speed });
+    } finally {
+      starting.current = false;
+    }
+    if (g !== gen.current) return void (res.ok && deleteReplay(res.replayId)); // stopped or left meanwhile
+    if (!res.ok) return setBusy(false), setError(res.message);
     const next = createReplayStore();
     const es = new EventSource(`/api/replays/${res.replayId}/events`);
     let opened = false;
@@ -70,11 +86,12 @@ export function ReplayPage({ live, mission, user }: { live: Store; mission: Miss
         } catch (err) {
           console.warn(`dropping malformed ${kind} event`, err);
         }
-        if (kind === "replay_end") es.close();
+        if (kind === "replay_end") (es.close(), setBusy(false));
       });
     // no reconnect: the server's stream is single-use, so a reopen would only meet 404; the end is shown instead
     es.addEventListener("error", () => {
       es.close();
+      setBusy(false);
       next.interrupt(opened);
     });
     run.current = { id: res.replayId, close: () => es.close() };
@@ -109,10 +126,11 @@ export function ReplayPage({ live, mission, user }: { live: Store; mission: Miss
             <option value="10">10×</option>
           </select>
         </label>
-        <button type="submit">Start</button>
-        <button type="button" onClick={stop}>Stop</button>
+        <button type="submit" disabled={busy}>Start</button>
+        <button type="button" onClick={() => (stop(), setBusy(false), setStopped(true))}>Stop</button>
       </form>
       {error && <p role="alert">{error}</p>}
+      {stopped && <p role="status">Replay stopped</p>}
       {rs && (
         <>
           <Progress rs={rs} />

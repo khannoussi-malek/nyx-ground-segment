@@ -119,3 +119,58 @@ test("Stop deletes the replay", async () => {
   await flush();
   expect(calls).toContain("DELETE /api/replays/r1");
 });
+
+const deferred = () => { let ok!: (r: Response) => void; const p = new Promise<Response>((r) => (ok = r)); return { p, ok }; };
+
+test("a second Start while the create is pending makes no second replay", async () => {
+  const d = deferred();
+  const calls = mount((u, i) => (i?.method === "POST" ? d.p : vehicles(u)));
+  await flush();
+  setInput("From (UTC)", "2026-11-10T14:00");
+  setInput("To (UTC)", "2026-11-10T14:20");
+  act(() => button("Start").click());
+  act(() => button("Start").click());
+  act(() => host.querySelector("form")!.requestSubmit());
+  expect(button("Start").disabled).toBe(true);
+  d.ok(json(201, { replay_id: "r1" }));
+  await flush();
+  expect(calls.filter((c) => c.startsWith("POST"))).toHaveLength(1);
+  expect(button("Start").disabled).toBe(true); // running
+  FakeES.last!.emit("replay_end", { kind: "replay_end", replay: true, reason: "done", detail: null });
+  expect(button("Start").disabled).toBe(false);
+});
+
+test("leaving the page while the create is pending closes nothing open and deletes the replay", async () => {
+  const d = deferred();
+  const calls = mount((u, i) => (i?.method === "POST" ? d.p : i?.method === "DELETE" ? Promise.resolve(new Response(null, { status: 204 })) : vehicles(u)));
+  await flush();
+  setInput("From (UTC)", "2026-11-10T14:00");
+  setInput("To (UTC)", "2026-11-10T14:20");
+  act(() => button("Start").click());
+  act(() => root.unmount());
+  root = createRoot(host);
+  d.ok(json(201, { replay_id: "r9" }));
+  await flush();
+  expect(FakeES.last).toBeUndefined(); // no stream opened for a gone page
+  expect(calls).toContain("DELETE /api/replays/r9");
+});
+
+test("leaving the page closes the stream and deletes the replay", async () => {
+  const calls = mount((u, i) => (i?.method === "POST" ? Promise.resolve(json(201, { replay_id: "r1" })) : i?.method === "DELETE" ? Promise.resolve(new Response(null, { status: 204 })) : vehicles(u)));
+  await fillAndStart();
+  const es = FakeES.last!;
+  expect(es.closed).toBe(false);
+  act(() => root.unmount());
+  root = createRoot(host);
+  expect(es.closed).toBe(true);
+  await flush();
+  expect(calls).toContain("DELETE /api/replays/r1");
+});
+
+test("Stop shows Replay stopped", async () => {
+  mount((u, i) => (i?.method === "POST" ? Promise.resolve(json(201, { replay_id: "r1" })) : i?.method === "DELETE" ? Promise.resolve(new Response(null, { status: 204 })) : vehicles(u)));
+  await fillAndStart();
+  act(() => button("Stop").click());
+  expect(host.textContent).toContain("Replay stopped");
+  expect(button("Start").disabled).toBe(false);
+});

@@ -94,3 +94,6 @@ export function ingestReplay(rs: ReplayStore, kind: string, data: unknown): void
   else return;
   i.notify();
 }
+
+/** Gate 4 cross-track contract: NYX-TA9 is backfill-only (D-ENG-16), so it is not in the API's live VEHICLES; only the replay page offers it (G4-19, G4-23). */
+export const RECORDED_ONLY_VEHICLES = ["NYX-TA9"];

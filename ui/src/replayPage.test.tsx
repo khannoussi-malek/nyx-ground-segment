@@ -174,3 +174,19 @@ test("Stop shows Replay stopped", async () => {
   expect(host.textContent).toContain("Replay stopped");
   expect(button("Start").disabled).toBe(false);
 });
+
+test("the replay select offers the recorded-only NYX-TA9 after the live vehicles", async () => {
+  mount(vehicles);
+  await flush();
+  const opts = [...host.querySelectorAll("select")[0]!.querySelectorAll("option")].map((o) => o.textContent);
+  expect(opts).toEqual(["NYX-TA1", "NYX-TA9"]);
+});
+
+test("the live vehicle list never gains NYX-TA9 (G4-19)", async () => {
+  vi.stubGlobal("fetch", () => Promise.resolve(json(200, { vehicles: ["NYX-TA1", "NYX-TA2"], parameters: {} })));
+  const { vehicles: live } = await import("./api");
+  expect(await live()).toEqual(["NYX-TA1", "NYX-TA2"]);
+  const { readdirSync, readFileSync } = await import("node:fs");
+  const users = readdirSync("src").filter((f) => /\.tsx?$/.test(f) && !f.includes(".test.") && readFileSync(`src/${f}`, "utf8").includes("RECORDED_ONLY_VEHICLES"));
+  expect(users.sort()).toEqual(["ReplayPage.tsx", "replay.ts"]);
+});

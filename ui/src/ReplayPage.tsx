@@ -3,7 +3,7 @@ import { createReplay, deleteReplay, vehicles as loadVehicles, type MissionDb } 
 import { AlarmList } from "./AlarmList";
 import { EventStrip } from "./EventStrip";
 import { LiveTable } from "./LiveTable";
-import { createReplayStore, endText, ingestReplay, REPLAY_KINDS, utcInput, type ReplayStore } from "./replay";
+import { createReplayStore, endText, ingestReplay, RECORDED_ONLY_VEHICLES, REPLAY_KINDS, utcInput, type ReplayStore } from "./replay";
 import type { Store } from "./store";
 
 /** The live store's open unacknowledged alarms, so a live RED is not missed during a replay (R2-27). */
@@ -42,7 +42,7 @@ export function ReplayPage({ live, mission, user }: { live: Store; mission: Miss
   const starting = useRef(false);
   useEffect(() => {
     void loadVehicles().then((v) => {
-      setNames(v);
+      setNames([...new Set([...v, ...RECORDED_ONLY_VEHICLES])]); // live first, then recorded-only
       setVehicle((cur) => cur || (v[0] ?? ""));
     });
     return () => stop(); // leaving the page ends the replay

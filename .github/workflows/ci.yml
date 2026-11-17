@@ -57,7 +57,8 @@ jobs:
       - run: docker compose up -d --wait redis db minio
       - run: docker compose run --rm minio-init
       - run: docker compose run --rm --build migrate
-      - run: uv run pytest --cov=gs --cov-fail-under=80
+      - run: uv run pytest --cov=gs --cov-fail-under=80 --cov-report=json:coverage.json
+      - run: uv run pytest --no-cov -m after_coverage tests/meta/test_except_coverage.py
 
   e2e:
     needs: [lint, test]

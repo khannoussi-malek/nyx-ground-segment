@@ -37,7 +37,9 @@ def mine(a: dict[str, Any]) -> bool:
 
 def test_validate_reads_one_exported_schema_per_kind() -> None:
     sse = REPO / "interfaces" / "schemas" / "sse"  # validate() loads <kind>.schema.json from here
-    assert {p.name.removesuffix(".schema.json") for p in sse.glob("*.schema.json")} == KINDS
+    assert {p.name.removesuffix(".schema.json") for p in sse.glob("*.schema.json")} == KINDS | {
+        "replay"
+    }  # replay: the /api/replays stream, not the live one
 
 
 async def test_every_sse_kind_matches_schema() -> None:

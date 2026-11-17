@@ -4,8 +4,6 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
-
 from tests.support.env import REPO
 
 PATH = (
@@ -153,7 +151,6 @@ def test_every_requirement_has_evidence() -> None:
     assert bad == []
 
 
-@pytest.mark.xfail(strict=True, reason="Task 25 writes the remaining named tests and removes this")
 def test_every_named_test_exists() -> None:
     refs = [r for rs in evidence((REPO / "docs/requirements.md").read_text()).values() for r in rs]
     assert missing(refs) == []

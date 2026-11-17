@@ -21,7 +21,7 @@ test("two 2-minute sessions: report pending, then ready; CSV times end in Z", as
   await stopActive(page);
   const tag = Date.now().toString(36);
   for (const v of VEHICLES) {
-    await panel(page).getByLabel("Vehicle").selectOption(v);
+    await panel(page).getByLabel(/^Vehicle/).selectOption(v);
     await panel(page).getByLabel("Session name").fill(`atp01 ${v} ${tag}`);
     await panel(page).getByRole("button", { name: "Start session" }).click();
     await expect(panel(page).locator("tr[data-active]").filter({ hasText: `atp01 ${v} ${tag}` })).toBeVisible();

@@ -99,8 +99,8 @@ export async function apiLogin(user: string): Promise<string> {
 /** The Commands panel: choose vehicle, command and its args, then Send. */
 export async function sendCommand(page: Page, vehicle: string, name: string, args: Record<string, string> = {}, reason = ""): Promise<void> {
   const panel = page.getByRole("region", { name: "Commands" });
-  await panel.getByLabel("Vehicle").selectOption(vehicle);
-  await panel.getByLabel("Command").selectOption(name);
+  await panel.getByLabel(/^Vehicle/).selectOption(vehicle);
+  await panel.getByLabel(/^Command/).selectOption(name);
   for (const [k, v] of Object.entries(args)) {
     // an arg's <label> wraps its control (and a unit): match the label by its leading name
     const field = panel.locator("label").filter({ hasText: new RegExp(`^${k}`) }).locator("select, input");

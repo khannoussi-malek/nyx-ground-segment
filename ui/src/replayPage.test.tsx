@@ -190,3 +190,12 @@ test("the live vehicle list never gains NYX-TA9 (G4-19)", async () => {
   const users = readdirSync("src").filter((f) => /\.tsx?$/.test(f) && !f.includes(".test.") && readFileSync(`src/${f}`, "utf8").includes("RECORDED_ONLY_VEHICLES"));
   expect(users.sort()).toEqual(["ReplayPage.tsx", "replay.ts"]);
 });
+
+test("Start works again after a replay has ended", async () => {
+  const calls = mount((u, i) => (i?.method === "POST" ? Promise.resolve(json(201, { replay_id: "r1" })) : vehicles(u)));
+  await fillAndStart();
+  FakeES.last!.emit("replay_end", { kind: "replay_end", replay: true, reason: "done", detail: null });
+  act(() => button("Start").click());
+  await flush();
+  expect(calls.filter((c) => c.startsWith("POST /api/replays"))).toHaveLength(2);
+});

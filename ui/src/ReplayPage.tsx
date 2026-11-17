@@ -86,11 +86,12 @@ export function ReplayPage({ live, mission, user }: { live: Store; mission: Miss
         } catch (err) {
           console.warn(`dropping malformed ${kind} event`, err);
         }
-        if (kind === "replay_end") (es.close(), setBusy(false));
+        if (kind === "replay_end") (es.close(), (run.current = null), setBusy(false)); // ended: Start may run again
       });
     // no reconnect: the server's stream is single-use, so a reopen would only meet 404; the end is shown instead
     es.addEventListener("error", () => {
       es.close();
+      run.current = null;
       setBusy(false);
       next.interrupt(opened);
     });

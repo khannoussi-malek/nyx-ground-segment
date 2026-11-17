@@ -4,12 +4,10 @@ Part of the CI `test` job; alone: `uv run pytest tests/integration/test_rest_fuz
 import collections
 import dataclasses
 import tempfile
-import uuid
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 import schemathesis
 import schemathesis.python.asgi
@@ -24,7 +22,7 @@ from schemathesis.specs.openapi.checks import (
 from gs.api.app import create_app
 from gs.api.auth import hash_password
 from tests.support.env import vid
-from tests.support.http import CLIENT_HEADERS, FC1_PW, api_settings, login
+from tests.support.http import CLIENT_HEADERS, api_settings
 
 FUZZ_USER, FUZZ_PW = "fuzz", "fuzz-test-password"  # never fc1/fc2: the login limit (P-pf8, P-pf18)
 _users = Path(tempfile.mkdtemp()) / "users.yaml"
@@ -35,18 +33,6 @@ schema: Any = schemathesis.openapi.from_asgi("/openapi.json", app)  # Any: stubs
 # POST /api/commands would reach a real vehicle path; only a vid() target is allowed on the
 # test stack, and the fuzzer cannot promise that, so the check leaves the operation out
 schema = schema.exclude(method="POST", path="/api/commands")
-# Task 11's 501 route stubs: the track that implements one removes it here (Track RP Task 13);
-# test_stubs_still_unimplemented fails once a stub stops answering 501
-STUBS = {
-    ("POST", "/api/replays"): {
-        "vehicle": "NYX-TA1", "from": "2026-11-15T10:00:00Z", "to": "2026-11-15T11:00:00Z",
-        "speed": 1,
-    },
-    ("DELETE", "/api/replays/{replay_id}"): None,
-    ("GET", "/api/replays/{replay_id}/events"): None,
-}  # fmt: skip
-for _method, _path in STUBS:
-    schema = schema.exclude(method=_method, path=_path)
 
 
 @schema.auth()
@@ -85,11 +71,3 @@ def test_schemathesis_asgi(case: Any) -> None:
             content_type_conformance,
         ]
     )
-
-
-async def test_stubs_still_unimplemented(api_client: httpx.AsyncClient) -> None:
-    assert (await login(api_client, "fc1", FC1_PW)).status_code == 204
-    for (method, path), body in STUBS.items():
-        url = path.format(session_id=1, replay_id=uuid.uuid4())
-        got = await api_client.request(method, url, json=body, headers=CLIENT_HEADERS)
-        assert got.status_code == 501, f"{method} {path} is implemented: drop it from STUBS"

@@ -141,3 +141,11 @@ def test_replay_user_reads_only() -> None:  # T4-l: the API reads the archive as
         assert root.get_object("archive", key).read() == b"x"  # still there
     finally:
         root.remove_object("archive", key)
+
+
+def test_replay_user_missing_key_is_nosuchkey_not_denied() -> None:
+    # ListBucket lets S3 answer 404 NoSuchKey; without it a missing key is 403 AccessDenied and
+    # the replay reader could not tell "object gone" (archive corrupt) from "no permission"
+    with pytest.raises(S3Error) as e:
+        s3_client("replay").get_object("archive", f"t/{vid()}.bin")
+    assert e.value.code == "NoSuchKey"

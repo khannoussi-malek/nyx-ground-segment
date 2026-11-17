@@ -2,7 +2,7 @@
 
 import asyncio
 from collections import deque
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from datetime import datetime, timedelta
 from typing import Any, Literal
 from uuid import UUID
@@ -48,7 +48,7 @@ async def replay_messages(
     t_to: datetime,
     speed: Literal[1, 10],
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
-) -> AsyncIterator[ReplayMessage]:
+) -> AsyncGenerator[ReplayMessage]:
     alarms = {a.alarm_id: a for a in await initial_alarms(conn, vehicle, t_from)}
     yield ReplayStart(
         replay_id=replay_id, vehicle=vehicle, t_from=t_from, t_to=t_to, speed=speed,

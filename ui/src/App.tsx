@@ -10,6 +10,7 @@ import { CommandPanel } from "./CommandPanel";
 import { EventStrip } from "./EventStrip";
 import { SessionPanel } from "./SessionPanel";
 import { LiveTable } from "./LiveTable";
+import { ReplayPage } from "./ReplayPage";
 import { Login } from "./Login";
 import { bootUser, checkSession, loadMission, safeLogout } from "./session";
 import { connectEvents } from "./sse";
@@ -115,6 +116,7 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
       store.stop();
     };
   }, [store, onLogout]);
+  const [replay, setReplay] = useState(false); // the live store, SSE, beep and tone stay mounted either way
   const running = useRunning(ctx);
   const { beeps, lastTone } = useAudio(store, ctx, running);
   const { layout, update, reset } = useLayout();
@@ -134,24 +136,29 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
         <h1>Nyx</h1>
         <AlarmSummary store={store} onClick={toAlarms} />
         <SoundBadge ctx={ctx} running={running} onArm={setCtx} />
+        <button onClick={() => setReplay((r) => !r)}>{replay ? "Live" : "Replay"}</button>
         <span>{user}</span>
         {editing && <button className="quiet" onClick={reset}>Reset layout</button>}
         <button className="quiet" data-on={editing || undefined} onClick={() => setEditing((e) => !e)}>{editing ? "Done" : "Edit layout"}</button>
         <button onClick={() => void safeLogout(logout).then(onLogout)}>Log out</button>
       </header>
-      <Board
-        layout={layout}
-        update={update}
-        editing={editing}
-        panes={{
-          alarms: { title: "Alarms", help: PANE_HELP.alarms, node: <AlarmList store={store} mission={mission} user={user} /> },
-          live: { title: "Vehicles", help: PANE_HELP.live, node: <main><LiveTable store={store} mission={mission} probe={probe} /></main> },
-          chart: { title: "Chart", help: PANE_HELP.chart, node: <ChartPanel store={store} mission={mission} value={plot} onChange={setPlot} /> },
-          commands: { title: "Commands", help: PANE_HELP.commands, node: <CommandPanel store={store} mission={mission} /> },
-          sessions: { title: "Sessions", help: PANE_HELP.sessions, node: <SessionPanel store={store} mission={mission} /> },
-          events: { title: "Events", help: PANE_HELP.events, node: <EventStrip store={store} /> },
-        }}
-      />
+      {replay ? (
+        <ReplayPage live={store} mission={mission} user={user} />
+      ) : (
+        <Board
+          layout={layout}
+          update={update}
+          editing={editing}
+          panes={{
+            alarms: { title: "Alarms", help: PANE_HELP.alarms, node: <AlarmList store={store} mission={mission} user={user} /> },
+            live: { title: "Vehicles", help: PANE_HELP.live, node: <main><LiveTable store={store} mission={mission} probe={probe} /></main> },
+            chart: { title: "Chart", help: PANE_HELP.chart, node: <ChartPanel store={store} mission={mission} value={plot} onChange={setPlot} /> },
+            commands: { title: "Commands", help: PANE_HELP.commands, node: <CommandPanel store={store} mission={mission} /> },
+            sessions: { title: "Sessions", help: PANE_HELP.sessions, node: <SessionPanel store={store} mission={mission} /> },
+            events: { title: "Events", help: PANE_HELP.events, node: <EventStrip store={store} /> },
+          }}
+        />
+      )}
     </div>
   );
 }

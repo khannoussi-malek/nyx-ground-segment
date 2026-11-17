@@ -60,24 +60,29 @@ async def test_resync_entry_sends_snapshot(live_api: LiveApi) -> None:  # D-UI-1
     assert not [k for k, _ in s.seen if k == "resync"]  # a resync is never forwarded as such
 
 
-async def test_snapshot_has_alarms_commands_events_frozen(live_api: LiveApi) -> None:  # R-e, R-r
+async def test_snapshot_has_alarms_commands_events_frozen(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # R-e, R-r, G4-19
     v, base = live_api.vehicle, now() - timedelta(minutes=1)
     produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 25}, base=base)  # RED, then 2.5 s frozen
     async with worker([v]):
         await until(lambda: drained(v) and bool(events_for(v, "FROZEN")), 5)
-    w = vid()  # a second vehicle: commands and events are the newest overall (R-r, as written)
-    cmds = [uuid.uuid4(), uuid.uuid4()]
+    w, x = vid(), vid()  # w: a second live vehicle; x: recorded-only (NYX-TA9), newest of all
+    both = (v, w)  # commands and events are the newest across the live vehicles (R-r, G4-19)
+    monkeypatch.setattr(live_api.app.state, "vehicles", both)
+    monkeypatch.setattr(live_api.app.state.hub, "vehicles", both)
+    cmds = [uuid.uuid4(), uuid.uuid4(), uuid.uuid4()]
     with psycopg.connect(app_dsn("gs")) as c:
-        for cmd_id, veh in zip(cmds, (v, w), strict=True):  # w's is the newer
+        for cmd_id, veh in zip(cmds, (v, w, x), strict=True):  # w's is newer than v's, x's newest
             c.execute(
                 "insert into commands (cmd_id, vehicle, name, args, args_hash, hazardous,"
                 " issued_by, state, queued_at) values (%s, %s, 'vent_cabin',"
                 " '{\"duration_s\": 2}', 'h', true, 'fc1', 'QUEUED', clock_timestamp())",
                 (cmd_id, veh),
             )
-    keys = [f"TEST/{v}/older", f"TEST/{w}/newer"]
+    keys = [f"TEST/{v}/older", f"TEST/{w}/newer", f"TEST/{x}/recorded"]
     async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as ac:
-        for key, veh in zip(keys, (v, w), strict=True):
+        for key, veh in zip(keys, (v, w, x), strict=True):
             await insert_events(ac, [GroundEvent(key, veh, "LOS", None, {})])
     async with sse(live_api) as s:
         _, snap = await s.next_of("snapshot")
@@ -86,6 +91,8 @@ async def test_snapshot_has_alarms_commands_events_frozen(live_api: LiveApi) -> 
     assert a is not None and [x["alarm_id"] for x in snap["alarms"]] == [str(a["alarm_id"])]
     assert [c["cmd_id"] for c in snap["commands"][:2]] == [str(cmds[1]), str(cmds[0])]
     assert [e["key"] for e in snap["events"][:2]] == [keys[1], keys[0]]  # newest first
+    assert str(cmds[2]) not in [c["cmd_id"] for c in snap["commands"]]  # G4-19: not live
+    assert keys[2] not in [e["key"] for e in snap["events"]]
     assert len(snap["commands"]) <= 50 and len(snap["events"]) <= hub_mod.SNAPSHOT_EVENTS + 2
     kinds = {e["kind"] for e in snap["events"] if e["vehicle"] == v}
     assert {"FROZEN", "LIMITS_APPLIED"} <= kinds

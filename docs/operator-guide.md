@@ -39,3 +39,10 @@ FAILED is final; the line after it says what happened and what to do:
 
 ## Run a test session
 Sessions panel: pick the vehicle, name the session, press **Start session**. A vehicle has one active session; a second start on it is refused. **Stop** ends it for everyone. The report shows **Report pending** until the vehicle's data has reached the end of the session (usually seconds); after 30 s it is frozen anyway and marked "incomplete: n of m frames". A frozen report never changes. Use **Download CSV** for sign-off, which happens outside the tool. In a spreadsheet, a cell that begins with `'` is text we protected from being read as a formula; the apostrophe is not part of the value.
+
+## Run a replay
+Replay shows what was recorded: archived frames together with the alarms raised at the time, never recomputed. Press Replay in the top bar. Pick the vehicle, then the UTC window (from and to, both read as UTC; at most 24 h), the speed 1× or 10×, and press Start. The frame is purple and a REPLAY banner stays on screen; it cannot be dismissed. Progress is replay time, ending in `Z`. A parameter goes STALE after 2 s of vehicle time, and a signal loss shows on replay time. The replay alarm list is read-only: there is no ACK.
+
+The live console keeps running under the replay. The banner carries a live counter, "LIVE: n unacknowledged (r RED)"; a new live RED still beeps once. Replay never beeps. Stop ends your replay; it also ends when you close the page or after 60 s without a reader.
+
+Errors show the API message. 400: the window is empty or longer than 24 h. 404: no data in the window. 409 "archive object failed hash check": one archived hour in the window no longer matches its recorded hash, so the whole replay is refused rather than showing a wrong gap; tell the test conductor, the archive health shows `degraded`. There is only one copy of an archived hour, so nothing repairs it. Test data lives on NYX-TA9, which has no live display; see `docs/atp/ATP-07.md` to create some.

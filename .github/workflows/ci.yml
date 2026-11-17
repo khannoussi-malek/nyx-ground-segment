@@ -31,6 +31,8 @@ jobs:
       - run: cd ui && npm test
       - run: uv run ruff check
       - run: uv run python scripts/stream_schema_notice.py
+      - run: uv run python scripts/check_commits.py origin/main
+      - run: 'test -d ui/src && ! grep -rn "toLocale" ui/src --include=*.ts --include=*.tsx'
       - run: uv run ruff format --check
       - run: uv run mypy --strict src tests scripts perf
       - run: |

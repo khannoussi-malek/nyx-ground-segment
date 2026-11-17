@@ -61,9 +61,10 @@ async def test_window_bounds_and_the_two_sides_agree() -> None:
         assert {s for _, s in stored_frames(db, v, start, cut)} == set(range(10))
 
 
-def _run(v: str, b1: datetime, end: datetime, out: Path) -> None:
+def _run(v: str, b1: datetime, end: datetime, out: Path, overflow: list[int] | None = None) -> None:
     api = SoakApi(((b1 - timedelta(seconds=5)).isoformat(), end.isoformat()))
-    main(0, api=api, vehicles=(v,), out=out, wait=lambda: None, overflow=lambda: 0)
+    counter = iter(overflow or [0, 0])  # read at session start and at stop
+    main(0, api=api, vehicles=(v,), out=out, wait=lambda: None, overflow=lambda: next(counter))
 
 
 async def test_main_passes_on_a_complete_run(tmp_path: Path) -> None:
@@ -89,3 +90,21 @@ async def test_main_fails_on_head_tail_and_reset_loss(tmp_path: Path) -> None:
         _run(v, b1, end, tmp_path)
     text = (tmp_path / "summary.md").read_text()
     assert "**FAIL**" in text and f"| {v} | 2 | 39 | 11 |" in text
+
+
+async def test_overflow_is_gated_on_the_delta_over_the_window(tmp_path: Path) -> None:
+    v = vid()
+    b1, _, end = await _seed(v)
+    _run(v, b1, end, tmp_path, overflow=[7, 7])  # the simulator dropped 7 before the soak began
+    assert "**PASS**" in (tmp_path / "summary.md").read_text()
+    with pytest.raises(SystemExit):
+        _run(v, b1, end, tmp_path, overflow=[7, 9])  # two dropped during the soak
+    assert "**FAIL**" in (tmp_path / "summary.md").read_text()
+
+
+async def test_a_trimmed_stream_head_fails_loudly_not_as_a_pass(tmp_path: Path) -> None:
+    v = vid()
+    b1, _, end = await _seed(v)
+    client("admin").xtrim(f"tm:{v}", maxlen=10)  # the stream's head is gone
+    with pytest.raises(RuntimeError, match="trimmed"):
+        _run(v, b1, end, tmp_path)

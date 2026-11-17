@@ -72,9 +72,9 @@ def test_summary_pass_rule() -> None:
 
 def test_render_states_the_verdict_and_the_numbers() -> None:
     ok = render(E1, 2.0, [_c()], 0, _q())
-    assert "**PASS**" in ok and "72000" in ok and "started): 0" in ok
+    assert "**PASS**" in ok and "72000" in ok and "soak): 0" in ok
     bad = render(E1, 2.0, [_c(lost=3, gaps=1)], 4, _q(chattering=("NYX-TA1/x",)))
-    assert "**FAIL**" in bad and "NYX-TA1/x" in bad and "started): 4" in bad
+    assert "**FAIL**" in bad and "NYX-TA1/x" in bad and "soak): 4" in bad
 
 
 class FakeApi(Api):

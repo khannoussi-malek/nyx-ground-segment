@@ -1,7 +1,8 @@
 """ATP-01 soak (ING-01, D-ALM-15): sessions on NYX-TA1 and NYX-TA2 for `--hours`, then lost frames
 (sent = the tm:<vehicle> stream, stored = telemetry, per epoch and seq), GAP events, simulator
 overflow and alarm quality over the window, written to docs/perf/soak-<UTC date>/summary.md.
-Nothing is injected, so every RAISE is a false raise.
+Nothing is injected, so every RAISE is a false raise. Frames the simulator backfills more than
+60 s after a session's ended_at are not counted.
 `make soak` = `uv run python -m perf.soak_count --hours 2`."""
 
 import argparse
@@ -92,7 +93,7 @@ def render(
         "(every RAISE is a false raise). Reports: `report-<vehicle>.csv`.\n\n"
         "| Vehicle | Session | Frames stored | Lost (sent - stored) | GAP events |\n"
         f"|---|---|---|---|---|\n{rows}\n"
-        f"- Simulator overflow (dropped frames since the simulator started): {overflow}\n"
+        f"- Simulator overflow (frames dropped during the soak): {overflow}\n"
         f"- RAISEs: {q.raises}, false raises: {q.false_raises}\n"
         f"- Chattering (psi >= 0.05 or alarm < 20 s): {', '.join(q.chattering) or 'none'}\n"
         f"- Peak new alarms in 10 min: {dict(q.peak_10min)}, time in flood: "
@@ -141,6 +142,15 @@ def sent_frames(r: redis.Redis, v: str, start: datetime, end: datetime) -> set[F
     """Frames the simulator XADDed to tm:<v> with t_onboard in [start, end), read back from the
     stream (the broker record of what was sent, read as admin, ingest has no XRANGE;
     360k entries are kept, 10 h at 10 Hz)."""
+    key = f"tm:{v}"
+    info = cast(dict[str, Any], r.xinfo_stream(key))
+    first_ms = (
+        int(str(info["first-entry"][0]).split("-")[0]) if info["first-entry"] else sys.maxsize
+    )
+    if info["entries-added"] > info["length"] and first_ms > _ms(start) - STREAM_MARGIN_MS:
+        # entries were trimmed and the oldest left is newer than the window's start: sent would be
+        # undercounted (a silent pass), so stop here
+        raise RuntimeError(f"{key} was trimmed past the soak window start: head lost")
     out: set[Frame] = set()
     lo = str(_ms(start) - STREAM_MARGIN_MS)
     hi = str(_ms(end) + STREAM_MARGIN_MS)
@@ -217,7 +227,10 @@ def main(
     env = read_env()
     api = api or Api(env["API_HOST_PORT"], env["DEMO_PW_CONDUCTOR"])
     day = datetime.now(UTC)
+    read_overflow = overflow or (lambda: sim_overflow(env["SIM_HOST_PORT"]))
+    ovf_start = read_overflow()  # the simulator's counter is since its start, not the soak's
     ids, ended = run_sessions(api, vehicles, wait or (lambda: time.sleep(hours * 3600)))
+    ovf = read_overflow() - ovf_start
     out = out or REPO / "docs" / "perf" / f"soak-{day:%Y-%m-%d}"
     out.mkdir(parents=True, exist_ok=True)
     for v, i in ids.items():
@@ -233,7 +246,6 @@ def main(
         counts = [_count(db, r, v, ids[v], *win[v]) for v in vehicles]
         start, end = min(w[0] for w in win.values()), max(w[1] for w in win.values())
         events = [QEvent(*row) for row in db.execute(ALARM_SQL, (list(vehicles), start, end))]
-    ovf = (overflow or (lambda: sim_overflow(env["SIM_HOST_PORT"])))()
     q = quality(events, fault_windows=[])  # nothing injected: every RAISE is false
     text = render(day, hours, counts, ovf, q)
     (out / "summary.md").write_text(text)

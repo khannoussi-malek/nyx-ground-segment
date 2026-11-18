@@ -47,7 +47,7 @@ Run 1 (17:02:26Z-17:04:51Z, screenshots atp07-1-form.png, atp07-4-finished.png):
 Run 2 (17:28:21Z-17:30:48Z, same window, polling every 200 ms; screenshots atp07-3-dropout.png, atp07-4-finished.png overwritten by this run):
 - 17:30:13Z at replay time 12:15:03.9Z: summary `LOSS OF SIGNAL`, 8 STALE parameter rows; screenshot shows banner `LOSS OF SIGNAL (recorded)`, event `12:14:59Z NYX-TA9 LOS since 12:14:59Z`, all 8 parameters STALE.
 - Banner visible and 0 buttons again; finished after 147 s.
-- Note: atp07-2-leak.png (taken by run 2 at replay time 12:10:xx) shows NOMINAL because it was taken just before the alarm was raised; the leak evidence in this record is the run 1 log above; the committed evidence is `e2e/replay.spec.ts` passing on a fresh stack (it asserts the recorded leak RED in replay) and the demo recording from 0:58 ([demo](../../../demo/README.md)).
+- Note: atp07-2-leak.png (taken by run 2 at replay time 12:10:xx) shows NOMINAL because it was taken just before the alarm was raised; the leak evidence in this record is the run 1 log above; the committed evidence is `e2e/replay.spec.ts` passing on a fresh stack (it asserts that the replay's alarm list has the same parameters as the alarms recorded in the replayed window, which the backfilled leak raised) and the demo recording from 0:58 ([demo](../../../demo/README.md)).
 - Not exercised: the 409 "archive object failed hash check" (needs a corrupted object; covered by e2e/replay.spec.ts, not by this procedure).
 - Pass (banner stays and is not dismissible; leak alarms at 10 min; STALE and LOS at 15 min on replay time; ends after about 2 min): PASS. Duration is 2.4 min against "about 2 min"; run 2 was a second observation run of the same step, not a retry after failure.
 

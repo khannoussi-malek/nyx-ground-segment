@@ -5,6 +5,8 @@ Question: after a stall of the whole stack, how long until the ING-10 lag is bac
 ## Method
 Fresh stack (separate checkout of the Gate 5 branch at 6d8c9db, same machine: Apple M4 Pro, 12 cores, 24 GB, macOS 27.2.1, Docker Desktop). 2 vehicles × 100 Hz (`perf.run_p.set_sim_rate(100)`); lag sampled at 1 Hz with run P's `TIME_LAG_SQL` (max over both vehicles). Per trial: 60 s steady, `docker compose pause` of all 8 services for 10 s (every container frozen, as in a VM stall), `unpause`, 60 s of samples. A second probe sampled every 100 ms (Redis `XINFO GROUPS` lag, pending, entries-read, and the database time lag) on one vehicle.
 
+Raw evidence kept: the ingest-1, ingest-2 and api logs of each trial's window in [logs/](logs/). The trial driver was a throwaway script; its 1 Hz samples were printed, not saved, so the table below is the printed result.
+
 ## Result (unchanged code)
 | Trial | Peak lag | Unpause → lag < 1 s and stays |
 |---|---|---|

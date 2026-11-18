@@ -104,11 +104,16 @@ async def create_replay(body: ReplayRequest, request: Request, user: User) -> Re
     r = Replay(uuid4(), user, body, time.monotonic(), asyncio.Event())
     st.replays[r.id] = r
 
-    def expire() -> None:
-        if not r.started and st.replays.pop(r.id, None) is not None:
+    def expire(rearm: bool) -> None:
+        if r.started:
+            return
+        if rearm and r.taken:  # a GET was accepted: give its first byte one more period
+            loop.call_later(REPLAY_IDLE_S, expire, False)
+        elif st.replays.pop(r.id, None) is not None:
             r.stop.set()
 
-    asyncio.get_running_loop().call_later(REPLAY_IDLE_S, expire)
+    loop = asyncio.get_running_loop()
+    loop.call_later(REPLAY_IDLE_S, expire, True)
     return ReplayCreated(replay_id=r.id)
 
 

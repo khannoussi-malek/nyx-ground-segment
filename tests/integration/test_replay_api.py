@@ -244,6 +244,26 @@ async def test_taken_replay_whose_stream_never_starts_frees_its_slot(
         await until(lambda: registry(live_api) == {}, 2)
 
 
+async def test_taken_replay_that_starts_late_survives_expiry(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # a GET accepted just before the idle timer, whose first byte is slow
+    v = vehicle()
+    hot_hour(v, H, n=30, rate_hz=1.0)
+    monkeypatch.setattr(replays, "REPLAY_IDLE_S", 0.4)
+    async with client(live_api) as c:
+        rid = await create(c, body(v))
+        (r,) = registry(live_api).values()
+        await asyncio.sleep(0.3)
+        r.taken = True  # taken, not started
+        await asyncio.sleep(0.2)  # past the first timer
+        assert str(rid) in {str(k) for k in registry(live_api)}
+        assert not r.stop.is_set()
+        r.started = True  # starts before the second timer
+        await asyncio.sleep(0.4)  # past the second timer
+        assert str(rid) in {str(k) for k in registry(live_api)}
+        assert not r.stop.is_set()
+
+
 def _live_msg(kind: str, v: str | None) -> dict[str, Any]:
     t = H.isoformat()
     last: dict[str, Any] = {

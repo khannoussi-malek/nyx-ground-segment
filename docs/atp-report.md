@@ -43,7 +43,7 @@ Run P, ING-10 (S), 2 vehicles x 100 Hz, 300 s. Both runs are reported as measure
 | First, sampled 17:39:55-17:44:55Z | 28.08 | 19.564 s (median 23 ms; ingest p95 11126.2 ms, alarm p95 8438.4 ms) | FAIL | [run-p-2026-11-18-host-load](perf/run-p-2026-11-18-host-load/summary.md), [NCR-01](ncr/NCR-01.md) |
 | Second, after ATP-08 step 0 (quiet-machine gate) was added | 3.81 | 0.648 s (ingest p95 49.9 ms, alarm p95 54.9 ms, query p95 31.9 ms, ingest-1 CPU mean 11.6 % max 18.7 %) | PASS | [run-p-2026-11-18](perf/run-p-2026-11-18/summary.md) |
 
-The first run started shortly after a full `make up --build`, with the host oversubscribed (load average 28.08 before it, against 3.73 and 3.81 on the passing runs). `lag.csv` shows two stall episodes, 17:40:04-07Z (up to 3.56 s) and 17:40:41-17:41:01Z (up to 19.56 s), and a brief 1.2 s blip at 17:43:56Z; 69 of 600 samples were at or above 1 s. The load is a correlation with the stall, not a proven mechanism. The same stalls produced the LOSS OF SIGNAL in the soak that followed (ATP-01 row, NCR-01). The second run is a rerun after a documented cause and a procedure change, not a rerun until it passed: the failed run stays in the repository and in NCR-01.
+The first run started shortly after a full `make up --build`, with the host oversubscribed (load average 28.08 before it, against 3.73 and 3.81 on the passing runs). `lag.csv` shows two stall episodes, 17:40:04-07Z (up to 3.56 s) and 17:40:41-17:41:01Z (up to 19.56 s), and a brief 1.2 s blip at 17:43:56Z; 69 of 600 samples were at or above 1 s. The load is a correlation with the stall, not a proven mechanism. The same stalls produced the LOSS OF SIGNAL in the soak that followed (ATP-01 row, NCR-01). The second run is a rerun after a documented cause and a procedure change, not a rerun until it passed: the failed run stays in the repository and in NCR-01. Stall trials after Gate 5 ([summary](perf/stall-2026-11-18/summary.md)) show the recovery is CPU-bound: 2.5–3.5 s after a 10 s freeze on a free host, about 10 s with ingest capped at a quarter of a core.
 
 Run N's first attempt, [run-n-2026-11-18-aborted](perf/run-n-2026-11-18-aborted/), is not a measurement: the browser did not run because the fresh clone lacked the e2e packages (finding 2.3). Run N was run again after the fix, once, and passed.
 
@@ -70,7 +70,7 @@ Verdict: the S rule holds (6 of 7), and it holds without ING-10 as well (5 of 7)
 
 | NCR | Requirement | Severity | Decision |
 | --- | --- | --- | --- |
-| [NCR-01](ncr/NCR-01.md) | ING-10 lag over 1 s when the host is oversubscribed | minor | accept with a known limitation; ATP-08 step 0 gates the start on a quiet machine |
+| [NCR-01](ncr/NCR-01.md) | ING-10 lag over 1 s when the host is oversubscribed | minor | accepted by the owner after an investigation ([stall trials](perf/stall-2026-11-18/summary.md): back under 1 s 2.5–3.5 s after a 10 s whole-stack freeze; no ingest defect); ATP-08 step 0 gates the start on a quiet machine |
 | [NCR-02](ncr/NCR-02.md) | ENG-06 timed run by a newcomer not done | minor | accept with a known limitation (proposed; the owner confirms) |
 | [NCR-03](ncr/NCR-03.md) | Fresh-clone defects in the procedures and setup (ENG-01, ENG-08, ATP-08) | minor | fix now (done on this branch) |
 

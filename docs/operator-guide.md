@@ -51,3 +51,10 @@ Errors show the API message. 400: the window is empty or longer than 24 h. 404: 
 If an archived hour's object fails its hash check while its rows are still in the hot table, the archiver first rebuilds the object from those rows. When that does not clear it (the rebuild is refused or fails again), the hour stays hot. The archiver `/healthz` shows `degraded` with a `delete_refused` count, and its log has an ERROR line naming the vehicle and hour. The archiver never deletes those hot rows on its own: they are the only good copy. Only that hour is held back; other hours keep archiving and deleting.
 
 What you do: find the `ARCHIVE_CORRUPT` event for the vehicle and hour (its `expected` and `found` hashes), check the object in the archive bucket, and decide with the test conductor: fix the cause (storage, permissions, a wrong object) and let the next pass rebuild it, or accept that the hour is lost for replay. A replay across the hour stays refused (409) until it is resolved. Once the object verifies again, the count drops and `/healthz` returns to `ok` after the next pass. If the hot rows are already deleted, no copy is left to rebuild from: the event stays open and the hour cannot be replayed.
+
+## Restore the state
+The archiver writes a snapshot of every table except telemetry to the archive bucket every `SNAPSHOT_EVERY_H` hours (default 24) as `state/YYYY/MM/DD/HHMM.tar.gz` with a `.sha256` sidecar. The archiver `/healthz` shows `last_state_snapshot` and turns `degraded` when it is older than twice that. A snapshot without a sidecar is incomplete: do not use it.
+
+To restore after losing the database volume, bring up an empty stack (`make up`), stop the services that write to it, pick the newest key (`docker compose exec minio mc ls --recursive` on the `archive/state/` prefix, or the MinIO console), and run `uv run python scripts/restore_state.py state/2026/11/18/0300.tar.gz`. It refuses a database that already has rows (exit 2). History since that snapshot is lost.
+
+`make reset` refuses while the archive holds archived hours, because it also deletes the MinIO archive; `FORCE=1 make reset` confirms.

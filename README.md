@@ -55,6 +55,7 @@ All decisions have IDs in [docs/design.md](docs/design.md) and map to requiremen
 ## Limitations
 From [design §4](docs/design.md#4-deliberately-not-built):
 - **A single copy of the archive.** After `HOT_RETENTION_H` the one MinIO object is the only copy. A rolling scrub finds corruption (an `ARCHIVE_CORRUPT` event, `degraded` health, replay of that hour refused with 409); nothing repairs it. The MinIO image is a frozen `bitnamilegacy` build.
+- **Non-telemetry history is lost back to the last snapshot** (≤ `SNAPSHOT_EVERY_H`, default 24 h): alarms, events, commands and the audit log are snapshotted daily to the same MinIO as the archive (D-ARC-12), so losing both loses everything.
 - Not production-ready: no roles or second-person approval for hazardous commands, no TLS (ports are bound to 127.0.0.1), secrets live in `.env`, Redis and Postgres are single nodes, the audit log is append-only by role and trigger but not tamper-evident.
 - No flood control, shelving or suppression; no CCSDS/PUS decoding; no report sign-off in the tool.
 - Stream interfaces are not versioned: after any change to a stream schema, restart all services together.

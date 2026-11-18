@@ -140,6 +140,7 @@ services:
       S3_BUCKET: archive
       HOT_RETENTION_H: "${HOT_RETENTION_H:-25}"
       ARCHIVE_LOOP_S: "${ARCHIVE_LOOP_S:-300}"
+      SNAPSHOT_EVERY_H: "${SNAPSHOT_EVERY_H:-24}"
       BIND_HOST: "0.0.0.0"
       HEALTH_PORT: "8081"
       GS_TEST_HOOKS: "${GS_TEST_HOOKS:-0}"

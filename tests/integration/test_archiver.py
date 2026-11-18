@@ -853,7 +853,9 @@ async def test_one_broken_object_fails_its_hour_and_later_hours_still_archive(
 
     def state(ctx: Any) -> str:
         now = datetime.now(UTC)
-        return archiver_status(now, True, True, True, None, 0, ctx.degraded_hours(), now)[0]
+        return archiver_status(
+            now, True, True, True, None, 0, ctx.degraded_hours(), now, last_snapshot=now
+        )[0]
 
     v = vid()
     c_, a, b = H - 2 * HOUR, H - HOUR, H
@@ -887,7 +889,9 @@ def _state(ctx: Any) -> str:
     from gs.archiver.status import archiver_status
 
     now = datetime.now(UTC)
-    return archiver_status(now, True, True, True, None, 0, ctx.degraded_hours(), now)[0]
+    return archiver_status(
+        now, True, True, True, None, 0, ctx.degraded_hours(), now, last_snapshot=now
+    )[0]
 
 
 async def test_an_anomaly_does_not_clear_an_unreadable_mark(

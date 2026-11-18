@@ -12,7 +12,7 @@ NOW = datetime(2026, 11, 15, 12, tzinfo=UTC)
 def st(**kw: object) -> tuple[str, dict[str, object]]:
     args: dict[str, object] = {
         "now": NOW, "db_ok": True, "redis_ok": True, "s3_ok": True, "oldest_unarchived": None,
-        "corrupt": 0, "refused": 0, "last_pass": NOW,
+        "corrupt": 0, "refused": 0, "last_pass": NOW, "last_snapshot": NOW,
     }  # fmt: skip
     return archiver_status(**(args | kw))  # type: ignore[arg-type]
 
@@ -23,6 +23,7 @@ def test_ok() -> None:
     assert checks == {
         "oldest_unarchived_hour": None, "scrub": "ok", "delete_refused": 0, "db": "ok",
         "redis": "ok", "minio": "ok", "last_pass": "2026-11-15T12:00:00.000000Z",
+        "last_state_snapshot": "2026-11-15T12:00:00.000000Z",
     }  # fmt: skip
 
 
@@ -100,3 +101,14 @@ def test_plan_corrupt_hours_self_heal_but_never_shrink_or_delete() -> None:
     (odd,) = plan_pass(NOW, {("v", h): 9}, {("v", h): row}, 0.0, k)
     assert isinstance(odd, Anomaly)  # healing would shrink the hour
     assert plan_pass(NOW, {("v", h): 1}, {("v", h): gone}, 0.0, k) == []  # event stays open
+
+
+def test_archiver_status_snapshot_age() -> None:
+    assert st(last_snapshot=NOW - timedelta(hours=48))[0] == "ok"
+    old = NOW - timedelta(hours=48, seconds=1)
+    state, checks = st(last_snapshot=old)
+    assert (state, checks["last_state_snapshot"]) == ("degraded", "2026-11-13T11:59:59.000000Z")
+    assert st(last_snapshot=NOW - timedelta(hours=5), snapshot_every_h=2)[0] == "degraded"
+    assert st(last_snapshot=None, last_pass=None)[0] == "ok"  # before the first pass
+    state, checks = st(last_snapshot=None)  # a pass completed and took none
+    assert (state, checks["last_state_snapshot"]) == ("degraded", None)

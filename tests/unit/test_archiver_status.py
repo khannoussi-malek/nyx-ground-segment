@@ -80,7 +80,8 @@ def test_settings_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOT_RETENTION_H", "0")
     assert ArchiverSettings.from_env().retention_h == 0.0
     for name, bad in [("HOT_RETENTION_H", "-1"), ("HOT_RETENTION_H", "nan"),
-                      ("HOT_RETENTION_H", "x"), ("ARCHIVE_LOOP_S", "0")]:  # fmt: skip
+                      ("HOT_RETENTION_H", "x"), ("ARCHIVE_LOOP_S", "0"),
+                      ("SNAPSHOT_EVERY_H", "0")]:  # fmt: skip
         monkeypatch.setenv(name, bad)
         with pytest.raises(ConfigError):
             ArchiverSettings.from_env()

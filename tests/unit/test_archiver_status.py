@@ -153,6 +153,36 @@ def _probe_patches(monkeypatch: pytest.MonkeyPatch, count: Any) -> Any:
     return main
 
 
+@pytest.fixture(autouse=True)
+def _listing_state_reset() -> None:
+    from gs.archiver import main
+
+    main._orphans_unknown = False
+
+
+async def test_probe_listing_outage_warns_once_and_logs_recovery(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fail = True
+
+    async def flaky(*a: Any, **k: Any) -> int:
+        if fail:
+            raise RuntimeError("down")
+        return 0
+
+    main = _probe_patches(monkeypatch, flaky)
+    with caplog.at_level(logging.INFO, logger=main.__name__):
+        for _ in range(3):
+            await main._probe(cast(Any, None), cast(Any, None), cast(Any, _Ping()))
+        fail = False
+        await main._probe(cast(Any, None), cast(Any, None), cast(Any, _Ping()))
+        await main._probe(cast(Any, None), cast(Any, None), cast(Any, _Ping()))
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (logging.WARNING, "state/ listing failed: RuntimeError: down"),
+        (logging.INFO, "state/ listing answers again"),
+    ]
+
+
 async def test_probe_unreadable_state_listing_is_unknown_and_logged(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:

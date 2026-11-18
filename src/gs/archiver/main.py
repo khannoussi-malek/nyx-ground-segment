@@ -231,14 +231,27 @@ async def _db_facts(s: ArchiverSettings) -> int | None:
         return await unresolved_corrupt(conn)
 
 
+_orphans_unknown = False  # the last listing failed: the log carries the change, not each probe
+
+
 async def _orphan_count(ctx: ArchiverCtx) -> int | None:
-    """The state/ orphan count, or None when the listing fails or hangs: unknown, never zero."""
+    """The state/ orphan count, or None when the listing fails or hangs: unknown, never zero.
+    Logs the change to unknown (WARNING) and back (INFO), not every 5 s probe of an outage."""
+    global _orphans_unknown
     try:
-        return await asyncio.wait_for(count_orphans(ctx), PROBE_TIMEOUT_S)
+        n = await asyncio.wait_for(count_orphans(ctx), PROBE_TIMEOUT_S)
     except TimeoutError:
-        log.warning("state/ listing failed or timed out")
+        failure = "state/ listing failed or timed out"
     except Exception as e:  # noqa: BLE001  any listing failure is reported as unknown, not zero
-        log.warning("state/ listing failed: %s: %s", type(e).__name__, e)
+        failure = f"state/ listing failed: {type(e).__name__}: {e}"
+    else:
+        if _orphans_unknown:
+            log.info("state/ listing answers again")
+        _orphans_unknown = False
+        return n
+    if not _orphans_unknown:
+        log.warning(failure)
+    _orphans_unknown = True
     return None
 
 

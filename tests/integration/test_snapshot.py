@@ -2,8 +2,8 @@ import asyncio
 import io
 import logging
 import os
-import time
 import tarfile
+import time
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any

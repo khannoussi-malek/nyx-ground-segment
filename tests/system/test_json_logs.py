@@ -3,27 +3,22 @@ frame path names the vehicle and the seq."""
 
 import json
 import time
+import urllib.request
 from datetime import datetime
 from typing import Any
 
 from gs.common.time import iso_z
-from tests.support.compose import compose
+from tests.support.compose import api_url, compose
 from tests.support.env import now, wait_until
 from tests.support.ingest import INGEST
 from tests.support.redisx import client
 from tests.support.sim import post_fault
 
 SERVICES = ("simulator", "ingest-1", "ingest-2", "api", "migrate")
-TAIL = 50
 
 
-def lines(svc: str, since: datetime | None = None) -> list[dict[str, Any]]:
-    args = [
-        "logs",
-        "--no-log-prefix",
-        *(["--since", iso_z(since)] if since else ["--tail", str(TAIL)]),
-    ]
-    out = compose(*args, svc).stdout
+def lines(svc: str, since: datetime) -> list[dict[str, Any]]:
+    out = compose("logs", "--no-log-prefix", "--since", iso_z(since), svc).stdout
     return [json.loads(ln) for ln in out.splitlines() if ln.strip()]  # a non-JSON line raises
 
 
@@ -33,7 +28,11 @@ def test_every_service_logs_json() -> None:
     # server-closed connection before use (P-pf47), so dropping theirs may log nothing:
     # a seq_jump on each vehicle makes its owner log the SEQ_JUMP event instead (repeated,
     # because a worker recreated by an earlier test gets its home vehicle back within ~5 s).
+    # The api logs each request (uvicorn.access) and the exited migrate container logs again when
+    # started, so both get one line of ours; every service is then read since the test start.
     started = now()  # earlier tests leave lines (a deliberate watchdog dump); read only ours
+    urllib.request.urlopen(f"{api_url()}/healthz", timeout=5).close()
+    compose("start", "migrate")
     client("admin").client_kill_filter(user="sim")
     last_poke = 0.0
 
@@ -43,12 +42,11 @@ def test_every_service_logs_json() -> None:
             for vehicle in ("NYX-TA1", "NYX-TA2"):
                 post_fault(vehicle, "seq_jump")
             last_poke = time.monotonic()
-        return all(lines(s, started) for s in ("simulator", *INGEST))
+        return all(lines(s, started) for s in SERVICES)
 
     wait_until(all_logged, 20)
     for svc in SERVICES:
-        # api and migrate log nothing during the test, so they keep the tail
-        got = lines(svc, started) if svc in ("simulator", *INGEST) else lines(svc)
+        got = lines(svc, started)
         assert got, f"{svc} logged nothing"
         for rec in got:
             assert isinstance(rec["t"], str) and rec["t"].endswith("Z"), (svc, rec)

@@ -11,12 +11,12 @@ Choose the hours first. Run `date -u +%Y-%m-%dT%H:00:00Z`: that is H, the start 
    ```
    The leak starts 10 min into the window and lasts 2 min, the dropout starts at 15 min and lasts 10 s: both lie inside the 20 min window replayed in step 5. It prints `sent 71900 frames to tm:NYX-TA9`: 2 h at 10 Hz is 72000, minus the 100 frames the dropout never sends. Ingest then stores them (a few minutes). Wait until the hot row count of NYX-TA9 reaches 71900 and stops growing, so the archived object in step 3 is the final one (the archiver is running and may archive a partial hour first; it then replaces it with a complete version):
    ```
-   PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -e PGPASSWORD db \
+   PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -T -e PGPASSWORD db \
      psql -h 127.0.0.1 -U gs_app -d gs -c "select count(*) from telemetry where vehicle='NYX-TA9'"
    ```
 2. **Wait for the archiver.** Hours that ended are archived at the next loop, every `ARCHIVE_LOOP_S` (300 s). Watch `docker compose logs -f archiver`, or check the object list in step 3. Hot rows stay until the hour is more than `HOT_RETENTION_H` old. Wait until both backfilled hours are recorded:
    ```
-   PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -e PGPASSWORD db \
+   PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -T -e PGPASSWORD db \
      psql -h 127.0.0.1 -U gs_app -d gs -c "select hour from archive_object where vehicle='NYX-TA9' order by hour"
    ```
    Expected rows (psql prints timestamptz like this; use your backfill date): `2026-11-16 08:00:00+00` and `2026-11-16 09:00:00+00`.
@@ -39,12 +39,12 @@ Choose the hours first. Run `date -u +%Y-%m-%dT%H:00:00Z`: that is H, the start 
    ```
    Wait until the hot row count of NYX-TA9 reaches 107900 (71900 plus the 36000 frames of this hour) and stops growing; this is the "before" count:
    ```
-   PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -e PGPASSWORD db \
+   PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -T -e PGPASSWORD db \
      psql -h 127.0.0.1 -U gs_app -d gs -c "select count(*) from telemetry where vehicle='NYX-TA9'"
    ```
    Still before arming, list the recorded hours:
    ```
-   PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -e PGPASSWORD db \
+   PGPASSWORD=$(grep '^GS_APP_PASSWORD=' .env | cut -d= -f2) docker compose exec -T -e PGPASSWORD db \
      psql -h 127.0.0.1 -U gs_app -d gs -c "select hour from archive_object where vehicle='NYX-TA9' order by hour"
    ```
    It shows only `2026-11-16 08:00:00+00` and `2026-11-16 09:00:00+00`, no hour 10. Only now arm the crash and start the archiver:

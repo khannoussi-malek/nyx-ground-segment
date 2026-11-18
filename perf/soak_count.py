@@ -192,6 +192,10 @@ def _count(
 ) -> VehicleCount:
     stored = stored_frames(db, v, start, end)
     sent = sent_frames(r, v, start, end)
+    if n := len(stored - set(sent)):  # G4-21: the stream is the record of what was sent
+        raise RuntimeError(
+            f"soak: {n} stored frames are missing from tm:{v} (deleted from the stream?)"
+        )
     lost = lost_by_epoch(epochs := epoch_rows(sent, stored))
     gaps, resets = (db.execute(sql, (v, start, end)).fetchone() for sql in (GAP_SQL, RESET_SQL))
     assert gaps is not None and resets is not None

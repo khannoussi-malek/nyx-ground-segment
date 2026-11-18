@@ -7,6 +7,7 @@ import pytest
 from gs.alarms.quality import Quality
 from perf.soak_count import (
     Api,
+    _count,
     VehicleCount,
     epoch_rows,
     lost_by_epoch,
@@ -143,3 +144,16 @@ def test_an_interrupted_wait_still_stops_both() -> None:
     with pytest.raises(KeyboardInterrupt):
         run_sessions(api, ("A", "B"), interrupted)
     assert api.calls[-2:] == ["POST /api/sessions/1/stop", "POST /api/sessions/2/stop"]
+
+
+def test_a_stored_frame_missing_from_the_stream_fails_the_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """G4-21: a stored frame the stream no longer holds (XDEL) would be a silent pass."""
+    held = {(E1, 0), (E1 + timedelta(seconds=1), 1)}
+    monkeypatch.setattr("perf.soak_count.stored_frames", lambda *_: held)
+    monkeypatch.setattr("perf.soak_count.sent_frames", lambda *_: [(E1, 0)])
+    with pytest.raises(
+        RuntimeError, match=r"soak: 1 stored frames are missing from tm:NYX-TA1 \(deleted"
+    ):
+        _count(None, None, "NYX-TA1", 1, E1, E2)  # type: ignore[arg-type]

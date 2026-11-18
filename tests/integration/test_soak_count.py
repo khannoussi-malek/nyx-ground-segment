@@ -67,6 +67,20 @@ def _run(v: str, b1: datetime, end: datetime, out: Path, overflow: list[int] | N
     main(0, api=api, vehicles=(v,), out=out, wait=lambda: None, overflow=lambda: next(counter))
 
 
+async def test_an_xdeleted_stream_entry_fails_the_count(tmp_path: Path) -> None:  # G4-21
+    v = vid()
+    r = _ingest_redis()
+    old_ms = int((time_base() - timedelta(minutes=10)).timestamp() * 1000)
+    r.xadd(
+        f"tm:{v}", {"data": "old"}, id=f"{old_ms}-0"
+    )  # an older head: the stream is not "trimmed"
+    b1, _, end = await _seed(v)
+    (_, second, *_) = r.xrange(f"tm:{v}", count=3)
+    r.xdel(f"tm:{v}", second[0])
+    with pytest.raises(RuntimeError, match=r"1 stored frames are missing from tm:"):
+        _run(v, b1, end, tmp_path)
+
+
 async def test_main_passes_on_a_complete_run(tmp_path: Path) -> None:
     v = vid()
     b1, _, end = await _seed(v)

@@ -58,6 +58,15 @@ What you do: find the `ARCHIVE_CORRUPT` event for the vehicle and hour (its `exp
 ## Restore the state
 The archiver writes a snapshot of every table except telemetry to the archive bucket every `SNAPSHOT_EVERY_H` hours (default 24) as `state/YYYY/MM/DD/HHMM.tar.gz` with a `.sha256` sidecar. The archiver `/healthz` shows `last_state_snapshot` and turns `degraded` when it is older than twice that. A snapshot without a sidecar is incomplete: do not use it.
 
-To restore after losing the database volume, bring up an empty stack (`make up`), stop the services that write to it, pick the newest key (`docker compose exec minio mc ls --recursive` on the `archive/state/` prefix, or the MinIO console), and run `uv run python scripts/restore_state.py state/2026/11/18/0300.tar.gz`. It refuses a database that already has rows (exit 2). History since that snapshot is lost.
+To restore after losing the database volume, start only the database and MinIO. `make up` would start ingest, which writes to the database at once, and the restore refuses a database that already has rows (exit 2).
+
+```
+docker compose up -d --wait db minio
+docker compose run --rm --no-deps --entrypoint bash minio-init -c 'mc alias set s3 http://minio:9000 "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null && mc ls --recursive s3/archive/state/'
+uv run python scripts/restore_state.py state/2026/11/18/0300.tar.gz
+make up
+```
+
+The first command creates the schema on the empty volume. The second lists the snapshots (or use the MinIO console); pick the newest key that has its `.sha256` sidecar. The third restores it (`--db` names another database, default `gs`). Then `make up` starts the rest of the stack. History since that snapshot is lost.
 
 `make reset` refuses while the archive holds archived hours, because it also deletes the MinIO archive; `FORCE=1 make reset` confirms.

@@ -104,3 +104,17 @@ def test_duplicate_timestamps_no_opinion() -> None:  # no slope from one instant
 def test_reading_carries_slope() -> None:  # Task 8: a ROC reading's value is the slope per s
     rd = roc_levels(ramp(-0.4, n=20))[-1]  # no noise
     assert rd.value == pytest.approx(-0.4, abs=1e-9) and rd.side == "FALLING"
+
+
+def test_a_burst_of_close_stamps_after_a_stall_is_no_slope() -> None:
+    # CI PR #4: a starved simulator stamps a backlog milliseconds apart after a stall; enough
+    # samples sit in the 1 s window, but they span a few ms, and noise / ms read as a falling rate
+    rng = random.Random(3)
+    before = [(i * PERIOD_S, NOMINAL_KPA + rng.gauss(0, SIGMA)) for i in range(20)]
+    t0 = 20 * PERIOD_S + 5.0  # a 5 s stall, then 12 frames stamped 5 ms apart
+    burst = [(t0 + i * 0.005, NOMINAL_KPA + rng.gauss(0, SIGMA)) for i in range(12)]
+    got = roc_readings(before + burst, PERIOD_S)
+    assert all(r is None for r in got[20:])  # too short a span to be a rate
+    after = [(t0 + 0.06 + i * PERIOD_S, NOMINAL_KPA + rng.gauss(0, SIGMA)) for i in range(1, 20)]
+    later = roc_readings(before + burst + after, PERIOD_S)
+    assert any(r is not None and r.level == Level.NOMINAL for r in later[32:])  # judged again

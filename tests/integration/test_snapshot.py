@@ -16,7 +16,7 @@ from gs.archiver import s3 as s3_mod
 from gs.archiver import snapshot as snap_mod
 from gs.archiver.hours import hour_of
 from gs.archiver.main import run_pass
-from gs.archiver.snapshot import TABLES, snapshot_key, take_snapshot
+from gs.archiver.snapshot import TABLES, count_orphans, snapshot_key, take_snapshot
 from scripts.restore_state import main as restore_main
 from tests.support.archive import (  # noqa: F401  (archiver_paused is the module fixture)
     app_conn,
@@ -186,8 +186,11 @@ async def test_snapshot_refuses_existing_key(caplog: pytest.LogCaptureFixture) -
     assert any(r.levelno == logging.ERROR and key in r.message for r in caplog.records)
 
 
-async def test_failed_sidecar_leaves_no_orphan_tarball(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The archiver policy has no delete (D-ARC-09), so the orphan is remembered and reported."""
+async def test_failed_sidecar_leaves_a_tarball_the_bucket_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No delete in the archiver policy (D-ARC-09): the orphan stays, and is counted from the
+    bucket, so a restart (a new ArchiverCtx) still sees it."""
     real = s3_mod.put
 
     async def sidecar_dies(c: Any, bucket: str, key: str, data: bytes) -> str:
@@ -196,17 +199,22 @@ async def test_failed_sidecar_leaves_no_orphan_tarball(monkeypatch: pytest.Monke
         return await real(c, bucket, key, data)
 
     monkeypatch.setattr(s3_mod, "put", sidecar_dies)
-    ctx = archiver_ctx()
     now = NOW + timedelta(minutes=4)
+    assert await count_orphans(archiver_ctx()) == 0
     with throwaway_db() as db:
         async with app_conn(db) as c:
             with pytest.raises(OSError):
-                await take_snapshot(ctx, c, now)
+                await take_snapshot(archiver_ctx(), c, now)
     key = snapshot_key(now)
-    assert ctx.snapshot_orphans == {key}
     assert [o.object_name for o in s3_client("archiver").list_objects("archive", prefix=key)] == [
         key
     ]  # the tarball is there, the sidecar is not: not a snapshot
+    assert await count_orphans(archiver_ctx()) == 1  # a fresh ctx: nothing in memory
+    monkeypatch.setattr(s3_mod, "put", real)
+    with throwaway_db() as db:
+        async with app_conn(db) as c:
+            await take_snapshot(archiver_ctx(), c, now + timedelta(minutes=1))  # complete one
+    assert await count_orphans(archiver_ctx()) == 1
 
 
 async def test_snapshot_compression_off_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:

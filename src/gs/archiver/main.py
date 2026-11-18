@@ -38,7 +38,7 @@ from gs.archiver.plan import (
 )
 from gs.archiver.s3 import S3_ERRORS, S3Settings, client
 from gs.archiver.scrub import scrub_pass, unresolved_corrupt, unresolved_corrupt_keys
-from gs.archiver.snapshot import take_snapshot
+from gs.archiver.snapshot import count_orphans, take_snapshot
 from gs.archiver.status import archiver_status
 from gs.common.config import ConfigError, require, require_int
 from gs.common.health import State, serve_health
@@ -203,6 +203,7 @@ class Snapshot:
     oldest_unarchived: datetime | None = None
     last_pass: datetime | None = None
     last_snapshot: datetime | None = None
+    orphans: int = 0  # state tarballs without a sidecar, listed from the bucket each probe
 
 
 @dataclass
@@ -233,10 +234,15 @@ async def _db_facts(s: ArchiverSettings) -> int | None:
 async def _probe(s: ArchiverSettings, ctx: ArchiverCtx, r: redis.asyncio.Redis) -> Snapshot:
     """Cheap health facts only (the backlog and last_pass come from the pass); the three probes
     run concurrently, each bounded."""
-    pinged, listed, corrupt = await asyncio.gather(
-        _bounded(r.ping()), _bounded(bucket_answers(ctx)), _bounded(_db_facts(s))
+    pinged, listed, corrupt, orphans = await asyncio.gather(
+        _bounded(r.ping()),
+        _bounded(bucket_answers(ctx)),
+        _bounded(_db_facts(s)),
+        _bounded(count_orphans(ctx)),
     )
-    return Snapshot(corrupt is not None, bool(pinged), bool(listed), corrupt or 0)
+    return Snapshot(
+        corrupt is not None, bool(pinged), bool(listed), corrupt or 0, orphans=orphans or 0
+    )
 
 
 async def _sleep(stop: asyncio.Event, seconds: float) -> None:
@@ -260,7 +266,12 @@ async def _refresh(
             log.exception("health probe failed")
             continue
         box.snap = replace(
-            box.snap, db_ok=p.db_ok, redis_ok=p.redis_ok, s3_ok=p.s3_ok, corrupt=p.corrupt
+            box.snap,
+            db_ok=p.db_ok,
+            redis_ok=p.redis_ok,
+            s3_ok=p.s3_ok,
+            corrupt=p.corrupt,
+            orphans=p.orphans,
         )  # the pass's backlog and last_pass stay
 
 
@@ -291,7 +302,7 @@ async def run(s: ArchiverSettings, stop: asyncio.Event) -> None:
             datetime.now(UTC), snap.db_ok, snap.redis_ok, snap.s3_ok, snap.oldest_unarchived,
             snap.corrupt, ctx.degraded_hours(), snap.last_pass,
             last_snapshot=snap.last_snapshot, snapshot_every_h=s.snapshot_every_h,
-            orphans=len(ctx.snapshot_orphans),
+            orphans=snap.orphans,
         )  # fmt: skip
 
     server = await serve_health(s.bind_host, s.health_port, status)

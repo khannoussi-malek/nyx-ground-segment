@@ -80,6 +80,17 @@ async def _exists(ctx: ArchiverCtx, key: str) -> bool:
     return True
 
 
+async def count_orphans(ctx: ArchiverCtx) -> int:
+    """Tarballs under state/ with no `.sha256` sibling (one listing). The archiver cannot delete
+    them (D-ARC-09), so they stay counted until a person removes them."""
+
+    def listing() -> list[str]:
+        return [o.object_name for o in ctx.s3.list_objects(ctx.bucket, "state/", recursive=True)]
+
+    keys = set(await asyncio.to_thread(listing))
+    return sum(1 for k in keys if k.endswith(".tar.gz") and f"{k}.sha256" not in keys)
+
+
 async def take_snapshot(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], now: datetime) -> str:
     """PUT the tarball, read it back and compare, and only then PUT `<key>.sha256` (the sidecar
     is the commit mark: no sidecar, no snapshot). Returns the key."""
@@ -94,8 +105,7 @@ async def take_snapshot(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], no
             raise OSError(f"snapshot {key} differs from what was sent")
         await s3.put(ctx.s3, ctx.bucket, f"{key}.sha256", sent.encode())
     except BaseException:
-        # no delete in the archiver policy (D-ARC-09): remember the orphan for /healthz
-        ctx.snapshot_orphans.add(key)
+        # no delete in the archiver policy (D-ARC-09): /healthz counts it from the bucket
         log.error("state snapshot %s has no sidecar and cannot be deleted", key)
         raise
     return key

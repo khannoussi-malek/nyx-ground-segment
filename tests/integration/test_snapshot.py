@@ -1,9 +1,8 @@
 import asyncio
 import io
 import logging
-import os
 import tarfile
-import time
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -218,29 +217,19 @@ async def test_failed_sidecar_leaves_a_tarball_the_bucket_reports(
 
 
 async def test_snapshot_compression_off_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
-    blob = os.urandom(20_000_000)  # made before the probe runs: only the snapshot is measured
+    loop_thread = threading.get_ident()
+    ran_on: list[int] = []
+    real = snap_mod._compress
 
-    async def big(conn: Any, table: str) -> bytes:
-        return blob if table == "audit_log" else b"x\n"
+    def spy(tables: dict[str, bytes]) -> bytes:
+        ran_on.append(threading.get_ident())
+        return real(tables)
 
-    monkeypatch.setattr(snap_mod, "_copy_table", big)
-    worst = 0.0
-    done = False
-
-    async def probe() -> None:
-        nonlocal worst
-        while not done:
-            t0 = time.perf_counter()
-            await asyncio.sleep(0)
-            worst = max(worst, time.perf_counter() - t0)
-
+    monkeypatch.setattr(snap_mod, "_compress", spy)
     with throwaway_db() as db:
         async with app_conn(db) as c:
-            p = asyncio.create_task(probe())
             await take_snapshot(archiver_ctx(), c, NOW + timedelta(minutes=5))
-            done = True
-            await p
-    assert worst < 0.05, f"the event loop stalled {worst * 1000:.0f} ms"
+    assert len(ran_on) == 1 and ran_on[0] != loop_thread
 
 
 async def test_restore_uses_the_csv_header() -> None:

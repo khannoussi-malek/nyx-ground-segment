@@ -265,7 +265,7 @@ The simulator is ours, so its behaviour is a design decision. Downstream code mu
 
 | Name | Writer → reader | Content | Notes |
 | --- | --- | --- | --- |
-| `tm:<vehicle>` | sim → ingest (group `ingest`) | field `data` = JSON frame (§3 fields) | `ACKED MAXLEN ~ 360000`; header model `FrameHeader`, exported to `frame.schema.json` (D-EXT-16, 19) |
+| `tm:<vehicle>` | sim → ingest (group `ingest`) | field `data` = JSON frame (§3 fields) | `ACKED MAXLEN ~ 108000`; header model `FrameHeader`, exported to `frame.schema.json` (D-EXT-16, 19) |
 | `tc:<vehicle>` | api → sim | field `data` = JSON `{cmd_id, name, args, issued_by, issued_at, reason}` | §3; model `Tc`, exported to `tc.schema.json` (D-EXT-16) |
 | ★ `tcack:<vehicle>` | sim → owner worker | field `data` = JSON `{cmd_id, accepted, code, reason, t_onboard}` | source of RECEIVED; schema `tcack.schema.json` |
 | `tm:dlq` | ingest, api → humans/tests | field `data` = JSON `{reason, detail, raw, stream, entry_id, deliveries, first_seen, dlq_at}` | one stream for malformed + poison frames and schema-rejected `tcack` / `ui:events` entries (D-ING-27); schema `dlq.schema.json` |

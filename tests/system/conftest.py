@@ -6,6 +6,15 @@ from collections.abc import Iterator
 import pytest
 
 from tests.support.compose import api_url, compose_ps, recreate, stack_problems
+from tests.support.keys import purge_quietly
+
+
+@pytest.fixture(scope="session", autouse=True)
+def purge_test_vehicle_keys() -> Iterator[None]:
+    """Clear throwaway-vehicle keys left by earlier runs, and again at the end."""
+    purge_quietly()
+    yield
+    purge_quietly()
 
 
 @pytest.fixture(scope="session", autouse=True)

@@ -117,4 +117,16 @@ def test_a_burst_of_close_stamps_after_a_stall_is_no_slope() -> None:
     assert all(r is None for r in got[20:])  # too short a span to be a rate
     after = [(t0 + 0.06 + i * PERIOD_S, NOMINAL_KPA + rng.gauss(0, SIGMA)) for i in range(1, 20)]
     later = roc_readings(before + burst + after, PERIOD_S)
-    assert any(r is not None and r.level == Level.NOMINAL for r in later[32:])  # judged again
+    first = next(i for i, r in enumerate(later[32:]) if r is not None)
+    judged = later[32 + first]
+    assert judged is not None and judged.level == Level.NOMINAL  # the first judged reading is calm
+    assert (first + 1) * PERIOD_S <= 1.0  # and comes within 1 s of normal cadence
+
+
+def test_span_test_has_the_same_float_tolerance_as_the_count() -> None:
+    # 8 samples are needed (7.999999992 after _EPS); their span may fall a hair under 7 periods
+    cfg = RocCheck(type="roc", limit_per_s=0.3, window_s=1.0, severity="YELLOW")
+    times = [i * PERIOD_S for i in range(7)] + [0.699999999]
+    samples = [Sample(i, t, 100.0, PERIOD_S) for i, t in enumerate(times)]
+    got = run(Roc(cfg), samples)
+    assert got[-1] is not None and got[-1].level == Level.NOMINAL

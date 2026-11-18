@@ -48,7 +48,7 @@ class Roc:
         # and they must span what `need` samples span at the nominal rate: a backlog stamped ms
         # apart after a stall holds enough samples over a few ms, and noise / ms is no rate
         span = max(new.t) - min(new.t)
-        if len(pts) < need or len(set(new.t)) < 2 or span < (need - 1) * s.period_s:
+        if len(pts) < need or len(set(new.t)) < 2 or span < (need - 1) * s.period_s * (1 - _EPS):
             return new, None
         slope = statistics.linear_regression(new.t, new.v).slope
         lim = self.cfg.limit_per_s

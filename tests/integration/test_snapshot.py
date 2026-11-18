@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import tarfile
+from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -29,7 +30,21 @@ from tests.support.pg import owner_dsn, throwaway_db
 from tests.support.s3 import s3_client
 
 pytestmark = pytest.mark.usefixtures("archiver_paused")
-NOW = datetime(2026, 11, 18, 3, 4, tzinfo=UTC)
+NOW = datetime(2000, 1, 1, 3, 4, tzinfo=UTC)  # far in the past: never mixes with a real snapshot
+
+
+@pytest.fixture(autouse=True)
+def _remove_test_snapshots() -> Iterator[None]:
+    def purge() -> None:
+        root = s3_client("root")
+        for o in root.list_objects("archive", prefix="state/2000/", recursive=True):
+            root.remove_object("archive", o.object_name)
+
+    purge()
+    yield
+    purge()
+
+
 ALARM = "00000000-0000-0000-0000-0000000000a1"
 SEED = [
     "insert into limits_versions values ('s','l','c','p','ly','cy','py')",
@@ -77,7 +92,7 @@ def members(key: str) -> dict[str, bytes]:
 
 
 def test_snapshot_key() -> None:
-    assert snapshot_key(NOW) == "state/2026/11/18/0304.tar.gz"
+    assert snapshot_key(NOW) == "state/2000/01/01/0304.tar.gz"
 
 
 async def test_snapshot_roundtrip() -> None:

@@ -23,11 +23,7 @@ README_HEADINGS = [
 ATPS = ["ATP-01", "ATP-07", "ATP-08"]
 # Things a doc names that other Gate 4 tasks (19-21) and Gate 5 add, per doc: "make <target>" or a
 # path. test_landing_entries_are_removed_when_they_land fails once an entry exists.
-LANDING = {
-    "ATP-01.md": {"docs/atp-report.md"},
-    "ATP-07.md": {"docs/atp-report.md"},
-    "ATP-08.md": {"docs/atp-report.md"},
-}
+LANDING: dict[str, set[str]] = {}  # Gate 5 landed docs/atp-report.md; add entries for future docs
 DOCS = [REPO / "README.md", REPO / "CHANGELOG.md", *sorted((REPO / "docs/atp").glob("*.md"))]
 DOCS += [REPO / "docs/operator-guide.md", REPO / "docs/dev-guide.md"]
 
@@ -71,9 +67,9 @@ def test_readme_limitations_name_the_single_minio_copy() -> None:
     assert "single copy" in text and "nothing repairs it" in text and "scrub" in text
 
 
-def test_changelog_has_unreleased_and_limitations() -> None:
+def test_changelog_has_a_release_and_limitations() -> None:
     text = (REPO / "CHANGELOG.md").read_text()
-    assert "[Unreleased]" in _h2(REPO / "CHANGELOG.md")
+    assert any(h.startswith(("[Unreleased]", "[1.0.0]")) for h in _h2(REPO / "CHANGELOG.md"))
     assert "### What's in" in text and "### Known limitations" in text
 
 

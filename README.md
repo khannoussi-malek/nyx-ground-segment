@@ -62,6 +62,7 @@ From [design §4](docs/design.md#4-deliberately-not-built):
 - Stream interfaces are not versioned: after any change to a stream schema, restart all services together.
 - No in-place schema migrations of a long-lived database; a schema change during development means `make reset`.
 - Measurements run on one laptop with the load driver on the same machine; numbers are in `docs/perf/`.
+- ING-10 holds only on a host that is not CPU-oversubscribed ([NCR-01](docs/ncr/NCR-01.md)); at 10 vehicles × 100 Hz a restarted ingest worker does not catch up ([scaling](docs/perf/scaling.md)).
 
 ## Next steps
 Identity and roles; TLS and a secret store; tamper-evident audit; replicated Redis and Postgres; a maintained S3 store with a second copy; a real decoder for the bench interface; the scaling fixes in `docs/perf/scaling.md`; shelving, latching and flood handling; versioned stream interfaces once a second producer exists. The ordered list is [design §4](docs/design.md#not-production-ready-in-the-order-we-would-fix-it-review-q14).

@@ -5,12 +5,14 @@ Extrapolated linearly from run P (2 vehicles x 100 Hz, 300 s) to 10 vehicles x 1
 | Quantity | At 1000 frames/s |
 |---|---|
 | Worker CPU | 228 % of one core (capacity 439 frames/s) |
-| Redis growth | -0.8 MB/hour |
+| Redis growth | not measurable (streams capped at MAXLEN) |
 | Ingest time p95 | 16.7 ms |
 
 ## Headroom
 
 Headroom: a restarted worker is not fast enough to catch up with the missed and ongoing load: 30 s of backlog needs never (limit 60 s). If capacity does not exceed the load the backlog never clears (metastable failure, Huang et al. 2022 p. 7): add workers.
+
+Per worker: 2 workers, 5 vehicles per worker = 500 frames/s of the fleet's 1000 frames/s; a restarted worker takes its own vehicles back.
 
 Model: backlog = 30 s of 1000 frames/s; capacity = one worker at 100 % of a core; catch-up = backlog / (capacity - load); metastable when capacity <= load.
 

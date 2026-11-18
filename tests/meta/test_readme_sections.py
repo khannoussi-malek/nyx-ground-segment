@@ -193,10 +193,9 @@ def test_landing_entries_are_removed_when_they_land() -> None:
 
 
 @pytest.mark.parametrize("name", ["README.md", "CHANGELOG.md"])
-def test_unbuilt_work_is_worded_as_landing_in_this_gate(name: str) -> None:
+def test_no_stale_landing_in_this_gate_wording(name: str) -> None:
     text = (REPO / name).read_text()
-    assert re.search(r"run P.{0,120}landing in this gate", text, re.I | re.S), name
-    assert not re.search(r"\b(in|are in): .*run P", text), name
+    assert not re.search(r"landing in this gate", text, re.I), name  # run P and scaling are built
 
 
 def test_atp07_counts_hot_rows_before_the_archiver_starts_and_checks_what_is_pending() -> None:

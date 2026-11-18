@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import NamedTuple
 
 from perf.run_n import REPO, VEHICLES
-from perf.run_p import DURATION_S, RATE_HZ
+from perf.run_p import DURATION_S, RATE_HZ, WORKERS
 
 TARGET_VEHICLES, TARGET_FPS = 10, 1000  # 10 vehicles x 100 Hz
 RESTART_S = 30.0  # outage a restarted worker must make up: this many seconds of target load
@@ -77,8 +77,12 @@ def render(s: Scaling) -> str:
             f"(limit {CATCHUP_MAX_S:.0f} s). If capacity does not exceed the load the backlog "
             "never clears (metastable failure, Huang et al. 2022 p. 7): add workers."
         )
+    share = TARGET_VEHICLES // len(WORKERS)
     headroom += (
-        f"\n\nModel: backlog = {RESTART_S:.0f} s of {TARGET_FPS} frames/s; capacity = one worker "
+        f"\n\nPer worker: {len(WORKERS)} workers, {share} vehicles per worker = "
+        f"{share * RATE_HZ} frames/s of the fleet's {TARGET_FPS} frames/s; a restarted worker "
+        "takes its own vehicles back.\n\n"
+        f"Model: backlog = {RESTART_S:.0f} s of {TARGET_FPS} frames/s; capacity = one worker "
         "at 100 % of a core; catch-up = backlog / (capacity - load); metastable when capacity "
         "<= load."
     )
@@ -87,6 +91,11 @@ def render(s: Scaling) -> str:
         if math.isnan(s.cpu_at_target)
         else f"{s.cpu_at_target * 100:.0f} % of one core (capacity {s.capacity:.0f} frames/s)"
     )
+    growth = (
+        "not measurable (streams capped at MAXLEN)"
+        if s.redis_mb_hour <= 0  # a before/after delta on capped streams is noise
+        else _num(s.redis_mb_hour, ".1f", " MB/hour")
+    )
     return (
         "# Scaling analysis (D-PERF-09)\n\n"
         f"Extrapolated linearly from run P ({len(VEHICLES)} vehicles x {RATE_HZ} Hz, "
@@ -94,7 +103,7 @@ def render(s: Scaling) -> str:
         "No per-stage instrumentation (SR-06).\n\n"
         "| Quantity | At 1000 frames/s |\n|---|---|\n"
         f"| Worker CPU | {cpu} |\n"
-        f"| Redis growth | {_num(s.redis_mb_hour, '.1f', ' MB/hour')} |\n"
+        f"| Redis growth | {growth} |\n"
         f"| Ingest time p95 | {_num(s.insert_ms, '.1f', ' ms')} |\n\n"
         f"## Headroom\n\n{headroom}\n\n"
         "## First bottleneck and fix\n\n"

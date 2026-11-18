@@ -29,6 +29,9 @@ If the alarm changes while the dialog is open (it escalates, returns or clears),
 ## Send a command
 Choose the target vehicle yourself (there is no default), the command and its arguments. A hazardous command asks for confirmation: the dialog repeats vehicle, command, arguments and the hazard text, wants a reason of at least 10 characters, and enables **Confirm** only after you type the vehicle ID (for example `NYX-TA2`). The confirmation lasts 60 s. If the console says "<name> **sent the same command** N s ago" (within 2 s), do not send it again; look at the command list. After a network error it says "May have been sent - check the command list before sending again": do that first.
 
+## A command that stays SENT or RECEIVED
+A command's 5 s / 15 s timeouts start only once ground processing has caught up with its backlog (D-CMD-05). While it is behind, a command can stay SENT or RECEIVED past its limit with no note on screen; the GROUND PROCESSING banner and the `/healthz` backlog say why.
+
 ## When a command shows FAILED
 FAILED is final; the line after it says what happened and what to do:
 - **not sent – safe to retry**: it never left the ground (the broker refused it, or the send took longer than the 2 s interlock).

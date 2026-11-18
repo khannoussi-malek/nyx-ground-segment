@@ -306,12 +306,23 @@ async def _process(
                 ack.xadd(DLQ, {"data": rec.model_dump_json()})
             ack.xack(stream, GROUP, *(eid for eid, _ in entries))
             await ack.execute()
-            if dlq:  # counted once the DLQ write is done (a redelivery would count twice)
-                ctx.rejected.setdefault(vehicle, Counter()).update(r.reason for r in dlq)
+            late = dlq  # counted once the DLQ write is done (a redelivery would count twice)
+            if nvs.seq != vs.seq:  # a new frame ends the earlier rejections: only the entries
+                ctx.rejected.pop(vehicle, None)  # after the batch's last stored frame still count
+                dlq_ids = {r.entry_id for r in dlq}
+                last = max((_eid(i[0]) for i in items if i[0] not in dlq_ids), default=None)
+                late = [r for r in dlq if last is None or _eid(r.entry_id) > last]
+            if late:
+                ctx.rejected.setdefault(vehicle, Counter()).update(r.reason for r in late)
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
         raise Unpublished(nvs, msgs) from e  # the entries stay pending and are re-read
     ctx.hooks.fire("after_xack")
     return nvs, len(inserted)
+
+
+def _eid(entry_id: str) -> tuple[int, int]:
+    ms, _, n = entry_id.partition("-")
+    return int(ms), int(n or 0)
 
 
 async def _commit(
@@ -558,7 +569,6 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
             nvs, _ = await process_batch(ctx, conn, stream, entries, vs, acks)
             if nvs.seq != vs.seq:  # a new frame advanced the tracker
                 last_new = time.monotonic()
-                ctx.rejected.pop(vehicle, None)
             vs = nvs
             if time.monotonic() - last_new > ctx.timing.los_s:
                 vs, links = await _silence(conn, vehicle, vs, ctx.rejected.get(vehicle))

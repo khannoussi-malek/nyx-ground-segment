@@ -44,3 +44,14 @@ async def test_rejected_count_resets_on_a_new_frame() -> None:
         await until(lambda: len(events_for(v, "AOS")) == 1, 5)
         await until(lambda: len(events_for(v, "LOS")) == 2, 6)
     assert "rejected" not in events_for(v, "LOS")[1]["details"]
+
+
+async def test_rejected_after_the_last_stored_frame_of_one_batch_are_named() -> None:
+    v, base = vid(), now() - timedelta(minutes=1)
+    put(v, range(10), base)  # one batch: good frames, then rejected ones (entry order)
+    put_bad(v, range(10, 13))
+    async with worker([v]):
+        await until(lambda: len(events_for(v, "LOS")) == 1, 6)
+    (los,) = events_for(v, "LOS")
+    assert stored(v) == 10
+    assert los["details"]["rejected"] == {"count": 3, "reason": "t_onboard_range"}

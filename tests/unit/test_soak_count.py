@@ -7,8 +7,8 @@ import pytest
 from gs.alarms.quality import Quality
 from perf.soak_count import (
     Api,
-    _count,
     VehicleCount,
+    _count,
     epoch_rows,
     lost_by_epoch,
     passed,

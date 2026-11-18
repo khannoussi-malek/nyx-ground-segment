@@ -192,3 +192,11 @@ test("a LOS with details.rejected shows FRAMES REJECTED; outages outrank it; an 
   ingest(s, "link", { event: LOS });
   expect(bannerText(s, V, "LOSS OF SIGNAL")).toBeUndefined();
 });
+
+test("bannerText names rejected frames only for a LOS link, never an AOS carrying a stale rejected", () => {
+  const s = createStore(() => 10_000, { setTimeout: (() => 1) as never, clearTimeout: () => {} });
+  const stale = eventView("AOS/NYX-TA1/e/0", { kind: "AOS", vehicle: V, details: { rejected: { count: 3, reason: "schema" } } });
+  ingest(s, "snapshot", serverSnapshot(5000, stale));
+  expect(s.lastLink(V)?.kind).toBe("AOS");
+  expect(bannerText(s, V, "LOSS OF SIGNAL")).toBeUndefined();
+});

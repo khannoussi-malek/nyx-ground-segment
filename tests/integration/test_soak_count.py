@@ -4,6 +4,7 @@ the HTTP and the simulator edges are fakes."""
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import psycopg
 import pytest
@@ -71,11 +72,10 @@ async def test_an_xdeleted_stream_entry_fails_the_count(tmp_path: Path) -> None:
     v = vid()
     r = _ingest_redis()
     old_ms = int((time_base() - timedelta(minutes=10)).timestamp() * 1000)
-    r.xadd(
-        f"tm:{v}", {"data": "old"}, id=f"{old_ms}-0"
-    )  # an older head: the stream is not "trimmed"
+    # an older head: the stream is not "trimmed"
+    r.xadd(f"tm:{v}", {"data": "old"}, id=f"{old_ms}-0")
     b1, _, end = await _seed(v)
-    (_, second, *_) = r.xrange(f"tm:{v}", count=3)
+    second = cast(list[Any], r.xrange(f"tm:{v}", count=3))[1]
     r.xdel(f"tm:{v}", second[0])
     with pytest.raises(RuntimeError, match=r"1 stored frames are missing from tm:"):
         _run(v, b1, end, tmp_path)

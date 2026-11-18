@@ -44,6 +44,7 @@ class Replay:
     created: float
     stop: asyncio.Event
     taken: bool = field(default=False)  # the first GET owns the stream
+    started: bool = field(default=False)  # _stream ran; a taken replay that never starts expires
 
 
 def _registry(request: Request) -> dict[UUID, Replay]:
@@ -93,7 +94,7 @@ async def create_replay(body: ReplayRequest, request: Request, user: User) -> Re
     st.replays[r.id] = r
 
     def expire() -> None:
-        if not r.taken and st.replays.pop(r.id, None) is not None:
+        if not r.started and st.replays.pop(r.id, None) is not None:
             r.stop.set()
 
     asyncio.get_running_loop().call_later(REPLAY_IDLE_S, expire)
@@ -114,6 +115,7 @@ async def delete_replay(replay_id: UUID, request: Request, user: User) -> Respon
 
 
 async def _stream(request: Request, r: Replay) -> AsyncIterator[bytes]:
+    r.started = True
     st = request.app.state
 
     async def sleep(s: float) -> None:  # a stop ends the wait at once

@@ -231,6 +231,19 @@ async def test_idle_replay_expires(live_api: LiveApi, monkeypatch: pytest.Monkey
         assert (await c.get(f"/api/replays/{rid}/events")).status_code == 404
 
 
+async def test_taken_replay_whose_stream_never_starts_frees_its_slot(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # an accepted GET whose client vanished before the first byte must not hold a slot
+    v = vehicle()
+    hot_hour(v, H, n=30, rate_hz=1.0)
+    monkeypatch.setattr(replays, "REPLAY_IDLE_S", 0.3)
+    async with client(live_api) as c:
+        await create(c, body(v))
+        (r,) = registry(live_api).values()
+        r.taken = True  # the GET was accepted, but _stream never ran
+        await until(lambda: registry(live_api) == {}, 2)
+
+
 def _live_msg(kind: str, v: str | None) -> dict[str, Any]:
     t = H.isoformat()
     last: dict[str, Any] = {

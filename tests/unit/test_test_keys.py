@@ -19,6 +19,11 @@ class FakeRedis:
     def __init__(self) -> None:
         self.keys = set(KEYS)
         self.batches: list[int] = []
+        self.idle: dict[str, int] = {}  # per-key OBJECT IDLETIME; unlisted keys are an hour idle
+
+    def object(self, infotype: str, key: str) -> int | None:
+        assert infotype == "idletime"
+        return self.idle.get(key, 3600) if key in self.keys else None
 
     def scan_iter(self, match: str, count: int = 0) -> list[str]:
         return [k for k in sorted(self.keys) if fnmatchcase(k, match)]
@@ -31,6 +36,35 @@ class FakeRedis:
 
 def test_purge_matches_only_test_vehicles() -> None:
     assert set(keys.vehicle_keys(FakeRedis())) == WANTED  # type: ignore[arg-type]
+
+
+def test_purge_deletes_only_keys_idle_for_10_min() -> None:
+    r = FakeRedis()
+    r.idle = {
+        "tm:NYX-TDE036594": 3600,
+        "tcack:NYX-T5D3E73E4": 5,
+        "cmdlock:NYX-T6145D806:isolate_valve": 600,
+    }
+    # frame_seq is unlisted, so it defaults to an hour idle and goes too
+    assert keys.purge_test_keys(r) == 3  # type: ignore[arg-type]
+    assert "tm:NYX-TDE036594" not in r.keys and "cmdlock:NYX-T6145D806:isolate_valve" not in r.keys
+    assert "frame_seq:NYX-TAB12CD34:7" not in r.keys
+    assert "tcack:NYX-T5D3E73E4" in r.keys  # a running session's key, touched seconds ago
+
+
+def test_purge_never_touches_live_vehicle_keys() -> None:
+    r = FakeRedis()
+    live = {"tm:NYX-TA1", "hb:veh:NYX-TA1", "tm:NYX-TDE03659", "tm:dlq", "ui:events"}
+    r.idle = {k: 10**6 for k in live}
+    keys.purge_test_keys(r)  # type: ignore[arg-type]
+    assert live <= r.keys
+
+
+def test_purge_count_is_keys_deleted_not_keys_matched() -> None:
+    r = FakeRedis()
+    r.idle = {"tm:NYX-TDE036594": 5, "tcack:NYX-T5D3E73E4": 5, "frame_seq:NYX-TAB12CD34:7": 5}
+    assert keys.purge_test_keys(r) == 1  # type: ignore[arg-type]
+    assert r.batches == [1]
 
 
 def test_purge_deletes_in_batches_of_500() -> None:

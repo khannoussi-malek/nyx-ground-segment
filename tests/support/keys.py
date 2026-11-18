@@ -9,6 +9,7 @@ import redis
 TEST_VEHICLE = re.compile(r"^NYX-T[0-9A-F]{8}$")
 PREFIXES = ("tm:", "tc:", "tcack:", "hb:veh:", "cmdlock:", "frame_seq:")  # keys carrying a vehicle
 BATCH = 500
+PURGE_MIN_IDLE_S = 600  # a test's keys are touched within seconds; a leftover is hours old
 log = logging.getLogger(__name__)
 
 
@@ -21,8 +22,14 @@ def vehicle_keys(r: redis.Redis) -> list[str]:
     return found
 
 
-def purge_test_keys(r: redis.Redis) -> int:
-    keys = vehicle_keys(r)
+def _idle_at_least(r: redis.Redis, key: str, min_idle_s: int) -> bool:
+    idle = r.object("idletime", key)  # None: the key vanished meanwhile, skip it
+    return idle is not None and int(idle) >= min_idle_s
+
+
+def purge_test_keys(r: redis.Redis, min_idle_s: int = PURGE_MIN_IDLE_S) -> int:
+    """Delete throwaway-vehicle keys idle for `min_idle_s`+, so a running session's keys survive."""
+    keys = [k for k in vehicle_keys(r) if _idle_at_least(r, k, min_idle_s)]
     for i in range(0, len(keys), BATCH):
         r.delete(*keys[i : i + BATCH])
     return len(keys)

@@ -171,17 +171,36 @@ async def test_snapshot_failure_never_blocks_the_pass(
             assert [r["hour"] for r in archive_rows(v, db)] == [h]
 
 
-async def test_snapshot_refuses_existing_key(caplog: pytest.LogCaptureFixture) -> None:
+async def test_snapshot_same_minute_after_a_complete_one_returns_the_key(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A restart in the minute of the last snapshot: the key and its sidecar exist, so it is
+    done. INFO, no ERROR, nothing overwritten, no orphan."""
     now = NOW + timedelta(minutes=3)
     with throwaway_db() as db:
         async with app_conn(db) as c:
             key = await take_snapshot(archiver_ctx(), c, now)
             first = members(key)
-            seed(db)  # the second snapshot would differ
+            seed(db)  # a second snapshot would differ
+            with caplog.at_level(logging.INFO, logger=snap_mod.__name__):
+                assert await take_snapshot(archiver_ctx(), c, now) == key
+    assert members(key) == first
+    assert [r.levelno for r in caplog.records if key in r.message] == [logging.INFO]
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert await count_orphans(archiver_ctx()) == 0
+
+
+async def test_snapshot_refuses_a_tarball_without_its_sidecar(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    now = NOW + timedelta(minutes=7)
+    key = snapshot_key(now)
+    s3_client("root").put_object("archive", key, io.BytesIO(b"x"), 1)
+    with throwaway_db() as db:
+        async with app_conn(db) as c:
             with caplog.at_level(logging.ERROR):
                 with pytest.raises(FileExistsError):
                     await take_snapshot(archiver_ctx(), c, now)
-    assert members(key) == first
     assert any(r.levelno == logging.ERROR and key in r.message for r in caplog.records)
 
 

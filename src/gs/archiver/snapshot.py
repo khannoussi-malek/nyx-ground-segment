@@ -96,6 +96,9 @@ async def take_snapshot(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], no
     is the commit mark: no sidecar, no snapshot). Returns the key."""
     key = snapshot_key(now)
     if await _exists(ctx, key):  # D-ARC-09: no overwrite
+        if await _exists(ctx, f"{key}.sha256"):  # a restart in the minute of a complete snapshot
+            log.info("state snapshot %s already taken this minute", key)
+            return key
         log.error("state snapshot %s already exists: refusing to overwrite it", key)
         raise FileExistsError(key)
     data = await _tarball(conn)

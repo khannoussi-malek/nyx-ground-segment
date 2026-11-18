@@ -64,3 +64,10 @@ Task 29 and 30 first, together and alone (they regenerate interfaces), then Task
 2. Overrule SR-02 for the FRAMES REJECTED text (Task 29)?
 3. Build Task 30, or record R3-04 as a known limitation in the operator guide?
 4. Split `design.md` as described under Task 27?
+
+## Owner rulings (2026-11-18, coordinator session)
+
+1. Task 28 (state snapshot + `make reset` guard): **build**, as Task 3 of the pre-Gate-5 hardening plan.
+2. FRAMES REJECTED (Task 29): **build**, as Task 4; it overrules SR-02 for this banner.
+3. Task 30 (VERDICT DELAYED): **not built**; recorded as a known limitation in the operator guide and README.
+4. Split `design.md`: **deferred** to the Gate 5 documentation.

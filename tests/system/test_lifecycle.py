@@ -1,6 +1,7 @@
 """make up && make down && make up keeps .env and users.yaml and the stack comes back healthy."""
 
 import hashlib
+import os
 import secrets
 import shutil
 import subprocess
@@ -35,10 +36,13 @@ def test_up_down_up_keeps_env_and_logins() -> None:
 
 
 def test_make_reset(tmp_path: Path) -> None:
-    """R16: reset drops volumes and generated files; runs in a copy so the real stack stays."""
+    """R16: reset drops volumes and generated files; runs in a copy so the real stack stays.
+    R3-02: with no stack up the guard cannot count the archived hours, so a bare `make reset`
+    refuses and deletes nothing; FORCE=1 goes ahead."""
     root = tmp_path / f"nyxreset{secrets.token_hex(3)}"  # compose project name = directory name
     (root / "redis").mkdir(parents=True)
-    for f in ("Makefile", "docker-compose.yml"):
+    (root / "scripts").mkdir()
+    for f in ("Makefile", "docker-compose.yml", "scripts/reset_guard.py"):
         shutil.copy(REPO / f, root / f)
     for f in (".env", "users.yaml", "redis/users.acl"):
         (root / f).write_text("x=1\n")
@@ -48,7 +52,16 @@ def test_make_reset(tmp_path: Path) -> None:
         "--label", "com.docker.compose.volume=pgdata", volume,
     )  # fmt: skip
     try:
-        sh("make", "reset", cwd=root)
+        refused = subprocess.run(["make", "reset"], cwd=root, capture_output=True, text=True)
+        assert refused.returncode != 0 and "could not count the archived hours" in refused.stdout
+        assert (root / ".env").exists() and subprocess.run(
+            ["docker", "volume", "inspect", volume], capture_output=True
+        ).returncode == 0, "a refused reset deleted something"
+        forced = subprocess.run(
+            ["make", "reset"], cwd=root, capture_output=True, text=True,
+            env={**os.environ, "FORCE": "1"},
+        )  # fmt: skip
+        assert forced.returncode == 0, forced.stderr
         assert not [f for f in (".env", "users.yaml", "redis/users.acl") if (root / f).exists()]
         gone = subprocess.run(["docker", "volume", "inspect", volume], capture_output=True)
         assert gone.returncode != 0, "make reset left the compose volume behind"

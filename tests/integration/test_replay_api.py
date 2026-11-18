@@ -151,7 +151,9 @@ async def test_other_user_404_and_second_get_404(live_api: LiveApi) -> None:
                 assert first.status_code == 200
                 assert (await c.get(url)).status_code == 404  # taken by the first GET
                 assert (await c.get(f"/api/replays/{uuid_zero()}/events")).status_code == 404
-            await until(lambda: registry(live_api) == {}, 3)
+            # the disconnect cancels the stream at once; 10 s for a slow runner, far below the 60 s
+            # no-reader timeout that would also empty it
+            await until(lambda: registry(live_api) == {}, 10)
         finally:
             await o.aclose()
 

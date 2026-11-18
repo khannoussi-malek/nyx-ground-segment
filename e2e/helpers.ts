@@ -197,12 +197,21 @@ export function restoreParameters(): void {
   originalParams = null;
 }
 
-/** XADD `n` copies of the newest tm:`vehicle` frame with t_onboard 10 min ahead (the DLQ rejects them as t_onboard_range). */
-export function xaddBadFrames(vehicle: string, n: number): void {
+/**
+ * Start a dropout on `vehicle`, then XADD `n` copies of its newest tm frame with t_onboard 10 min ahead
+ * (the DLQ rejects them as t_onboard_range). One Python process does both, so process start-up never
+ * eats into the 2 s between the last good frame and the LOS.
+ */
+export function dropoutWithBadFrames(vehicle: string, n: number, durationS: number): void {
   const code =
-    "import json,sys;from datetime import datetime,timedelta;from tests.support.redisx import client;" +
-    "r=client('admin');v=sys.argv[1];last=r.xrevrange('tm:'+v,count=1)[0][1];f=json.loads(last['data']);" +
+    "import json,sys,urllib.request as u;from datetime import datetime,timedelta;from tests.support.redisx import client;" +
+    "r=client('admin');v=sys.argv[1];" +
+    "u.urlopen(u.Request(sys.argv[3]+'/sim/fault',json.dumps({'vehicle':v,'fault':'dropout','params':{'duration_s':float(sys.argv[4])}}).encode(),{'Content-Type':'application/json'}));" +
+    "last=r.xrevrange('tm:'+v,count=1)[0][1];f=json.loads(last['data']);" +
     "t=datetime.fromisoformat(f['t_onboard'].replace('Z','+00:00'))+timedelta(minutes=10);" +
     "[r.xadd('tm:'+v,{'data':json.dumps({**f,'t_onboard':t.isoformat(),'seq':f['seq']+1+i})}) for i in range(int(sys.argv[2]))]";
-  execFileSync("uv", ["run", "-q", "python", "-c", code, vehicle, String(n)], { cwd: REPO, env: { ...process.env, PYTHONPATH: REPO } });
+  execFileSync("uv", ["run", "-q", "python", "-c", code, vehicle, String(n), SIM, String(durationS)], {
+    cwd: REPO,
+    env: { ...process.env, PYTHONPATH: REPO },
+  });
 }

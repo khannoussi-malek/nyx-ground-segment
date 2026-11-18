@@ -70,6 +70,11 @@ def timed_serial_xadds(r: redis.Redis, stream: str, n: int, payload: str) -> lis
     return lat
 
 
+def xadd_bound_met(batches: list[list[float]], p99_max: float = 0.010) -> bool:
+    """D-ING-07: true when some batch of serial XADD latencies (s) has p99 < p99_max."""
+    return any(sorted(b)[int(len(b) * 0.99) - 1] < p99_max for b in batches)
+
+
 def run_check_acl_log() -> int:
     script = REPO / "scripts" / "check_acl_log.py"
     return subprocess.run([sys.executable, str(script)], cwd=REPO, capture_output=True).returncode

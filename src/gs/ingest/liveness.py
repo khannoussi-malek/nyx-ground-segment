@@ -20,6 +20,7 @@ from gs.ingest.worker import BACKOFF_MAX_S, BLOCK_MS, GROUP, SOCKET_TIMEOUT_S, C
 
 log = logging.getLogger(__name__)
 
+MEMORY_WARN = 0.8  # D-ING-07: /healthz degraded at this share of maxmemory
 STALE_S = 10.0  # an owned loop that has not passed for this long makes the service down
 # G23: a holder's worst own reconnect after an outage (max backoff + a socket timeout + two
 # blocked reads); the hold-off after OUR reconnect is never shorter than that
@@ -56,21 +57,25 @@ def ingest_status(
     now: float,
     used_memory: int | None,
     counters: Mapping[str, int],
+    max_memory: int | None = None,
 ) -> tuple[State, dict[str, object]]:
     """down: an owned loop is stale; degraded: Redis unknown or a stream failed its schema
     since start (D-ING-27); tracker errors are reported, not judged (D-CMD-05)."""
     ages = {v: round(now - seen[v], 1) if v in seen else None for v in sorted(owned)}
     mismatch = counters.get("interface_mismatch", 0)
+    pct = round(100 * used_memory / max_memory) if used_memory is not None and max_memory else None
     checks: dict[str, object] = {
         "owned": sorted(owned),
         "loop_age_s": ages,
         "redis_used_memory": used_memory,
+        "redis_memory_pct": pct,
         "cmd_tracker_errors": counters.get("cmd_tracker_errors", 0),
         "interface_mismatch": mismatch,
     }
     if any(a is None or a >= STALE_S for a in ages.values()):
         return "down", checks
-    return ("degraded" if used_memory is None or mismatch > 0 else "ok"), checks
+    hot = pct is not None and pct >= MEMORY_WARN * 100
+    return ("degraded" if used_memory is None or mismatch > 0 or hot else "ok"), checks
 
 
 async def _consumer_idle(ctx: Ctx, vehicle: str, consumer: str) -> int | None:
@@ -120,9 +125,10 @@ async def refresh_memory(ctx: Ctx) -> bool:
         info: Any = await ctx.redis.info("memory")
     except redis.exceptions.RedisError as e:
         log.warning("redis INFO failed (%s)", e)
-        ctx.used_memory[0] = None
+        ctx.used_memory[0] = ctx.max_memory[0] = None
         return False
     ctx.used_memory[0] = int(info["used_memory"])
+    ctx.max_memory[0] = int(info.get("maxmemory", 0))
     return True
 
 

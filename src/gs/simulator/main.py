@@ -23,7 +23,7 @@ from gs.simulator.faults import FaultBoard, fault_routes
 from gs.simulator.frames import tick_loop
 
 DEFAULT_RATE_HZ, MAX_RATE_HZ = 10, 100  # D-PERF-05: run P drives 100 Hz
-MAXLEN = 360_000  # ~10 h at 10 Hz per vehicle (D-ING-06)
+MAXLEN = 108_000  # 3 h at 10 Hz: the 2 h soak window + margin; ~47 MB per vehicle (D-ING-06)
 DEGRADED_BACKLOG = 50  # frames queued: Redis unreachable for more than ~1.5 s with 2 vehicles
 
 

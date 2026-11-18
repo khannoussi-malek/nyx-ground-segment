@@ -158,7 +158,7 @@ def _ms(t: datetime) -> int:
 def sent_frames(r: redis.Redis, v: str, start: datetime, end: datetime) -> list[Frame]:
     """Frames the simulator XADDed to tm:<v> with t_onboard in [start, end), read back from the
     stream (the broker record of what was sent, read as admin, ingest has no XRANGE;
-    360k entries are kept, 10 h at 10 Hz), in stream order: entry IDs only rise, so it is the send
+    108k entries are kept, 3 h at 10 Hz), in stream order: entry IDs only rise, so it is the send
     order even when t_onboard steps back."""
     key = f"tm:{v}"
     info = r.xinfo_stream(key)

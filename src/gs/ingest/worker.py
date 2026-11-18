@@ -85,6 +85,7 @@ class Ctx:
     owned: set[str] = field(default_factory=set)  # mutated only by each vehicle's own task
     reconnected_at: list[float | None] = field(default_factory=lambda: [None])  # monotonic
     used_memory: list[int | None] = field(default_factory=lambda: [None])  # Redis INFO
+    max_memory: list[int | None] = field(default_factory=lambda: [None])  # Redis maxmemory
     suspects: dict[str, int] = field(default_factory=dict)  # vehicle -> holder pid over idle
     hooks: Hooks = Hooks()  # D-ENG-16 test hooks; all off by default
     # ponytail: never evicted; one entry per set this worker ever saw (a handful per run)

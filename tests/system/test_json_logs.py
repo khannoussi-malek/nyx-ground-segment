@@ -33,6 +33,7 @@ def test_every_service_logs_json() -> None:
     # server-closed connection before use (P-pf47), so dropping theirs may log nothing:
     # a seq_jump on each vehicle makes its owner log the SEQ_JUMP event instead (repeated,
     # because a worker recreated by an earlier test gets its home vehicle back within ~5 s).
+    started = now()  # earlier tests leave lines (a deliberate watchdog dump); read only ours
     client("admin").client_kill_filter(user="sim")
     last_poke = 0.0
 
@@ -42,11 +43,12 @@ def test_every_service_logs_json() -> None:
             for vehicle in ("NYX-TA1", "NYX-TA2"):
                 post_fault(vehicle, "seq_jump")
             last_poke = time.monotonic()
-        return all(lines(s) for s in ("simulator", *INGEST))
+        return all(lines(s, started) for s in ("simulator", *INGEST))
 
     wait_until(all_logged, 20)
     for svc in SERVICES:
-        got = lines(svc)
+        # api and migrate log nothing during the test, so they keep the tail
+        got = lines(svc, started) if svc in ("simulator", *INGEST) else lines(svc)
         assert got, f"{svc} logged nothing"
         for rec in got:
             assert isinstance(rec["t"], str) and rec["t"].endswith("Z"), (svc, rec)

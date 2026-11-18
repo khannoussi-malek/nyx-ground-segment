@@ -110,3 +110,62 @@ def test_view_lookup_indexes() -> None:  # P-pf21: alarm_views' lateral lookups 
     defs = {(t, d.split(" USING ")[1]) for t, d in rows}
     assert ("alarm_events", "btree (alarm_id, id)") in defs
     assert ("alarm_ack_request", "btree (alarm_id, requested_at)") in defs
+
+
+def test_archive_object_has_range_scrub_and_version_columns() -> None:
+    with throwaway_db() as db, psycopg.connect(owner_dsn(db), autocommit=True) as c:
+        info = {
+            r[0]: r[1:]
+            for r in c.execute(
+                "select column_name, data_type, is_nullable, column_default from"
+                " information_schema.columns where table_name='archive_object'"
+            ).fetchall()
+        }
+        assert info["t_min"][:2] == ("timestamp with time zone", "NO")
+        assert info["t_max"][:2] == ("timestamp with time zone", "NO")
+        assert info["last_checked_at"][:2] == ("timestamp with time zone", "YES")
+        assert info["version"][0] == "integer" and info["version"][1] == "NO"
+        assert info["version"][2] == "0"
+        ins = (
+            "insert into archive_object (vehicle, hour, sha256, rows, verified_at, t_min, t_max"
+            "{extra}) values ('V', %s, 'h', 1, now(), %s, %s{vals})"
+        )
+        c.execute(
+            ins.format(extra="", vals=""),
+            ("2026-11-14T10:00Z", "2026-11-14T10:00Z", "2026-11-14T10:00Z"),
+        )
+        row = c.execute("select version from archive_object").fetchone()
+        assert row == (0,)
+        with pytest.raises(psycopg.errors.CheckViolation):  # t_min <= t_max
+            c.execute(
+                ins.format(extra="", vals=""),
+                ("2026-11-14T11:00Z", "2026-11-14T11:10Z", "2026-11-14T11:00Z"),
+            )
+        with pytest.raises(psycopg.errors.CheckViolation):  # version >= 0
+            c.execute(
+                ins.format(extra=", version", vals=", -1"),
+                ("2026-11-14T12:00Z", "2026-11-14T12:00Z", "2026-11-14T12:00Z"),
+            )
+        with pytest.raises(psycopg.errors.NotNullViolation):  # t_min / t_max are required
+            c.execute(
+                "insert into archive_object (vehicle, hour, sha256, rows, verified_at)"
+                " values ('V', now(), 'h', 1, now())"
+            )
+    with psycopg.connect(app_dsn("gs")) as c:
+        assert priv(c, "archive_object", "UPDATE") and not priv(c, "archive_object", "DELETE")
+
+
+def test_session_report_update_granted() -> None:  # T4-m: refreeze rewrites the stored report
+    def col(c: psycopg.Connection[tuple[object, ...]], column: str, p: str) -> bool:
+        q = "select has_column_privilege('gs_app', 'session_report', %s, %s)"
+        row = c.execute(q, (column, p)).fetchone()
+        assert row is not None
+        return bool(row[0])
+
+    with throwaway_db() as db, psycopg.connect(admin_dsn(db)) as fresh:
+        live = psycopg.connect(app_dsn("gs"))  # the running stack got 05-gate4.sql by psql -f
+        with live:
+            for c in (fresh, live):
+                assert all(col(c, k, "UPDATE") for k in ("report", "csv", "created_at"))
+                assert not col(c, "session_id", "UPDATE")
+                assert not priv(c, "session_report", "DELETE")

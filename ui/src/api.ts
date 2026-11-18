@@ -180,3 +180,37 @@ export async function getReport(id: number): Promise<ReportResult> {
 }
 
 export const reportCsvUrl = (id: number): string => `/api/sessions/${id}/report.csv`;
+
+export type ReplayRequest = components["schemas"]["ReplayRequest"];
+export type ReplayResult = { ok: true; replayId: string } | { ok: false; error: string; message: string };
+
+/** The list of vehicles the console can replay; [] if the request fails. */
+export async function vehicles(): Promise<string[]> {
+  try {
+    const r = await fetch("/api/vehicles", { credentials: "same-origin" });
+    return r.ok ? ((await r.json()) as components["schemas"]["Vehicles"]).vehicles : [];
+  } catch {
+    return [];
+  }
+}
+
+/** Create a replay; a refusal (400/404/409/503 ...) comes back as the server's error + message. */
+export async function createReplay(req: ReplayRequest): Promise<ReplayResult> {
+  try {
+    const r = await fetch("/api/replays", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...CLIENT },
+      body: JSON.stringify(req),
+    });
+    if (r.status === 201) return { ok: true, replayId: ((await r.json()) as components["schemas"]["ReplayCreated"]).replay_id };
+    const body = (await r.json().catch(() => null)) as Partial<ErrorBody> | null;
+    return { ok: false, error: body?.error ?? `HTTP_${r.status}`, message: body?.message ?? `Replay failed (${r.status})` };
+  } catch {
+    return { ok: false, error: "NETWORK", message: "Could not reach the ground segment" };
+  }
+}
+
+export async function deleteReplay(id: string): Promise<void> {
+  await fetch(`/api/replays/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "same-origin", headers: CLIENT }).catch(() => {});
+}

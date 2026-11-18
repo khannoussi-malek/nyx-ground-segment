@@ -118,3 +118,52 @@ def test_acl_lines_equal_design_3_7(root: Path) -> None:
         digest = hashlib.sha256(env[f"REDIS_{name.upper()}_PW"].encode()).hexdigest()
         want = want.replace(f"user {name} on #<sha256>", f"user {name} on #{digest}")
     assert (root / "redis/users.acl").read_text().splitlines() == want.strip().splitlines()
+
+
+def test_existing_env_gains_missing_keys_only(root: Path) -> None:
+    run_init_env(root)
+    env_path = root / ".env"
+    lines = env_path.read_text().splitlines()
+    kept = [ln for ln in lines if not ln.startswith("S3_ARCHIVER_SECRET=")]
+    kept = [
+        ln.replace(ln, "POSTGRES_PASSWORD=keep") if ln.startswith("POSTGRES_PASSWORD=") else ln
+        for ln in kept
+    ]
+    env_path.write_text("\n".join(kept) + "\n")
+    before = env_path.read_text()
+    out = run_init_env(root).stdout
+    after = env_path.read_text()
+    assert after.startswith(before)  # old lines untouched, same order; only appended to
+    env = parse_env(env_path)
+    assert env["POSTGRES_PASSWORD"] == "keep"
+    assert re.fullmatch(r"[0-9a-f]{48}", env["S3_ARCHIVER_SECRET"])
+    assert after[len(before) :] == f"S3_ARCHIVER_SECRET={env['S3_ARCHIVER_SECRET']}\n"
+    assert out == ""  # the demo passwords are not shown again
+    run_init_env(root)
+    assert env_path.read_text() == after  # and a second run adds nothing
+
+
+def test_missing_non_secret_key_gets_its_default(root: Path) -> None:
+    run_init_env(root)
+    env_path = root / ".env"
+    env_path.write_text(
+        "".join(
+            ln + "\n"
+            for ln in env_path.read_text().splitlines()
+            if not ln.startswith("MINIO_HOST_PORT=")
+        )
+    )
+    run_init_env(root)
+    assert parse_env(env_path)["MINIO_HOST_PORT"] == "9000"
+
+
+def test_env_without_trailing_newline_still_appends_on_its_own_line(root: Path) -> None:
+    run_init_env(root)
+    env_path = root / ".env"
+    text = "".join(
+        ln + "\n" for ln in env_path.read_text().splitlines() if not ln.startswith("GS_IMAGE_TAG=")
+    )
+    env_path.write_text(text.rstrip("\n"))
+    run_init_env(root)
+    assert parse_env(env_path)["GS_IMAGE_TAG"] == "local"
+    assert parse_env(env_path)["MINIO_HOST_PORT"] == "9000"

@@ -88,6 +88,10 @@ def logs_since(svc: str, t0: datetime) -> str:
 
 def hang(case: str) -> tuple[int, float]:
     """Hang ingest-1 while it owns NYX-TA1; returns (restart count, monotonic time of the hang)."""
+    # the hung worker must own only TA1: the point-keyed hook (after_xack, in_loop) fires in
+    # whichever of its vehicle loops reaches the point first, and NYX-TA9 (backfill only, G4-7)
+    # is homed on ingest-2
+    wait_until(lambda: lock_holder("NYX-TA9") == "ingest-2", HANDBACK_S)
     if case in ("sigstop_in_read", "sigcont_after_steal"):
         wait_until(lambda: lock_holder("NYX-TA1") == "ingest-1", HANDBACK_S)
         rc = restart_count("ingest-1")

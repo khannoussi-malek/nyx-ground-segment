@@ -18,9 +18,17 @@ Stream entries outlive the code that wrote them, and every stream model except t
 ## API request bodies
 Request models are strict. A UUID or datetime field that arrives as a JSON string must be declared `Annotated[UUID, Field(strict=False)]` (FastAPI validates the decoded JSON in Python mode, where a strict UUID rejects the string); see `AckRequest.request_id`. Database errors on a route are returned as 503 `UNAVAILABLE` ("database unreachable") through `gs.api.dbguard.db_503`, never as a 500.
 
+## Archive, backfill and replay
+The archiver service writes each finished UTC hour of each vehicle to MinIO as `<vehicle>/<yyyy>/<mm>/<dd>/<HH>.parquet` with a `.sha256` sidecar, re-reads it and compares rows, and only then lets the hot rows go. Two settings, both in `.env`: `HOT_RETENTION_H` (default 25; hot rows are deleted once the hour is archived, verified and this old; 0 deletes at once, so a test that needs the hot rows after archiving sets it high) and `ARCHIVE_LOOP_S` (default 300, seconds between passes; set 2 in a test). Test hooks need `GS_TEST_HOOKS=1`; `ARCHIVER_CRASH_AT=archive:after_put` kills the archiver after the upload, before the row is recorded.
+
+NYX-TA9 is the backfill vehicle: it has no live frames. `docker compose run --rm --no-deps simulator gs-sim backfill --vehicle NYX-TA9 --from <UTC> --to <UTC> [--fault name@offset_s[:json]] [--pause-at-seq n]` pushes whole past hours through the normal stream (inside the last 7 days minus 1 h) and prints how many frames it sent. Stop the archiver first when a test needs the hour unarchived. The manual walk-through is `docs/atp/ATP-07.md`; replay and the console are in the operator guide.
+
+## Performance and soak runs
+`make perf` is run N (10 min at 10 Hz, `docs/perf/run-n-<UTC date>/`). `make perf-p` is run P (2 vehicles at 100 Hz for 5 min; it sets `SIM_RATE_HZ=100` itself and restores 10). `make soak` is the 2 h ATP-01 count: it starts and stops the sessions itself, so run it on an idle stack. Procedures and pass lines: `docs/atp/ATP-08.md` and `docs/atp/ATP-01.md`.
+
 ## Run the tests
 - Unit, integration and meta: `make up`, then `uv run pytest` (80 % coverage gate; `-m spike` runs the Schemathesis spike).
 - Static: `uv run ruff check`, `uv run ruff format --check`, `uv run mypy --strict src tests scripts perf`, `make gen && git diff --exit-code -- interfaces ui/src/api`.
 - System (Docker; stops and starts containers, one run at a time): `uv run pytest tests/system`.
 - End to end: `make e2e` (Playwright, browser). UI unit tests: `cd ui && npx vitest run`.
-- Performance run N (10 minutes, writes `docs/perf/run-n-<UTC date>/`): `make perf`.
+- Performance: `make perf`, `make perf-p`, `make soak` (see above).

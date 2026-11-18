@@ -12,6 +12,7 @@ import pytest
 from gs.api.app import ROUTER, create_app
 from gs.api.openapi import build_openapi
 from gs.api.settings import Settings
+from gs.archiver.s3 import S3Settings
 from gs.common.interfaces.export import write_all
 from tests.support.gen import REPO, gen_types, stale_files
 
@@ -83,6 +84,7 @@ def test_served_openapi_is_the_built_document(tmp_path: Path) -> None:
             mission_db=tmp_path,
             vehicles=(),
             ui_dist=tmp_path,
+            s3=S3Settings("x:9000", "replay", "k", "archive"),
         )
     )
     assert app.openapi() == build_openapi(ROUTER.routes)

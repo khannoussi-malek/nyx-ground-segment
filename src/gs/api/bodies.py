@@ -121,6 +121,20 @@ class AlarmTransition(_Body):
     transition: TransitionView
 
 
+class AlarmQuality(_Body):
+    """D-ALM-15 over the session's alarm_events (gs.alarms.quality.Quality); keys
+    "<vehicle>/<param>" for psi and chattering, "<vehicle>" or "all" for peak_10min."""
+
+    raises: int
+    false_raises: int | None  # None without a fault log (a real bench)
+    psi: dict[str, float]
+    chattering: list[str]
+    short_t1: int
+    short_t0: int
+    peak_10min: dict[str, int]
+    time_in_flood_s: float
+
+
 class SessionReport(_Body):
     session: SessionView
     complete: bool
@@ -133,6 +147,7 @@ class SessionReport(_Body):
     link_events: list[EventView]
     alarms: list[AlarmTransition]
     commands: list[CommandView]
+    alarm_quality: AlarmQuality | None = None  # absent in reports frozen before Gate 4
 
 
 class ReportConflict(_Body):
@@ -150,3 +165,15 @@ class Bucket(_Body):
     first: float
     last: float
     n: int
+
+
+class ReplayRequest(_Request):
+    vehicle: VehicleId
+    # python-mode validation (FastAPI): strict would refuse the ISO strings (task-3 deviation 2)
+    t_from: Annotated[UtcTime, Field(alias="from", strict=False)]
+    t_to: Annotated[UtcTime, Field(alias="to", strict=False)]
+    speed: Literal[1, 10]
+
+
+class ReplayCreated(_Body):
+    replay_id: UUID

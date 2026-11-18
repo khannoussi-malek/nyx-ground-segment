@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { listCommands, sendCommand, type CommandRequest, type MissionDb } from "./api";
 import { AMBIGUOUS_TEXT, cmdLabel, rejectedText } from "./commandText";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { FilterBar, keep, NO_FILTER, vehiclesOf } from "./listFilter";
 import type { Store } from "./store";
 import { Timeline } from "./Timeline";
 
@@ -45,6 +46,7 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [pending, setPending] = useState<Pending | null>(null);
+  const [filter, setFilter] = useState(NO_FILTER);
   const sendButton = useRef<HTMLButtonElement>(null);
   const inFlight = useRef(false); // two clicks in one task must not send twice
   // the target is always an explicit choice: a vehicle that appears later never becomes it, one that vanishes clears it
@@ -69,6 +71,9 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
     return { vehicle: target, name, args, ...(reason.trim() && { reason: reason.trim() }) };
   };
   const req = build();
+  const shown = commands
+    .filter((c) => keep(filter, c.vehicle, `${c.vehicle} ${cmdLabel(c.name, c.args)} ${c.issued_by} ${c.state} ${c.failure_reason ?? ""}`))
+    .slice(0, SHOWN);
 
   /** The new rows show at once: QUEUED / SENT would otherwise wait for the next stream event (R-h). */
   async function refresh(v: string) {
@@ -130,8 +135,10 @@ export function CommandPanel({ store, mission }: { store: Store; mission: Missio
       {spec && <p className="desc">{spec.description}{spec.hazardous && <strong> – hazardous: {spec.hazard}</strong>}</p>}
       {error && <p role="alert">{error}</p>}
       {note && <p role="status">{note}</p>}
-      <ul className="command-list">
-        {commands.slice(0, SHOWN).map((c) => (
+      <FilterBar what="commands" value={filter} onChange={setFilter} vehicles={vehiclesOf(commands)} />
+      {shown.length === 0 && commands.length > 0 && <p className="empty" role="status">No commands match the filter</p>}
+      <ul className="command-list scroll">
+        {shown.map((c) => (
           <li key={c.cmd_id} data-cmd-id={c.cmd_id} data-state={c.state}>
             <strong>{c.vehicle}</strong> {cmdLabel(c.name, c.args)}
             {" · "}{c.issued_by}{" · "}{c.state}

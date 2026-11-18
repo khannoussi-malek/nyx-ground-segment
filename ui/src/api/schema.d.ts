@@ -158,6 +158,60 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/replays": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Replay */
+        post: operations["create_replay_api_replays_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/replays/{replay_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Replay */
+        delete: operations["delete_replay_api_replays__replay_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/replays/{replay_id}/events": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Replay Events
+         * @description SSE of gs.common.interfaces.replay messages (ReplayEvent), framed like /api/events.
+         */
+        get: operations["replay_events_api_replays__replay_id__events_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sessions": {
         parameters: {
             query?: never;
@@ -204,6 +258,26 @@ export interface paths {
         get: operations["get_report_csv_api_sessions__session_id__report_csv_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sessions/{session_id}/report/refreeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refreeze Report
+         * @description D-DB-10, T4-m: rebuild an incomplete frozen report while the session's hot rows exist.
+         */
+        post: operations["refreeze_report_api_sessions__session_id__report_refreeze_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -332,6 +406,33 @@ export interface components {
              * @enum {string}
              */
             kind: "alarm";
+        };
+        /**
+         * AlarmQuality
+         * @description D-ALM-15 over the session's alarm_events (gs.alarms.quality.Quality); keys
+         *     "<vehicle>/<param>" for psi and chattering, "<vehicle>" or "all" for peak_10min.
+         */
+        AlarmQuality: {
+            /** Chattering */
+            chattering: string[];
+            /** False Raises */
+            false_raises: number | null;
+            /** Peak 10Min */
+            peak_10min: {
+                [key: string]: number;
+            };
+            /** Psi */
+            psi: {
+                [key: string]: number;
+            };
+            /** Raises */
+            raises: number;
+            /** Short T0 */
+            short_t0: number;
+            /** Short T1 */
+            short_t1: number;
+            /** Time In Flood S */
+            time_in_flood_s: number;
         };
         /** AlarmTransition */
         AlarmTransition: {
@@ -804,6 +905,197 @@ export interface components {
             /** Unit */
             unit: string;
         };
+        /** ReplayAlarm */
+        ReplayAlarm: {
+            alarm: components["schemas"]["AlarmView"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "alarm";
+            /**
+             * Replay
+             * @default true
+             * @constant
+             */
+            replay: true;
+        };
+        /** ReplayClock */
+        ReplayClock: {
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "clock";
+            /**
+             * Replay
+             * @default true
+             * @constant
+             */
+            replay: true;
+            /**
+             * T
+             * Format: date-time
+             */
+            t: string;
+        };
+        /** ReplayCreated */
+        ReplayCreated: {
+            /**
+             * Replay Id
+             * Format: uuid
+             */
+            replay_id: string;
+        };
+        /** ReplayEnd */
+        ReplayEnd: {
+            /**
+             * Detail
+             * @default null
+             */
+            detail: string | null;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "replay_end";
+            /**
+             * Reason
+             * @enum {string}
+             */
+            reason: "done" | "stopped" | "archive_corrupt";
+            /**
+             * Replay
+             * @default true
+             * @constant
+             */
+            replay: true;
+        };
+        /** ReplayEvent */
+        ReplayEvent: components["schemas"]["ReplayStart"] | components["schemas"]["ReplayTm"] | components["schemas"]["ReplayAlarm"] | components["schemas"]["ReplayLink"] | components["schemas"]["ReplayClock"] | components["schemas"]["ReplayEnd"];
+        /** ReplayLink */
+        ReplayLink: {
+            event: components["schemas"]["EventView"];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "link";
+            /**
+             * Replay
+             * @default true
+             * @constant
+             */
+            replay: true;
+        };
+        /** ReplayRequest */
+        ReplayRequest: {
+            /**
+             * From
+             * Format: date-time
+             */
+            from: string;
+            /**
+             * Speed
+             * @enum {integer}
+             */
+            speed: 1 | 10;
+            /**
+             * To
+             * Format: date-time
+             */
+            to: string;
+            /** Vehicle */
+            vehicle: string;
+        };
+        /** ReplayStart */
+        ReplayStart: {
+            /** Alarms */
+            alarms: components["schemas"]["AlarmView"][];
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "replay_start";
+            /** Los Open */
+            los_open: boolean;
+            /**
+             * Replay
+             * @default true
+             * @constant
+             */
+            replay: true;
+            /**
+             * Replay Id
+             * Format: uuid
+             */
+            replay_id: string;
+            /**
+             * Speed
+             * @enum {integer}
+             */
+            speed: 1 | 10;
+            /**
+             * T From
+             * Format: date-time
+             */
+            t_from: string;
+            /**
+             * T To
+             * Format: date-time
+             */
+            t_to: string;
+            /** Vehicle */
+            vehicle: string;
+        };
+        /** ReplayTm */
+        ReplayTm: {
+            /**
+             * Age Ms
+             * @default null
+             */
+            age_ms: number | null;
+            /**
+             * Frozen
+             * @default false
+             */
+            frozen: boolean;
+            /**
+             * @description discriminator enum property added by openapi-typescript
+             * @enum {string}
+             */
+            kind: "tm";
+            /** Last Cmd Id */
+            last_cmd_id: string | null;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "SAFE" | "STANDBY" | "TEST" | "FAULT";
+            /**
+             * Replay
+             * @default true
+             * @constant
+             */
+            replay: true;
+            /** Seq */
+            seq: number;
+            /** Severity */
+            severity: {
+                [key: string]: "YELLOW" | "RED";
+            };
+            /**
+             * T Onboard
+             * Format: date-time
+             */
+            t_onboard: string;
+            /** Values */
+            values: {
+                [key: string]: number | null;
+            };
+            /** Vehicle */
+            vehicle: string;
+        };
         /** ReportConflict */
         ReportConflict: {
             /** Error */
@@ -852,6 +1144,7 @@ export interface components {
         };
         /** SessionReport */
         SessionReport: {
+            alarm_quality?: components["schemas"]["AlarmQuality"] | null;
             /** Alarms */
             alarms: components["schemas"]["AlarmTransition"][];
             /** Commands */
@@ -1604,6 +1897,198 @@ export interface operations {
             };
         };
     };
+    create_replay_api_replays_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReplayRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReplayCreated"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    delete_replay_api_replays__replay_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                replay_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    replay_events_api_replays__replay_id__events_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                replay_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "text/event-stream": unknown;
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     list_sessions_api_sessions_get: {
         parameters: {
             query?: never;
@@ -1767,6 +2252,15 @@ export interface operations {
                     "application/json": components["schemas"]["ReportConflict"];
                 };
             };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
             /** @description Unprocessable Content */
             422: {
                 headers: {
@@ -1832,6 +2326,100 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ReportConflict"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    refreeze_report_api_sessions__session_id__report_refreeze_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionReport"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Forbidden */
+            403: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportConflict"];
+                };
+            };
+            /** @description Gone */
+            410: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
             /** @description Unprocessable Content */

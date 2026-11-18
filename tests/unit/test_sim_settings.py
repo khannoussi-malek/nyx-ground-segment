@@ -47,3 +47,16 @@ def test_mission_db_is_a_path(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_mission_db_is_required(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(ConfigError, match="MISSION_DB"):
         _settings(monkeypatch, "NYX-TA1", MISSION_DB="")
+
+
+def test_rate_defaults_to_10_and_reads_the_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("SIM_RATE_HZ", raising=False)
+    assert _settings(monkeypatch, "NYX-TA1").rate_hz == 10
+    assert _settings(monkeypatch, "NYX-TA1", SIM_RATE_HZ="100").rate_hz == 100
+    assert _settings(monkeypatch, "NYX-TA1", SIM_RATE_HZ="").rate_hz == 10
+
+
+@pytest.mark.parametrize("raw", ["0", "101", "x", "-5"])
+def test_rate_out_of_range_fails_fast(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    with pytest.raises(ConfigError, match="SIM_RATE_HZ"):
+        _settings(monkeypatch, "NYX-TA1", SIM_RATE_HZ=raw)

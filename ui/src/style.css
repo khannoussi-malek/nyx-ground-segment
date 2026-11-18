@@ -54,6 +54,9 @@
   --radius-field: 10px;
   --shadow: 0 1px 2px rgb(14 14 14 / 0.06), 0 4px 12px rgb(14 14 14 / 0.04);
   --dur: 150ms;
+  --gap: 0.5rem; /* between the console's panes */
+  --radius-pane: 12px;
+  --control-h: 2rem; /* buttons and fields inside the console: mouse-driven desk, above the 24px WCAG 2.5.8 minimum */
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -111,7 +114,7 @@ header {
   display: flex;
   align-items: center;
   gap: 1rem;
-  padding: 0.5rem 1.5rem;
+  padding: 0.25rem 1rem;
   background: var(--bar);
   color: var(--on-bar);
 }
@@ -131,12 +134,144 @@ header .sound-off {
 }
 header .sound-off:hover { background: var(--action-hover); }
 
+/* the board: the operator's own order of panes (Board.tsx). Two columns; a pane is half or full width.
+   Every pane of a grid row stretches to the tallest one. A list pane has a fixed default height and scrolls
+   inside (contain: size: its history never sets its height); its resize handle (bottom-right) changes it. */
+.console { padding: 0 var(--gap) var(--gap); }
+.console > header { margin-inline: calc(-1 * var(--gap)); margin-bottom: var(--gap); }
+.board { display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem var(--gap); }
+@media (min-width: 64rem) { .board { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.pane { display: flex; flex-direction: column; min-width: 0; overflow: hidden; }
+.board[data-editing] .pane { resize: vertical; }
+.board[data-editing] .pane > :last-child { outline: 1px dashed var(--field-border); outline-offset: 2px; }
+.pane[data-wide] { grid-column: 1 / -1; }
+.pane[data-drop] > :last-child { outline: 3px dashed var(--ink-muted); outline-offset: -3px; }
+.pane > :last-child { flex: 1 1 auto; min-height: 0; }
+.pane > main { align-items: stretch; } /* a taller pane (resized, or a taller row neighbour) stretches the cards */
+.pane:is([data-pane="alarms"], [data-pane="chart"], [data-pane="commands"], [data-pane="sessions"], [data-pane="events"]) { contain: size; }
+.pane[data-pane="alarms"] { min-height: 13rem; }
+.pane[data-pane="chart"] { min-height: 26rem; }
+.pane:is([data-pane="commands"], [data-pane="sessions"]) { min-height: 24rem; }
+.pane[data-pane="events"] { min-height: 12rem; }
+.pane-bar { display: flex; align-items: center; gap: 0.125rem; min-height: 1.75rem; padding: 0 0.25rem; color: var(--ink-muted); }
+.pane-title { flex: 1; margin-left: 0.25rem; color: var(--ink); font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.grip { display: inline-grid; place-items: center; width: 1.5rem; height: 1.75rem; cursor: grab; border-radius: 6px; }
+.grip:hover { background: var(--surface-sunken); color: var(--ink); }
+.grip:active { cursor: grabbing; }
+.pane-bar button {
+  display: inline-grid;
+  place-items: center;
+  width: 1.75rem;
+  min-height: 1.75rem;
+  padding: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-muted);
+}
+.pane-bar button:hover:not(:disabled) { background: var(--surface-sunken); color: var(--ink); }
+.pane-bar button:disabled { opacity: 0.35; cursor: default; }
+.pane-bar button[aria-pressed="true"] { color: var(--ink); box-shadow: inset 0 0 0 1.5px var(--ink); }
+/* the info button sits right after the pane's title; its note opens just under it */
+.pane-bar .help { order: 0; margin-right: auto; }
+.pane-title { flex: 0 1 auto; }
+.help-note {
+  position-area: bottom span-right;
+  position-try-fallbacks: flip-inline;
+  width: min(26rem, calc(100vw - 2rem));
+  margin: 0.25rem 0 0;
+  padding: 0.625rem 0.875rem;
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+  font-size: 0.875rem;
+  line-height: 1.45;
+}
+.help-note strong { display: block; margin-bottom: 0.25rem; font-size: 0.75rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.help-note p { margin: 0; }
+/* the bar names the pane; the panel's own heading stays for screen readers only */
+.pane section h2 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* "plot this": a parameter name in a card or an alarm row; reads as the name, underlined on hover */
+.console .plot-link {
+  display: block;
+  min-height: 0;
+  padding: 0;
+  border-radius: 2px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.console .plot-link:hover { background: none; text-decoration: underline; text-underline-offset: 2px; }
+/* header: unacknowledged alarms, always in view whatever the pane order. A state mark: square, not a pill */
+.console header .alarm-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  min-height: 1.75rem;
+  padding: 0 0.625rem;
+  border-radius: 3px;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.console header .alarm-summary[data-tone="red"] { background: var(--red); color: var(--on-red); }
+.console header .alarm-summary[data-tone="yellow"] { background: var(--yellow); color: var(--yellow-ink); }
+.console header .alarm-summary[data-tone="nominal"] { background: transparent; color: var(--on-bar-muted); box-shadow: inset 0 0 0 1px var(--on-bar-muted); font-weight: 500; }
+/* secondary controls are quiet: brand yellow stays for the actions (Send, Start session, ACK, Log out) */
+.console .chart .seg button {
+  min-height: 1.75rem;
+  padding: 0 0.75rem;
+  border-radius: 0;
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: inset 0 0 0 1px var(--field-border);
+}
+.console .chart .seg button:first-child { border-radius: 6px 0 0 6px; }
+.console .chart .seg button:last-child { border-radius: 0 6px 6px 0; }
+.console .chart .seg button[aria-pressed="true"] { background: var(--ink); color: var(--surface); outline: none; }
+.console .sessions td button { background: transparent; color: var(--ink); border-radius: 6px; box-shadow: inset 0 0 0 1px var(--field-border); }
+.console .sessions td button:hover:not(:disabled) { background: var(--surface-sunken); }
+.console header .quiet { background: transparent; color: var(--on-bar); box-shadow: inset 0 0 0 1px var(--on-bar-muted); }
+.console header .quiet:hover { background: rgb(248 248 248 / 0.12); }
+.console header .quiet[data-on] { background: var(--on-bar); color: var(--bar); }
+.console section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-height: 0;
+  padding: 0.625rem 0.875rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-pane);
+  font-size: 0.875rem;
+}
+.console section h2 { margin: 0; font-size: 0.75rem; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+.console section p { margin: 0; }
+.pane-head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1.5rem; }
+.scroll { flex: 1 1 auto; min-height: 0; overflow: auto; overscroll-behavior: contain; }
+.scroll table { width: 100%; border-collapse: collapse; }
+.scroll thead th { position: sticky; top: 0; z-index: 1; background: var(--surface); box-shadow: inset 0 -1px var(--border); }
+.console section button { min-height: var(--control-h); padding: 0 0.875rem; font-size: 0.875rem; }
+.console section input, .console section select {
+  min-height: var(--control-h);
+  padding: 0 0.5rem;
+  border: 1px solid var(--field-border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  font: 0.875rem var(--font-ui);
+}
+.console header button { min-height: var(--control-h); padding: 0 1rem; font-size: 0.875rem; }
+
 /* alarm list and ACK dialog */
-.alarms { padding: 1rem 1.5rem 0; }
-.alarms h2 { margin: 0 0 0.5rem; font-size: 1rem; }
-.alarms .filters { display: flex; flex-wrap: wrap; gap: 1rem; margin-bottom: 0.5rem; font-size: 0.875rem; }
+.alarms .filters { display: flex; flex-wrap: wrap; gap: 1rem; }
 .alarms .filters label { display: flex; gap: 0.5rem; align-items: center; }
-.alarms td, .alarms th { padding: 0.375rem 0.5rem; text-align: left; vertical-align: baseline; }
+.alarms td, .alarms th { padding: 0.125rem 0.5rem; text-align: left; vertical-align: middle; white-space: nowrap; }
+.alarms td.text { white-space: normal; }
+.alarms td button { min-height: 1.75rem; }
 .alarms th .glyph { margin-right: 0.375rem; }
 .alarms tr[data-severity="RED"] { background: var(--red-tint); }
 .alarms tr[data-severity="YELLOW"] { background: var(--yellow-tint); }
@@ -152,45 +287,74 @@ dialog.ack .actions, dialog.confirm .actions { display: flex; justify-content: f
 dialog.ack [role="alert"], dialog.confirm [role="alert"] { color: var(--red); font-weight: 600; }
 
 /* sessions */
-.sessions { padding: 1rem 1.5rem 0; }
-.sessions h2 { margin: 0 0 0.5rem; font-size: 1rem; }
-.sessions form { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; }
-.sessions form label { display: grid; gap: 0.25rem; font-size: 0.875rem; font-weight: 500; }
+.sessions form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; }
+.sessions form label { display: grid; gap: 0.125rem; font-size: 0.75rem; font-weight: 500; }
 .sessions [role="alert"] { color: var(--red); font-weight: 600; }
 .sessions .desc, .sessions .empty { color: var(--ink-muted); font-size: 0.875rem; }
-.sessions td, .sessions th { padding: 0.375rem 0.5rem; text-align: left; }
+.sessions td, .sessions th { padding: 0.125rem 0.375rem; text-align: left; font-size: 0.8125rem; }
+.sessions time { font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+.sessions td button { min-height: 1.75rem; }
+.sessions .report { flex: 0 1 auto; min-height: 0; max-height: 60%; overflow: auto; border-top: 1px solid var(--border); padding-top: 0.375rem; }
 .report-lines { font-size: 0.8125rem; max-height: 12rem; overflow-y: auto; }
 
 /* command panel */
-.commands { padding: 1rem 1.5rem 0; }
-.commands h2 { margin: 0 0 0.5rem; font-size: 1rem; }
-.commands form { display: flex; flex-wrap: wrap; gap: 1rem; align-items: end; }
-.commands form label { display: grid; gap: 0.25rem; font-size: 0.875rem; font-weight: 500; }
+.commands form { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: end; }
+.commands form label { display: grid; gap: 0.125rem; font-size: 0.75rem; font-weight: 500; }
 .commands [role="alert"] { color: var(--red); font-weight: 600; }
 .commands .desc, .commands .empty { color: var(--ink-muted); font-size: 0.875rem; }
-.command-list { list-style: none; padding: 0; margin: 0.5rem 0 0; }
-.command-list > li { padding: 0.375rem 0; border-top: 1px solid var(--border); }
-.timeline ol { display: flex; flex-wrap: wrap; gap: 0.25rem 1rem; list-style: none; padding: 0; margin: 0.25rem 0; font-size: 0.8125rem; color: var(--ink-muted); }
+.command-list { list-style: none; padding: 0; margin: 0; }
+.command-list > li { padding: 0.25rem 0; border-top: 1px solid var(--border); }
+.timeline ol { display: flex; flex-wrap: wrap; gap: 0 0.75rem; list-style: none; padding: 0; margin: 0; font-size: 0.75rem; color: var(--ink-muted); }
 .timeline li[data-reached] { color: var(--ink); }
 .timeline li[data-failed] { color: var(--red); font-weight: 600; }
 .timeline .outcome { margin: 0; font-weight: 600; }
 dialog.confirm .hazard { border-left: 4px solid var(--red); padding-left: 0.5rem; color: var(--red); font-weight: 600; }
 
-/* chart */
-.chart-panel { padding: 0 1.5rem 1rem; }
-.chart-panel h2 { margin: 0 0 0.5rem; font-size: 1rem; }
-.chart-panel .filters { display: flex; gap: 1rem; margin-bottom: 0.5rem; font-size: 0.875rem; }
+/* chart: title, pickers and window buttons on one line, the plot takes the rest of the pane */
+.console .chart-panel { display: grid; grid-template-columns: auto 1fr; grid-template-rows: auto auto auto minmax(0, 1fr); align-items: center; gap: 0.375rem 1.5rem; }
+.chart-panel > .empty { grid-column: 1 / -1; }
+.chart { display: contents; }
+.chart-panel .filters { display: flex; gap: 1rem; }
 .chart-panel .filters label { display: flex; gap: 0.5rem; align-items: center; }
-.chart .windows { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
-.chart .windows button[aria-pressed="true"] { outline: 2px solid var(--focus); outline-offset: 2px; }
+.chart .tools { display: flex; flex-wrap: wrap; justify-self: end; gap: 0.5rem; }
+.chart .seg { display: flex; }
+.chart [role="alert"], .chart .plot, .chart .range { grid-column: 1 / -1; }
+/* where the chart is: the UTC range, LIVE or HISTORY, and how to move */
+.chart .range { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; margin: 0; font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+.chart .range .live, .chart .range .paused { padding: 0 0.375rem; border-radius: 3px; font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.06em; box-shadow: inset 0 0 0 1px var(--field-border); }
+.chart .range .paused { background: var(--surface-sunken); }
+.chart .range .hint { margin-left: auto; color: var(--ink-muted); font-size: 0.75rem; }
+.chart .plot { grid-row: 4; position: relative; align-self: stretch; min-height: 12rem; overflow: hidden; }
+.chart .plot-canvas { position: absolute; inset: 0; }
+.chart .u-over { cursor: crosshair; }
+.chart .u-select { background: rgb(14 14 14 / 0.1); }
+/* the value under the cursor: large, high contrast, beside the cursor (flipped left near the right edge) */
+.chart-tip {
+  position: absolute;
+  z-index: 2;
+  display: grid;
+  gap: 0.0625rem;
+  padding: 0.375rem 0.625rem;
+  border-radius: 6px;
+  background: var(--ink);
+  color: var(--surface);
+  box-shadow: var(--shadow);
+  font-size: 0.8125rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.35;
+  white-space: nowrap;
+  pointer-events: none;
+  transform: translate(14px, -50%);
+}
+.chart-tip[data-flip] { transform: translate(calc(-100% - 14px), -50%); }
+.chart-tip strong { font-size: 1.125rem; }
+.chart-tip small { color: var(--on-bar-muted); }
 .chart [role="alert"] { color: var(--red); font-weight: 600; }
-.chart .plot { width: 100%; }
 
-/* event strip */
-.events { padding: 0 1.5rem 1.5rem; }
-.events h2 { margin: 0 0 0.5rem; font-size: 1rem; }
-.events ol { list-style: none; margin: 0; padding: 0; max-height: 14rem; overflow-y: auto; font-size: 0.875rem; }
-.events li { padding: 0.125rem 0; border-top: 1px solid var(--border); }
+/* event strip: title beside the newest lines */
+.events ol { list-style: none; margin: 0; padding: 0; }
+.events li { padding: 0.25rem 0; border-top: 1px solid var(--border); }
+.events li:first-child { border-top: 0; }
 .events time { color: var(--ink-muted); margin-right: 0.5rem; }
 .events .tag { border: 1px solid var(--field-border); border-radius: 999px; padding: 0 0.5rem; font-size: 0.75rem; margin-right: 0.25rem; }
 .events .empty { color: var(--ink-muted); }
@@ -198,13 +362,13 @@ dialog.confirm .hazard { border-left: 4px solid var(--red); padding-left: 0.5rem
 /* vehicle grid */
 main {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 24rem), 1fr));
-  gap: 1.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 28rem), 1fr));
+  gap: var(--gap);
   align-items: start;
-  padding: 1.5rem;
 }
 
-table {
+main table {
+  table-layout: fixed;
   width: 100%;
   border-collapse: separate;
   border-spacing: 0;
@@ -214,25 +378,29 @@ table {
   border-radius: 0 0 var(--radius) var(--radius);
   box-shadow: var(--shadow);
 }
-caption {
-  padding: 1rem 1.25rem 0.75rem;
+main caption {
+  padding: 0.625rem 1rem;
   background: var(--surface);
   border: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   border-radius: var(--radius) var(--radius) 0 0;
   text-align: left;
 }
-caption .head { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; }
+/* name, summary and meta on one line; they wrap under each other on a narrow card */
+caption .head { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 0.75rem; margin-right: 0.75rem; vertical-align: middle; }
 caption .vehicle { font-size: 1.25rem; font-weight: 700; letter-spacing: -0.01em; }
-caption .meta { display: block; margin-top: 0.125rem; color: var(--ink-muted); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+caption .meta { color: var(--ink-muted); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
 caption time { white-space: nowrap; }
 
-th, td { padding: 0.625rem 1.25rem; vertical-align: middle; }
-tbody:not(:last-child) > tr:last-child > * { border-bottom: 1px solid var(--border); }
-tr:has(+ .gauge-row) > * { padding-bottom: 0.125rem; }
+/* one line per parameter: name (and id), value, gauge */
+main th, main td { padding: 0.4375rem 0.625rem; vertical-align: middle; }
+main th[scope="row"] { width: 34%; padding-left: 1rem; }
+main td.value { width: 9rem; }
+main td:last-child { padding-right: 1rem; }
+main tbody:not(:last-child) > tr > * { border-bottom: 1px solid var(--border); }
 th[scope="row"] { color: var(--ink); font-weight: 500; text-align: left; }
-th .label { display: block; line-height: 1.3; }
-th .pid { display: block; color: var(--ink-muted); font-size: 0.75rem; font-weight: 400; }
+th .label { display: block; font-size: 0.9375rem; line-height: 1.25; }
+th .pid { display: block; color: var(--ink-muted); font-size: 0.75rem; font-weight: 400; line-height: 1.25; overflow-wrap: anywhere; }
 
 /* state marks: square, labelled, never pill-shaped (pills are actions) */
 .glyph { flex: none; }
@@ -249,7 +417,11 @@ th .pid { display: block; color: var(--ink-muted); font-size: 0.75rem; font-weig
   line-height: 1.4;
   vertical-align: middle;
 }
-th .marks { display: flex; flex-wrap: wrap; gap: 0.25rem 0.375rem; margin-top: 0.25rem; }
+th .marks { display: flex; flex-wrap: wrap; gap: 0.125rem 0.375rem; margin-top: 0.125rem; }
+/* in a card a state mark takes the id's line, so an alarm or a loss of signal never makes the rows taller;
+   the id stays in the row header's title */
+main th:has(.marks) .pid { display: none; }
+main .badge, main .acq { padding: 0 0.375rem; font-size: 0.75rem; line-height: 1.4; }
 [data-tone="red"] { background: var(--red); color: var(--on-red); }
 [data-tone="yellow"] { background: var(--yellow); color: var(--yellow-ink); box-shadow: inset 0 0 0 1.5px var(--yellow-ink); }
 [data-tone="was"], [data-tone="muted"], .acq { color: var(--stale-ink); box-shadow: inset 0 0 0 1.5px currentColor; }
@@ -257,7 +429,7 @@ th .marks { display: flex; flex-wrap: wrap; gap: 0.25rem 0.375rem; margin-top: 0
 [data-tone="down"] { background: var(--ink); color: var(--surface); }
 .summary { letter-spacing: 0.06em; }
 
-/* rows: grey when nominal; a live violation tints the parameter (both of its rows) */
+/* rows: grey when nominal; a live violation tints the parameter's row */
 tbody[data-acq="OK"][data-level="RED"] > tr > * { background: var(--red-tint); }
 tbody[data-acq="OK"][data-level="YELLOW"] > tr > * { background: var(--yellow-tint); }
 tbody[data-acq]:not([data-acq="OK"]) .num { color: var(--stale-ink); font-style: italic; }
@@ -266,14 +438,14 @@ td.value { white-space: nowrap; text-align: right; }
 .num {
   color: var(--nominal-ink);
   font-family: var(--font-data);
-  font-size: 1.125rem;
+  font-size: 1.25rem;
   font-weight: 600;
   font-variant-numeric: tabular-nums slashed-zero;
 }
-.unit { display: inline-block; min-width: 3.25rem; margin-left: 0.375rem; color: var(--ink-muted); font-size: 0.8125rem; text-align: left; }
+.unit { display: inline-block; min-width: 3rem; margin-left: 0.375rem; color: var(--ink-muted); font-size: 0.8125rem; text-align: left; }
 
-/* limit gauge: full card width, grey zones, pointer above, outer limits printed below */
-tr.gauge-row > td { padding-top: 0; padding-bottom: 0.75rem; }
+/* limit gauge: in the parameter's row, grey zones, pointer above, outer limits printed below */
+td.gauge-cell { padding-inline: 1rem; } /* room for a limit printed at the track's edge */
 .gauge { position: relative; height: 2.25rem; }
 .gauge-track {
   position: absolute;
@@ -347,11 +519,18 @@ main.login form {
 }
 main.login label { display: grid; gap: 0.25rem; font-size: 0.875rem; font-weight: 500; }
 
-@media (max-width: 40rem) {
-  header, main { padding-inline: 1rem; }
-  th, td { padding-inline: 0.75rem; }
-}
+/* filter bar of a long list: a vehicle and free text */
+.list-filter { display: flex; flex-wrap: wrap; align-items: center; gap: 0.25rem 1rem; font-size: 0.8125rem; }
+.list-filter label { display: flex; align-items: center; gap: 0.375rem; }
+.list-filter input { width: 10rem; }
 
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
 }
+
+/* the replay page: a purple frame and a banner that stays (D-REP-04, D-UI-16) */
+.replay-frame { border: 6px solid var(--replay); min-height: 60vh; }
+.replay-banner { display: flex; gap: 1.5rem; align-items: center; padding: 0.5rem 1.5rem; background: var(--replay); color: var(--on-replay); }
+.replay-controls { display: flex; flex-wrap: wrap; gap: 1rem; align-items: center; padding: 1rem 1.5rem 0; }
+.replay-controls label { display: flex; gap: 0.5rem; align-items: center; }
+.replay-progress, .replay-frame > [role="alert"] { padding: 0 1.5rem; }

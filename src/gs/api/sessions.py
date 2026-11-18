@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 from http import HTTPStatus
-from typing import Any
+from typing import Any, Literal
 
 import psycopg
 from fastapi import APIRouter, Request, Response
@@ -10,18 +10,14 @@ from fastapi import APIRouter, Request, Response
 from gs.api.bodies import ReportConflict, SessionReport, SessionStart, SessionView
 from gs.api.dbguard import connect, db_503, utc
 from gs.api.deps import ApiError, User, errors, mission, vehicles
-from gs.api.report import frozen_report, stored_csv
+from gs.api.report import frozen_report, refreeze, stored_csv
 from gs.common.audit import audit
 
 router = APIRouter()
 REPORT_ERRORS: dict[int | str, dict[str, Any]] = {
-    **errors(401, 404, 422, 503),
+    **errors(401, 404, 410, 422, 503),
     409: {"model": ReportConflict},
 }
-
-
-def _todo(what: str) -> ApiError:
-    return ApiError(HTTPStatus.NOT_IMPLEMENTED, "NOT_IMPLEMENTED", what)
 
 
 _COLS = "id, vehicle, name, conductor, started_at, ended_at, ended_by"
@@ -98,8 +94,18 @@ async def _report(request: Request, session_id: int, want_csv: bool = False) -> 
             got = await frozen_report(conn, session_id, mission(request), datetime.now(UTC))
             if isinstance(got, SessionReport) and want_csv:
                 return await stored_csv(conn, session_id)
+    return _answer(got, session_id)
+
+
+def _answer(
+    got: SessionReport | str | ReportConflict | Literal["gone"] | None, session_id: int
+) -> SessionReport | str:
     if got is None:
         raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"no session {session_id}")
+    if got == "gone":
+        raise ApiError(
+            HTTPStatus.GONE, "HOT_DATA_GONE", "hot rows of the session window were deleted"
+        )
     if isinstance(got, ReportConflict):
         raise ApiError(HTTPStatus.CONFLICT, got.error, got.message, body=got)
     return got
@@ -110,6 +116,20 @@ async def get_report(session_id: int, request: Request, user: User) -> SessionRe
     got = await _report(request, session_id)
     assert isinstance(got, SessionReport)
     return got
+
+
+@router.post(
+    "/api/sessions/{session_id}/report/refreeze",
+    responses={**REPORT_ERRORS, **errors(403)},
+)
+async def refreeze_report(session_id: int, request: Request, user: User) -> SessionReport:
+    """D-DB-10, T4-m: rebuild an incomplete frozen report while the session's hot rows exist."""
+    with db_503(request):
+        async with connect(request) as conn, conn.transaction():
+            got = await refreeze(conn, session_id, mission(request), user, datetime.now(UTC))
+    done = _answer(got, session_id)
+    assert isinstance(done, SessionReport)
+    return done
 
 
 @router.get(

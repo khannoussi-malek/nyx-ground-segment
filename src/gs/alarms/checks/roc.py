@@ -45,7 +45,10 @@ class Roc:
         pts = [(t, v) for t, v in zip(st.t, st.v, strict=True) if t >= cut] + [(s.t, s.value)]
         new = RocState(tuple(p[0] for p in pts), tuple(p[1] for p in pts))
         need = MIN_FILL * self.cfg.window_s / s.period_s * (1 - _EPS)
-        if len(pts) < need or len(set(new.t)) < 2:
+        # and they must span what `need` samples span at the nominal rate: a backlog stamped ms
+        # apart after a stall holds enough samples over a few ms, and noise / ms is no rate
+        span = max(new.t) - min(new.t)
+        if len(pts) < need or len(set(new.t)) < 2 or span < (need - 1) * s.period_s:
             return new, None
         slope = statistics.linear_regression(new.t, new.v).slope
         lim = self.cfg.limit_per_s

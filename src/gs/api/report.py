@@ -5,12 +5,22 @@ import csv
 import io
 import json
 from datetime import datetime, timedelta
+from typing import Literal
 
 import psycopg
 from psycopg import sql
 
-from gs.api.bodies import AlarmTransition, ParamStats, ReportConflict, SessionReport, SessionView
+from gs.alarms.quality import QEvent, quality
+from gs.api.bodies import (
+    AlarmQuality,
+    AlarmTransition,
+    ParamStats,
+    ReportConflict,
+    SessionReport,
+    SessionView,
+)
 from gs.api.dbguard import utc
+from gs.common.audit import audit
 from gs.common.interfaces.sse import TransitionView
 from gs.common.missiondb import MissionDb
 from gs.common.time import iso_z
@@ -75,15 +85,18 @@ async def _stats(
     return int(row[0]), stats
 
 
-async def _transitions(conn: psycopg.AsyncConnection, s: SessionView) -> list[AlarmTransition]:
+async def _transitions(
+    conn: psycopg.AsyncConnection, s: SessionView
+) -> tuple[list[AlarmTransition], AlarmQuality]:
     cur = await conn.execute(
         "SELECT alarm_id, param, key, kind, coalesce(trigger_t_onboard, processed_at), alert,"
-        " by_user, note, check_kind, level, value FROM alarm_events"
+        " by_user, note, check_kind, level, value, trigger_t_onboard FROM alarm_events"
         " WHERE vehicle = %s AND alarm_id IS NOT NULL AND processed_at >= %s AND processed_at < %s"
         " ORDER BY id",
         (s.vehicle, s.started_at, _end(s)),
     )
-    return [
+    rows = list(map(utc, await cur.fetchall()))
+    alarms = [
         AlarmTransition(
             alarm_id=r[0], param=r[1],
             transition=TransitionView(
@@ -91,8 +104,17 @@ async def _transitions(conn: psycopg.AsyncConnection, s: SessionView) -> list[Al
                 check_kind=r[8], level=r[9], value=r[10],
             ),
         )
-        for r in map(utc, await cur.fetchall())
+        for r in rows
     ]  # fmt: skip
+    metrics = quality(
+        [QEvent(s.vehicle, r[1], r[3], r[11], r[0]) for r in rows if r[11] is not None],
+        fault_windows=None,
+    )
+    return alarms, AlarmQuality(
+        raises=metrics.raises, false_raises=metrics.false_raises, psi=dict(metrics.psi),
+        chattering=list(metrics.chattering), short_t1=metrics.short_t1, short_t0=metrics.short_t0,
+        peak_10min=dict(metrics.peak_10min), time_in_flood_s=metrics.time_in_flood_s,
+    )  # fmt: skip
 
 
 async def build_report(
@@ -106,12 +128,13 @@ async def build_report(
     # views are newest first; a report reads in time order
     events = await event_views(conn, kinds=LINK_KINDS, **window)  # type: ignore[arg-type]
     commands = await command_views(conn, **window)  # type: ignore[arg-type]
+    alarms, alarm_quality = await _transitions(conn, s)
     return SessionReport(
         session=s, complete=complete,
         note=None if complete else f"incomplete: {frames} of {expected} frames",
         frozen_at=now, duration_s=duration, frames=frames, expected=expected,
-        parameters=parameters, link_events=events[::-1], alarms=await _transitions(conn, s),
-        commands=commands[::-1],
+        parameters=parameters, link_events=events[::-1], alarms=alarms,
+        commands=commands[::-1], alarm_quality=alarm_quality,
     )  # fmt: skip
 
 
@@ -134,12 +157,31 @@ async def _stored(conn: psycopg.AsyncConnection, session_id: int) -> SessionRepo
     return SessionReport.model_validate_json(row[0]) if row else None  # P-pf15
 
 
+async def _complete(conn: psycopg.AsyncConnection, s: SessionView) -> bool:
+    """The watermark rule (D-DB-06): the vehicle's data has reached the end of the session."""
+    cur = await conn.execute("SELECT last_t FROM seq_state WHERE vehicle = %s", (s.vehicle,))
+    mark = await cur.fetchone()
+    return mark is not None and mark[0] >= _end(s)
+
+
+async def _hot_gone(conn: psycopg.AsyncConnection, s: SessionView) -> bool:
+    """An archived hour of the session window is hot-deleted: the rows a report counts are gone."""
+    cur = await conn.execute(
+        "SELECT 1 FROM archive_object WHERE vehicle = %s AND hot_deleted_at IS NOT NULL"
+        " AND hour < %s AND hour + interval '1 hour' > %s LIMIT 1",
+        (s.vehicle, _end(s), s.started_at),
+    )
+    return await cur.fetchone() is not None
+
+
 async def frozen_report(
     conn: psycopg.AsyncConnection, session_id: int, mdb: MissionDb, now: datetime
-) -> SessionReport | ReportConflict | None:
-    """None: no such session. A stored report wins; running and not-yet-final sessions are a
-    ReportConflict. Freezing is INSERT ... ON CONFLICT DO NOTHING and then reading the stored
-    row back, so concurrent readers share one copy (R-p)."""
+) -> SessionReport | ReportConflict | Literal["gone"] | None:
+    """None: no such session. "gone": hot rows were deleted before the first freeze, so none is
+    stored (same rule as refreeze; checked after the build, so a deletion before it is seen).
+    A stored report wins; running and not-yet-final sessions are a ReportConflict.
+    Freezing is INSERT ... ON CONFLICT DO NOTHING and then reading the stored row back,
+    so concurrent readers share one copy (R-p)."""
     if (done := await _stored(conn, session_id)) is not None:
         return done
     s = await _load(conn, session_id)
@@ -147,9 +189,7 @@ async def frozen_report(
         return None
     if s.ended_at is None:
         return ReportConflict(error="SESSION_RUNNING", message="session is still running")
-    cur = await conn.execute("SELECT last_t FROM seq_state WHERE vehicle = %s", (s.vehicle,))
-    mark = await cur.fetchone()
-    complete = mark is not None and mark[0] >= s.ended_at
+    complete = await _complete(conn, s)
     if not complete and now < s.ended_at + timedelta(seconds=FREEZE_AFTER_S):
         frames = await _frames(conn, s)
         expected = round(
@@ -160,12 +200,54 @@ async def frozen_report(
             frames=frames, expected=expected,
         )  # fmt: skip
     built = await build_report(conn, s, mdb, complete, now)
+    if await _hot_gone(conn, s):
+        return "gone"
     await conn.execute(
         "INSERT INTO session_report (session_id, report, csv) VALUES (%s, %s, %s)"
         " ON CONFLICT (session_id) DO NOTHING",
         (session_id, built.model_dump_json(), report_csv(built)),
     )
     return await _stored(conn, session_id)
+
+
+async def refreeze(
+    conn: psycopg.AsyncConnection, session_id: int, mdb: MissionDb, user: str, now: datetime
+) -> SessionReport | ReportConflict | Literal["gone"] | None:
+    """D-DB-10, T4-m: rebuild an incomplete stored report (None: no such session). Never creates
+    the first freeze; refuses a complete one, and one whose archived hours were hot-deleted (the
+    rows it would count are gone). Must be the first operation in the caller's transaction:
+    repeatable read keeps the archive check and aggregates on one snapshot if hot deletion
+    commits between them. The row lock prevents concurrent replacements; a stale concurrent
+    refreeze raises SerializationFailure for the caller to roll back."""
+    await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+    cur = await conn.execute(
+        "SELECT report::text FROM session_report WHERE session_id = %s FOR UPDATE", (session_id,)
+    )
+    row = await cur.fetchone()
+    if row is None:
+        if await _load(conn, session_id) is None:
+            return None
+        return ReportConflict(error="REPORT_PENDING", message="the report was never frozen")
+    if SessionReport.model_validate_json(row[0]).complete:
+        return ReportConflict(error="REPORT_COMPLETE", message="the report is already complete")
+    s = await _load(conn, session_id)
+    assert s is not None  # session_report.session_id references test_session
+    if await _hot_gone(conn, s):
+        return "gone"
+    built = await build_report(conn, s, mdb, await _complete(conn, s), now)
+    await conn.execute(
+        "UPDATE session_report SET report = %s, csv = %s, created_at = clock_timestamp()"
+        " WHERE session_id = %s",
+        (built.model_dump_json(), report_csv(built), session_id),
+    )
+    await audit(
+        conn, user, "REPORT_REFROZEN",
+        details={
+            "session_id": session_id, "frames": built.frames, "expected": built.expected,
+            "complete": built.complete,
+        },
+    )  # fmt: skip
+    return built
 
 
 async def stored_csv(conn: psycopg.AsyncConnection, session_id: int) -> str:
@@ -188,7 +270,7 @@ def _t(v: datetime | None) -> str:
 
 
 def report_csv(r: SessionReport) -> str:
-    """Rows of five sections in one table; every time is iso_z, None is an empty field."""
+    """Report sections in one table; every time is iso_z, None is an empty field."""
     s = r.session
     rows: list[dict[str, object]] = [
         {"section": "summary", "key": s.id, "vehicle": s.vehicle, "name": s.name,
@@ -219,6 +301,15 @@ def report_csv(r: SessionReport) -> str:
          "state": c.state, "outcome": c.outcome, "note": c.reason}
         for c in r.commands
     ]  # fmt: skip
+    if (q := r.alarm_quality) is not None:
+        metrics: dict[str, object] = {
+            "raises": q.raises, "false_raises": q.false_raises,
+            "short_t1": q.short_t1, "short_t0": q.short_t0,
+            "time_in_flood_s": q.time_in_flood_s,
+        }  # fmt: skip
+        metrics.update((f"peak_10min:{k}", v) for k, v in q.peak_10min.items())
+        metrics.update((f"psi:{k}", v) for k, v in q.psi.items())
+        rows += [{"section": "alarm_quality", "key": k, "value": v} for k, v in metrics.items()]
     out = io.StringIO()
     w = csv.writer(out, lineterminator="\n")
     w.writerow(CSV_COLUMNS)

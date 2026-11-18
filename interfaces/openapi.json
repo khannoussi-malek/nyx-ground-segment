@@ -122,6 +122,72 @@
         "title": "Alarm",
         "type": "object"
       },
+      "AlarmQuality": {
+        "additionalProperties": false,
+        "description": "D-ALM-15 over the session's alarm_events (gs.alarms.quality.Quality); keys\n\"<vehicle>/<param>\" for psi and chattering, \"<vehicle>\" or \"all\" for peak_10min.",
+        "properties": {
+          "chattering": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Chattering",
+            "type": "array"
+          },
+          "false_raises": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "False Raises"
+          },
+          "peak_10min": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Peak 10Min",
+            "type": "object"
+          },
+          "psi": {
+            "additionalProperties": {
+              "type": "number"
+            },
+            "title": "Psi",
+            "type": "object"
+          },
+          "raises": {
+            "title": "Raises",
+            "type": "integer"
+          },
+          "short_t0": {
+            "title": "Short T0",
+            "type": "integer"
+          },
+          "short_t1": {
+            "title": "Short T1",
+            "type": "integer"
+          },
+          "time_in_flood_s": {
+            "title": "Time In Flood S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "raises",
+          "false_raises",
+          "psi",
+          "chattering",
+          "short_t1",
+          "short_t0",
+          "peak_10min",
+          "time_in_flood_s"
+        ],
+        "title": "AlarmQuality",
+        "type": "object"
+      },
       "AlarmTransition": {
         "additionalProperties": false,
         "properties": {
@@ -1451,6 +1517,386 @@
         "title": "ParameterEntry",
         "type": "object"
       },
+      "ReplayAlarm": {
+        "additionalProperties": false,
+        "properties": {
+          "alarm": {
+            "$ref": "#/components/schemas/AlarmView"
+          },
+          "kind": {
+            "const": "alarm",
+            "default": "alarm",
+            "title": "Kind",
+            "type": "string"
+          },
+          "replay": {
+            "const": true,
+            "default": true,
+            "title": "Replay",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "alarm"
+        ],
+        "title": "ReplayAlarm",
+        "type": "object"
+      },
+      "ReplayClock": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "const": "clock",
+            "default": "clock",
+            "title": "Kind",
+            "type": "string"
+          },
+          "replay": {
+            "const": true,
+            "default": true,
+            "title": "Replay",
+            "type": "boolean"
+          },
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          }
+        },
+        "required": [
+          "t"
+        ],
+        "title": "ReplayClock",
+        "type": "object"
+      },
+      "ReplayCreated": {
+        "additionalProperties": false,
+        "properties": {
+          "replay_id": {
+            "format": "uuid",
+            "title": "Replay Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "replay_id"
+        ],
+        "title": "ReplayCreated",
+        "type": "object"
+      },
+      "ReplayEnd": {
+        "additionalProperties": false,
+        "properties": {
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Detail"
+          },
+          "kind": {
+            "const": "replay_end",
+            "default": "replay_end",
+            "title": "Kind",
+            "type": "string"
+          },
+          "reason": {
+            "enum": [
+              "done",
+              "stopped",
+              "archive_corrupt"
+            ],
+            "title": "Reason",
+            "type": "string"
+          },
+          "replay": {
+            "const": true,
+            "default": true,
+            "title": "Replay",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "reason"
+        ],
+        "title": "ReplayEnd",
+        "type": "object"
+      },
+      "ReplayEvent": {
+        "discriminator": {
+          "mapping": {
+            "alarm": "#/components/schemas/ReplayAlarm",
+            "clock": "#/components/schemas/ReplayClock",
+            "link": "#/components/schemas/ReplayLink",
+            "replay_end": "#/components/schemas/ReplayEnd",
+            "replay_start": "#/components/schemas/ReplayStart",
+            "tm": "#/components/schemas/ReplayTm"
+          },
+          "propertyName": "kind"
+        },
+        "oneOf": [
+          {
+            "$ref": "#/components/schemas/ReplayStart"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayTm"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayAlarm"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayLink"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayClock"
+          },
+          {
+            "$ref": "#/components/schemas/ReplayEnd"
+          }
+        ],
+        "title": "ReplayEvent"
+      },
+      "ReplayLink": {
+        "additionalProperties": false,
+        "properties": {
+          "event": {
+            "$ref": "#/components/schemas/EventView"
+          },
+          "kind": {
+            "const": "link",
+            "default": "link",
+            "title": "Kind",
+            "type": "string"
+          },
+          "replay": {
+            "const": true,
+            "default": true,
+            "title": "Replay",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "event"
+        ],
+        "title": "ReplayLink",
+        "type": "object"
+      },
+      "ReplayRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "from": {
+            "format": "date-time",
+            "title": "From",
+            "type": "string"
+          },
+          "speed": {
+            "enum": [
+              1,
+              10
+            ],
+            "title": "Speed",
+            "type": "integer"
+          },
+          "to": {
+            "format": "date-time",
+            "title": "To",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle",
+          "from",
+          "to",
+          "speed"
+        ],
+        "title": "ReplayRequest",
+        "type": "object"
+      },
+      "ReplayStart": {
+        "additionalProperties": false,
+        "properties": {
+          "alarms": {
+            "items": {
+              "$ref": "#/components/schemas/AlarmView"
+            },
+            "title": "Alarms",
+            "type": "array"
+          },
+          "kind": {
+            "const": "replay_start",
+            "default": "replay_start",
+            "title": "Kind",
+            "type": "string"
+          },
+          "los_open": {
+            "title": "Los Open",
+            "type": "boolean"
+          },
+          "replay": {
+            "const": true,
+            "default": true,
+            "title": "Replay",
+            "type": "boolean"
+          },
+          "replay_id": {
+            "format": "uuid",
+            "title": "Replay Id",
+            "type": "string"
+          },
+          "speed": {
+            "enum": [
+              1,
+              10
+            ],
+            "title": "Speed",
+            "type": "integer"
+          },
+          "t_from": {
+            "format": "date-time",
+            "title": "T From",
+            "type": "string"
+          },
+          "t_to": {
+            "format": "date-time",
+            "title": "T To",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "replay_id",
+          "vehicle",
+          "t_from",
+          "t_to",
+          "speed",
+          "alarms",
+          "los_open"
+        ],
+        "title": "ReplayStart",
+        "type": "object"
+      },
+      "ReplayTm": {
+        "additionalProperties": false,
+        "properties": {
+          "age_ms": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "title": "Age Ms"
+          },
+          "frozen": {
+            "default": false,
+            "title": "Frozen",
+            "type": "boolean"
+          },
+          "kind": {
+            "const": "tm",
+            "default": "tm",
+            "title": "Kind",
+            "type": "string"
+          },
+          "last_cmd_id": {
+            "anyOf": [
+              {
+                "format": "uuid",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Cmd Id"
+          },
+          "mode": {
+            "enum": [
+              "SAFE",
+              "STANDBY",
+              "TEST",
+              "FAULT"
+            ],
+            "title": "Mode",
+            "type": "string"
+          },
+          "replay": {
+            "const": true,
+            "default": true,
+            "title": "Replay",
+            "type": "boolean"
+          },
+          "seq": {
+            "maximum": 4294967295,
+            "minimum": 0,
+            "title": "Seq",
+            "type": "integer"
+          },
+          "severity": {
+            "additionalProperties": {
+              "enum": [
+                "YELLOW",
+                "RED"
+              ],
+              "type": "string"
+            },
+            "title": "Severity",
+            "type": "object"
+          },
+          "t_onboard": {
+            "format": "date-time",
+            "title": "T Onboard",
+            "type": "string"
+          },
+          "values": {
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "title": "Values",
+            "type": "object"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle",
+          "seq",
+          "t_onboard",
+          "mode",
+          "last_cmd_id",
+          "values",
+          "severity"
+        ],
+        "title": "ReplayTm",
+        "type": "object"
+      },
       "ReportConflict": {
         "additionalProperties": false,
         "properties": {
@@ -1574,6 +2020,16 @@
       "SessionReport": {
         "additionalProperties": false,
         "properties": {
+          "alarm_quality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AlarmQuality"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "alarms": {
             "items": {
               "$ref": "#/components/schemas/AlarmTransition"
@@ -2805,6 +3261,224 @@
         "summary": "Frame Schema"
       }
     },
+    "/api/replays": {
+      "post": {
+        "operationId": "create_replay_api_replays_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReplayRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReplayCreated"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Create Replay"
+      }
+    },
+    "/api/replays/{replay_id}": {
+      "delete": {
+        "operationId": "delete_replay_api_replays__replay_id__delete",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "replay_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Replay Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "summary": "Delete Replay"
+      }
+    },
+    "/api/replays/{replay_id}/events": {
+      "get": {
+        "description": "SSE of gs.common.interfaces.replay messages (ReplayEvent), framed like /api/events.",
+        "operationId": "replay_events_api_replays__replay_id__events_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "replay_id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "title": "Replay Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {}
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          }
+        },
+        "summary": "Replay Events"
+      }
+    },
     "/api/sessions": {
       "get": {
         "operationId": "list_sessions_api_sessions_get",
@@ -2988,6 +3662,16 @@
             },
             "description": "Conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gone"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -3063,6 +3747,16 @@
             },
             "description": "Conflict"
           },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gone"
+          },
           "422": {
             "content": {
               "application/json": {
@@ -3085,6 +3779,106 @@
           }
         },
         "summary": "Get Report Csv"
+      }
+    },
+    "/api/sessions/{session_id}/report/refreeze": {
+      "post": {
+        "description": "D-DB-10, T4-m: rebuild an incomplete frozen report while the session's hot rows exist.",
+        "operationId": "refreeze_report_api_sessions__session_id__report_refreeze_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "session_id",
+            "required": true,
+            "schema": {
+              "title": "Session Id",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportConflict"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Gone"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Refreeze Report"
       }
     },
     "/api/sessions/{session_id}/stop": {

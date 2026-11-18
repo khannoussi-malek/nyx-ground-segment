@@ -1,13 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { logout, me, missionDb, type MissionDb } from "./api";
 import { armAudio, beep, beepsFor, tone, toneActive, toneKeys, type ToneState } from "./audio";
 import { sessionKeySet } from "./keySet";
-import { AlarmList } from "./AlarmList";
-import { ChartPanel } from "./Chart";
+import { AlarmList, AlarmSummary } from "./AlarmList";
+import { Board, useLayout } from "./Board";
+import { PANE_HELP } from "./paneHelp";
+import { ChartPanel, type PlotPick } from "./Chart";
 import { CommandPanel } from "./CommandPanel";
 import { EventStrip } from "./EventStrip";
 import { SessionPanel } from "./SessionPanel";
 import { LiveTable } from "./LiveTable";
+import { ReplayPage } from "./ReplayPage";
 import { Login } from "./Login";
 import { bootUser, checkSession, loadMission, safeLogout } from "./session";
 import { connectEvents } from "./sse";
@@ -113,24 +116,49 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
       store.stop();
     };
   }, [store, onLogout]);
+  const [replay, setReplay] = useState(false); // the live store, SSE, beep and tone stay mounted either way
   const running = useRunning(ctx);
   const { beeps, lastTone } = useAudio(store, ctx, running);
+  const { layout, update, reset } = useLayout();
+  const [editing, setEditing] = useState(false); // panes move or resize only in edit mode: nothing moves by accident
+  const [plot, setPlot] = useState<PlotPick>({ vehicle: "", param: "" });
+  // one handler for every "plot this" button (card rows, alarm rows): show it in the chart, wherever the chart is
+  const plotFrom = (e: MouseEvent) => {
+    const b = (e.target as Element).closest<HTMLElement>("[data-plot-param]");
+    if (!b) return;
+    setPlot({ vehicle: b.dataset.plotVehicle ?? "", param: b.dataset.plotParam ?? "" });
+    document.querySelector('[data-pane="chart"]')?.scrollIntoView({ block: "nearest" });
+  };
+  const toAlarms = () => document.querySelector('[data-pane="alarms"]')?.scrollIntoView({ block: "start" });
   return (
-    <div data-beeps={beeps} data-last-tone={lastTone}>
+    <div className="console" data-beeps={beeps} data-last-tone={lastTone} onClick={plotFrom}>
       <header>
         <h1>Nyx</h1>
+        <AlarmSummary store={store} onClick={toAlarms} />
         <SoundBadge ctx={ctx} running={running} onArm={setCtx} />
+        <button onClick={() => setReplay((r) => !r)}>{replay ? "Live" : "Replay"}</button>
         <span>{user}</span>
+        {editing && <button className="quiet" onClick={reset}>Reset layout</button>}
+        <button className="quiet" data-on={editing || undefined} onClick={() => setEditing((e) => !e)}>{editing ? "Done" : "Edit layout"}</button>
         <button onClick={() => void safeLogout(logout).then(onLogout)}>Log out</button>
       </header>
-      <AlarmList store={store} mission={mission} user={user} />
-      <SessionPanel store={store} mission={mission} />
-      <CommandPanel store={store} mission={mission} />
-      <main>
-        <LiveTable store={store} mission={mission} probe={probe} />
-      </main>
-      <ChartPanel store={store} mission={mission} />
-      <EventStrip store={store} />
+      {replay ? (
+        <ReplayPage live={store} mission={mission} user={user} />
+      ) : (
+        <Board
+          layout={layout}
+          update={update}
+          editing={editing}
+          panes={{
+            alarms: { title: "Alarms", help: PANE_HELP.alarms, node: <AlarmList store={store} mission={mission} user={user} /> },
+            live: { title: "Vehicles", help: PANE_HELP.live, node: <main><LiveTable store={store} mission={mission} probe={probe} /></main> },
+            chart: { title: "Chart", help: PANE_HELP.chart, node: <ChartPanel store={store} mission={mission} value={plot} onChange={setPlot} /> },
+            commands: { title: "Commands", help: PANE_HELP.commands, node: <CommandPanel store={store} mission={mission} /> },
+            sessions: { title: "Sessions", help: PANE_HELP.sessions, node: <SessionPanel store={store} mission={mission} /> },
+            events: { title: "Events", help: PANE_HELP.events, node: <EventStrip store={store} /> },
+          }}
+        />
+      )}
     </div>
   );
 }

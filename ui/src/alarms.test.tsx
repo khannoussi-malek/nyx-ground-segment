@@ -4,7 +4,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import type { MissionDb } from "./api";
 import { AckDialog } from "./AckDialog";
-import { AlarmList } from "./AlarmList";
+import { AlarmList, AlarmSummary } from "./AlarmList";
 import { alarmView } from "./fixtures";
 import { createStore, ingest, type AlarmView } from "./store";
 
@@ -43,7 +43,7 @@ function mount(alarms = [a1, a2, a3], live = true) {
 }
 const rows = () => [...host.querySelectorAll<HTMLElement>("tr[data-alarm-id]")].map((r) => r.dataset.alarmId);
 const button = (t: string) => [...host.querySelectorAll("dialog button")].find((b) => b.textContent === t) as HTMLButtonElement | undefined;
-const ackButton = (id: string) => host.querySelector<HTMLButtonElement>(`tr[data-alarm-id="${id}"] button`);
+const ackButton = (id: string) => host.querySelector<HTMLButtonElement>(`tr[data-alarm-id="${id}"] button[aria-label^="Acknowledge"]`);
 function pick(label: string, value: string) {
   const sel = [...host.querySelectorAll("label")].find((l) => l.textContent?.startsWith(label))!.querySelector("select")!;
   act(() => {
@@ -414,4 +414,28 @@ test.each(["alarm changed since you saw it", "alarm changed since the request"])
   act(() => ingest(store, "alarm", { kind: "alarm", alarm: alarmView({ ...a1, ack_request: { by_user: "fc1", request_id: "r", status: "superseded", status_reason: reason } }) }));
   expect(host.querySelector('tr[data-alarm-id="a1"] .ack-status')!.textContent).toBe(reason);
   expect(ackButton("a1")!.disabled).toBe(false);
+});
+
+test("an alarm's parameter is a button that plots it in the chart", () => {
+  mount();
+  const b = host.querySelector<HTMLButtonElement>('tr[data-alarm-id="a1"] button[data-plot-param]')!;
+  expect([b.dataset.plotVehicle, b.dataset.plotParam, b.textContent]).toEqual(["NYX-TA1", "cabin_pressure_kpa", "Cabin total pressure"]);
+});
+
+test("the header summary counts unacknowledged alarms by severity and jumps to the list; none says so", () => {
+  const store = createStore();
+  const acked = alarmView({ alarm_id: "a4", state: "ACKED" });
+  ingest(store, "snapshot", { kind: "snapshot", vehicles: {}, alarms: [a1, a2, a3, acked], commands: [], events: [] });
+  const go = vi.fn();
+  act(() => root.render(<AlarmSummary store={store} onClick={go} />));
+  const b = host.querySelector("button")!;
+  expect(b.textContent).toBe("2 RED · 1 YELLOW unacknowledged");
+  expect(b.dataset.tone).toBe("red");
+  act(() => b.click());
+  expect(go).toHaveBeenCalled();
+  const empty = createStore();
+  ingest(empty, "snapshot", { kind: "snapshot", vehicles: {}, alarms: [acked], commands: [], events: [] });
+  act(() => root.render(<AlarmSummary store={empty} onClick={go} />));
+  expect(host.querySelector("button")!.textContent).toBe("No unacknowledged alarms");
+  expect(host.querySelector("button")!.dataset.tone).toBe("nominal");
 });

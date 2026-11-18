@@ -22,6 +22,8 @@ POINTS = (
     "after_publish_before_ack",
     "after_xack",
     "after_fence_before_read",
+    "archive:after_put",
+    "archive:after_reread",
 )
 HANG_POINTS = ("in_loop",)
 CRASH_CODE = 99

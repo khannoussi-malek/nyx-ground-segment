@@ -16,15 +16,15 @@ from psycopg_pool import AsyncConnectionPool
 
 from gs.api import dbguard, report
 from gs.api.app import create_app
-from gs.api.bodies import ReportConflict, SessionReport
+from gs.api.bodies import ReportConflict, SessionReport, SessionView
 from gs.api.sessions import _view
-from gs.common.missiondb import load_dir
+from gs.common.missiondb import MissionDb, load_dir
 from tests.support.env import vid
 from tests.support.http import CLIENT_HEADERS as H
 from tests.support.http import FC2_PW, api_settings, authed, login
 from tests.support.ingest import ensure_set
 from tests.support.mission import MISSION_DIR
-from tests.support.pg import app_dsn, audit_rows, insert_rows
+from tests.support.pg import app_dsn, audit_rows, insert_rows, owner_dsn
 
 
 @pytest.fixture
@@ -416,3 +416,330 @@ async def test_text_postgres_rejects_is_422(
     r = await c.post("/api/sessions", content=body, headers={"Content-Type": "application/json"})
     assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR"), r.text
     assert all(s["vehicle"] != a for s in (await c.get("/api/sessions")).json())
+
+
+# ---- Task 16: refreeze (D-DB-10, T4-m) ---------------------------------------------------------
+async def _frozen_incomplete(c: httpx.AsyncClient, v: str, monkeypatch: pytest.MonkeyPatch) -> int:
+    monkeypatch.setattr(report, "FREEZE_AFTER_S", -1_000_000)
+    sid = _session(v)
+    _frames(v, 50)
+    _watermark(v, T0 + 5 * SEC)
+    first = (await c.get(f"/api/sessions/{sid}/report")).json()
+    assert (first["complete"], first["frames"]) == (False, 50)
+    return sid
+
+
+async def test_refreeze_incomplete_report(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    before = (await c.get(f"/api/sessions/{sid}/report")).json()
+    _frames(v, 100, extra_seq=1000)  # late rows (same times, new seq)
+    _sql("UPDATE seq_state SET last_t = %s WHERE vehicle = %s", T0 + 10 * SEC, v)
+    r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    assert r.status_code == 200, r.text
+    new = r.json()
+    assert (new["complete"], new["note"], new["frames"]) == (True, None, 150)
+    assert new["frozen_at"] > before["frozen_at"]
+    assert (await c.get(f"/api/sessions/{sid}/report")).json() == new  # stored row replaced
+    stored = (
+        psycopg.connect(app_dsn("gs"))
+        .execute("SELECT csv, created_at FROM session_report WHERE session_id = %s", (sid,))
+        .fetchone()
+    )
+    assert stored and "complete" in stored[0] and ",150," in stored[0]
+    (row,) = audit_rows("REPORT_REFROZEN", "fc1")[-1:]
+    assert row["details"] == {"session_id": sid, "frames": 150, "expected": 100, "complete": True}
+
+
+async def test_refreeze_still_incomplete_stays_incomplete(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    _frames(v, 20, extra_seq=1000)
+    r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    assert (r.status_code, r.json()["complete"], r.json()["frames"]) == (200, False, 70)
+
+
+@pytest.mark.parametrize("caller", ["route", "helper"])
+async def test_refreeze_keeps_hot_rows_when_delete_commits_after_archive_check(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch, caller: str
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    _frames(v, 20, extra_seq=1000)
+    hour = T0.replace(minute=0, second=0)
+    _sql(
+        "INSERT INTO archive_object (vehicle, hour, sha256, rows, verified_at, t_min, t_max)"
+        " VALUES (%s, %s, 'x', 70, now(), %s, %s)",
+        v, hour, T0, T0 + 49 * timedelta(milliseconds=100),
+    )  # fmt: skip
+    build = report.build_report
+
+    async def delete_then_build(
+        conn: psycopg.AsyncConnection,
+        s: SessionView,
+        mdb: MissionDb,
+        complete: bool,
+        now: datetime,
+    ) -> SessionReport:
+        # The archiver commits deletion + metadata together, between the check and aggregates.
+        with psycopg.connect(app_dsn("gs")) as archiver:
+            archiver.execute("DELETE FROM telemetry WHERE vehicle = %s", (v,))
+            archiver.execute(
+                "UPDATE archive_object SET hot_deleted_at = clock_timestamp() WHERE vehicle = %s",
+                (v,),
+            )
+        return await build(conn, s, mdb, complete, now)
+
+    monkeypatch.setattr(report, "build_report", delete_then_build)
+    try:
+        if caller == "route":
+            response = await c.post(f"/api/sessions/{sid}/report/refreeze")
+            assert response.status_code == 200, response.text
+            got = SessionReport.model_validate_json(response.text)
+        else:
+            async with (
+                await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as conn,
+                conn.transaction(),
+            ):
+                result = await report.refreeze(conn, sid, SET, "fc1", datetime.now(UTC))
+                assert isinstance(result, SessionReport)
+                got = result
+        assert (got.frames, got.parameters[P1].n, got.parameters[P1].avg) == (
+            70,
+            70,
+            20.214285714285715,
+        )
+        stored = (await c.get(f"/api/sessions/{sid}/report")).json()
+        assert stored["frames"] == 70
+        csv_response = await c.get(f"/api/sessions/{sid}/report.csv")
+        summary = next(
+            x for x in csv.DictReader(io.StringIO(csv_response.text)) if x["section"] == "summary"
+        )
+        assert summary["n"] == "70"
+        audit = [
+            r for r in audit_rows("REPORT_REFROZEN", "fc1") if r["details"]["session_id"] == sid
+        ]
+        assert len(audit) == 1 and audit[0]["details"]["frames"] == 70
+        with psycopg.connect(app_dsn("gs")) as check:
+            assert check.execute(
+                "SELECT count(*) FROM telemetry WHERE vehicle = %s", (v,)
+            ).fetchone() == (0,)
+            assert check.execute(
+                "SELECT hot_deleted_at IS NOT NULL FROM archive_object WHERE vehicle = %s", (v,)
+            ).fetchone() == (True,)
+        response = await c.post(f"/api/sessions/{sid}/report/refreeze")
+        assert (response.status_code, response.json()["error"]) == (410, "HOT_DATA_GONE")
+        assert (await c.get(f"/api/sessions/{sid}/report")).json() == stored
+    finally:
+        with psycopg.connect(owner_dsn("gs")) as cleanup:
+            cleanup.execute("DELETE FROM archive_object WHERE vehicle = %s", (v,))
+
+
+async def test_refreeze_complete_409(rep: tuple[httpx.AsyncClient, str]) -> None:
+    c, v = rep
+    sid = _session(v)
+    _frames(v, 100)
+    _watermark(v, T0 + 10 * SEC)
+    first = (await c.get(f"/api/sessions/{sid}/report")).json()
+    assert first["complete"] is True
+    r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    assert (r.status_code, r.json()["error"]) == (409, "REPORT_COMPLETE")
+    assert (await c.get(f"/api/sessions/{sid}/report")).json() == first
+
+
+async def test_refreeze_never_frozen_409_pending(rep: tuple[httpx.AsyncClient, str]) -> None:
+    c, v = rep
+    sid = _session(v)
+    _frames(v, 50)
+    _watermark(v, T0 + 5 * SEC)  # real FREEZE_AFTER_S: not frozen yet
+    r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    assert (r.status_code, r.json()["error"]) == (409, "REPORT_PENDING")
+    none = psycopg.connect(app_dsn("gs")).execute(
+        "SELECT 1 FROM session_report WHERE session_id = %s", (sid,)
+    )
+    assert none.fetchone() is None  # a refreeze never creates the first freeze
+    running = _session(vid(), ended=False)
+    assert (await c.post(f"/api/sessions/{running}/report/refreeze")).status_code == 409
+
+
+async def test_refreeze_unknown_session_404(rep: tuple[httpx.AsyncClient, str]) -> None:
+    c, _ = rep
+    r = await c.post("/api/sessions/2000000000/report/refreeze")
+    assert (r.status_code, r.json()["error"]) == (404, "NOT_FOUND")
+
+
+async def test_refreeze_after_hot_delete_410(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    before = (await c.get(f"/api/sessions/{sid}/report")).json()
+    hour = T0.replace(minute=0, second=0)
+    _sql(
+        "INSERT INTO archive_object (vehicle, hour, sha256, rows, verified_at, hot_deleted_at,"
+        " t_min, t_max) VALUES (%s, %s, 'x', 1, now(), now(), %s, %s)",
+        v, hour, T0, T0,
+    )  # fmt: skip
+    r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    assert (r.status_code, r.json()["error"]) == (410, "HOT_DATA_GONE")
+    assert (await c.get(f"/api/sessions/{sid}/report")).json() == before
+    # an archived hour that is still hot, or one outside the window, does not block
+    _sql("UPDATE archive_object SET hot_deleted_at = NULL WHERE vehicle = %s", v)
+    assert (await c.post(f"/api/sessions/{sid}/report/refreeze")).status_code == 200
+
+
+async def test_first_freeze_after_hot_delete_is_410_and_stores_nothing(
+    rep: tuple[httpx.AsyncClient, str],
+) -> None:
+    c, v = rep  # nobody read the report before the archiver deleted the hot rows (C1)
+    sid = _session(v)
+    _watermark(v, T0 + 20 * SEC)  # complete by the watermark rule
+    _sql(
+        "INSERT INTO archive_object (vehicle, hour, sha256, rows, verified_at, hot_deleted_at,"
+        " t_min, t_max) VALUES (%s, %s, 'x', 1, now(), now(), %s, %s)",
+        v, T0.replace(minute=0, second=0), T0, T0,
+    )  # fmt: skip
+    for path in ("report", "report.csv"):
+        r = await c.get(f"/api/sessions/{sid}/{path}")
+        assert (r.status_code, r.json()["error"]) == (410, "HOT_DATA_GONE")
+    with psycopg.connect(app_dsn("gs")) as check:
+        assert check.execute(
+            "SELECT count(*) FROM session_report WHERE session_id = %s", (sid,)
+        ).fetchone() == (0,)
+
+
+async def test_refreeze_ignores_hot_deleted_hours_outside_the_window(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    hour = T0.replace(minute=0, second=0) - timedelta(hours=3)
+    _sql(
+        "INSERT INTO archive_object (vehicle, hour, sha256, rows, verified_at, hot_deleted_at,"
+        " t_min, t_max) VALUES (%s, %s, 'x', 1, now(), now(), %s, %s)",
+        v, hour, hour, hour,
+    )  # fmt: skip
+    assert (await c.post(f"/api/sessions/{sid}/report/refreeze")).status_code == 200
+
+
+async def test_refreeze_needs_console_header_and_session(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    url = f"/api/sessions/{sid}/report/refreeze"
+    no_header = await c.post(url, headers={"X-GS-Client": ""})
+    assert (no_header.status_code, no_header.json()["error"]) == (403, "CLIENT_HEADER_REQUIRED")
+    app = c._transport.app  # type: ignore[attr-defined]
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://api", headers=H
+    ) as anon:
+        assert (await anon.post(url)).status_code == 401
+
+
+async def test_refreeze_database_down_is_503(
+    rep: tuple[httpx.AsyncClient, str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    c, v = rep
+    sid = await _frozen_incomplete(c, v, monkeypatch)
+    app = c._transport.app  # type: ignore[attr-defined]
+    bad = AsyncConnectionPool("postgresql://x@127.0.0.1:1/x", min_size=1, open=False)
+    await bad.open(wait=False)
+    app.state.pool = bad
+    try:
+        r = await c.post(f"/api/sessions/{sid}/report/refreeze")
+    finally:
+        await bad.close()
+    assert (r.status_code, r.json()["error"]) == (503, "UNAVAILABLE")
+
+
+async def test_report_alarm_quality(rep: tuple[httpx.AsyncClient, str]) -> None:
+    c, v = rep
+    sid = _session(v, seconds=30)
+    await ensure_set()
+    # Leak stays raised; temperature raises twice, with a short on/off interval.
+    for param, events in (
+        ("cabin_pressure_kpa", [("RAISE", 1, 1)]),
+        (
+            "cabin_temp_c",
+            [
+                ("RAISE", 2, 2),
+                ("RTN", 4, 4),
+                ("RAISE", 6, 6),
+                ("ACK", None, 7),
+                ("RAISE", None, 8),
+                ("RAISE", 29, 30),
+                ("RAISE", -2, -1),
+            ],
+        ),
+    ):
+        alarm_id = uuid4()
+        _sql(
+            "INSERT INTO alarms (alarm_id, vehicle, param, state, severity, trigger_check,"
+            " limits_sha256, set_sha256, opened_at) VALUES (%s, %s, %s, 'UNACK', 'RED',"
+            " 'limit', %s, %s, %s)",
+            alarm_id, v, param, SET.limits_sha256, SET.set_sha256, T0,
+        )  # fmt: skip
+        for kind, trigger, processed in events:
+            _sql(
+                "INSERT INTO alarm_events (key, alarm_id, vehicle, param, kind,"
+                " trigger_t_onboard, processed_at, limits_sha256, set_sha256)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                str(uuid4()), alarm_id, v, param, kind,
+                None if trigger is None else T0 + trigger * SEC, T0 + processed * SEC,
+                SET.limits_sha256, SET.set_sha256,
+            )  # fmt: skip
+    response = await c.get(f"/api/sessions/{sid}/report")
+    assert response.status_code == 200, response.text
+    result = response.json()
+    assert [a["transition"]["kind"] for a in result["alarms"]] == [
+        "RAISE", "RAISE", "RTN", "RAISE", "ACK", "RAISE",
+    ]  # fmt: skip
+    assert result["alarm_quality"] == {
+        "raises": 3,
+        "false_raises": None,
+        "psi": {f"{v}/cabin_pressure_kpa": 0.0, f"{v}/cabin_temp_c": 0.25},
+        "chattering": [f"{v}/cabin_temp_c"],
+        "short_t1": 1,
+        "short_t0": 1,
+        "peak_10min": {"all": 3, v: 3},
+        "time_in_flood_s": 0.0,
+    }
+    downloaded = await c.get(f"/api/sessions/{sid}/report.csv")
+    assert downloaded.status_code == 200
+    rows = list(csv.DictReader(io.StringIO(downloaded.text)))
+    metrics = {x["key"]: x["value"] for x in rows if x["section"] == "alarm_quality"}
+    assert metrics == {
+        "raises": "3",
+        "false_raises": "",
+        "short_t1": "1",
+        "short_t0": "1",
+        "time_in_flood_s": "0.0",
+        "peak_10min:all": "3",
+        f"peak_10min:{v}": "3",
+        f"psi:{v}/cabin_pressure_kpa": "0.0",
+        f"psi:{v}/cabin_temp_c": "0.25",
+    }
+
+
+async def test_old_stored_report_still_served(rep: tuple[httpx.AsyncClient, str]) -> None:
+    c, v = rep
+    sid = _session(v)
+    response = await c.get(f"/api/sessions/{sid}/report")
+    assert response.status_code == 200
+    old = response.json()
+    old.pop("alarm_quality", None)
+    _sql(
+        "UPDATE session_report SET report = %s, csv = %s WHERE session_id = %s",
+        Jsonb(old),
+        "old stored csv\n",
+        sid,
+    )
+    served = await c.get(f"/api/sessions/{sid}/report")
+    assert served.status_code == 200, served.text
+    assert served.json() == {**old, "alarm_quality": None}
+    assert (await c.get(f"/api/sessions/{sid}/report.csv")).text == "old stored csv\n"

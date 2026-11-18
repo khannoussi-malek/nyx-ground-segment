@@ -24,6 +24,7 @@ SELECT cmd_id, vehicle, name, args, hazardous, reason, issued_by, state, failure
        late_ack_accepted
 FROM commands
 WHERE (%(vehicle)s::text IS NULL OR vehicle = %(vehicle)s)
+  AND (%(vehicles)s::text[] IS NULL OR vehicle = ANY(%(vehicles)s))
   AND (%(since)s::timestamptz IS NULL OR queued_at >= %(since)s)
   AND (%(until)s::timestamptz IS NULL OR queued_at < %(until)s)
   AND (%(ids)s::uuid[] IS NULL OR cmd_id = ANY(%(ids)s))
@@ -66,6 +67,7 @@ _EVENTS = """
 SELECT key, vehicle, kind, t_onboard, details
 FROM events
 WHERE (%(vehicle)s::text IS NULL OR vehicle = %(vehicle)s OR vehicle IS NULL)
+  AND (%(vehicles)s::text[] IS NULL OR vehicle = ANY(%(vehicles)s) OR vehicle IS NULL)
   AND (%(kinds)s::text[] IS NULL OR kind = ANY(%(kinds)s))
   AND (%(since)s::timestamptz IS NULL OR coalesce(t_onboard, created_at) >= %(since)s)
   AND (%(until)s::timestamptz IS NULL OR coalesce(t_onboard, created_at) < %(until)s)
@@ -91,14 +93,17 @@ async def command_views(
     conn: psycopg.AsyncConnection,
     *,
     vehicle: str | None = None,
+    vehicles: Sequence[str] | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
     cmd_ids: Sequence[UUID] | None = None,
     limit: int | None = 50,
 ) -> list[CommandView]:
-    """Newest queued_at first; `until` exclusive; limit None = all."""
+    """Newest queued_at first; `until` exclusive; limit None = all;
+    `vehicles` restricts to those."""
     ids = None if cmd_ids is None else list(cmd_ids)
-    p = {"vehicle": vehicle, "since": since, "until": until, "ids": ids, "limit": limit}
+    p = {"vehicle": vehicle, "vehicles": None if vehicles is None else list(vehicles),
+         "since": since, "until": until, "ids": ids, "limit": limit}  # fmt: skip
     return [
         CommandView(
             **r,
@@ -150,13 +155,15 @@ async def event_views(
     conn: psycopg.AsyncConnection,
     *,
     vehicle: str | None = None,
+    vehicles: Sequence[str] | None = None,
     kinds: Sequence[str] | None = None,
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int | None = 50,
 ) -> list[EventView]:
     """Newest first by coalesce(t_onboard, created_at); `until` exclusive; a vehicle filter
-    keeps the ground events (vehicle NULL: LIMITS_REJECTED, INTERFACE_MISMATCH)."""
-    p = {"vehicle": vehicle, "kinds": None if kinds is None else list(kinds), "since": since,
+    keeps the ground events (vehicle NULL: LIMITS_REJECTED, INTERFACE_MISMATCH), as `vehicles`."""
+    p = {"vehicle": vehicle, "vehicles": None if vehicles is None else list(vehicles),
+         "kinds": None if kinds is None else list(kinds), "since": since,
          "until": until, "limit": limit}  # fmt: skip
     return [EventView(**r) for r in await _rows(conn, _EVENTS, p)]

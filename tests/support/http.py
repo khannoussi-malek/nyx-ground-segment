@@ -11,6 +11,7 @@ import httpx
 from fastapi import FastAPI
 
 from gs.api.settings import Settings
+from gs.archiver.s3 import S3Settings
 from tests.support.env import REPO, dotenv
 from tests.support.pg import app_dsn
 
@@ -34,6 +35,9 @@ def api_settings(users_file: Path, **over: str) -> Settings:
         mission_db=REPO / "mission",
         vehicles=("NYX-TA1",),
         ui_dist=ui_dist,
+        s3=S3Settings(
+            f"127.0.0.1:{env['MINIO_HOST_PORT']}", "replay", env["S3_REPLAY_SECRET"], "archive"
+        ),
     )
 
 

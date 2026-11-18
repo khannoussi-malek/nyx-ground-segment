@@ -208,3 +208,106 @@ def test_ui_event_round_trips_every_member(
     assert type(got) is type(member)
     assert got.kind == kind
     assert got == member
+
+
+def _replay_members() -> list[object]:
+    from gs.common.interfaces.replay import (
+        ReplayAlarm,
+        ReplayClock,
+        ReplayEnd,
+        ReplayLink,
+        ReplayStart,
+        ReplayTm,
+    )
+
+    tm = ReplayTm(
+        vehicle="NYX-TA1", seq=1, t_onboard=T0, mode="TEST", last_cmd_id=None,
+        values={"p": 1.0}, severity={"p": "RED"},
+    )  # fmt: skip
+    return [
+        ReplayStart(
+            replay_id=uuid4(),
+            vehicle="NYX-TA1",
+            t_from=T0,
+            t_to=T0,
+            speed=10,
+            alarms=[_alarm_view()],
+            los_open=False,
+        ),  # fmt: skip
+        tm,
+        ReplayAlarm(alarm=_alarm_view()),
+        ReplayLink(event=EventView(key="k", vehicle=None, kind="LOS", t_onboard=None, details={})),
+        ReplayClock(t=T0),
+        ReplayEnd(reason="archive_corrupt", detail="archive object failed hash check"),
+    ]
+
+
+def test_replay_models_flag_and_discriminate() -> None:  # T4-g
+    from gs.common.interfaces.replay import ReplayEnd, ReplayEvent, ReplayTm
+
+    kinds = []
+    for m in _replay_members():
+        assert isinstance(m, StrictModel) and m.model_config["extra"] == "forbid"
+        dumped = json.loads(m.model_dump_json())
+        assert dumped["replay"] is True
+        got = ReplayEvent.model_validate_json(m.model_dump_json()).root
+        assert type(got) is type(m) and got == m
+        kinds.append(dumped["kind"])
+    assert kinds == ["replay_start", "tm", "alarm", "link", "clock", "replay_end"]
+    with pytest.raises(ValidationError):  # a live-only kind is no replay message
+        ReplayEvent.model_validate_json('{"kind":"hb","server_ms":1}')
+    with pytest.raises(ValidationError):
+        ReplayEvent.model_validate_json(
+            '{"kind":"clock","t":"2026-11-15T10:00:00Z","replay":false}'
+        )
+    assert set(Tm.model_fields) < set(ReplayTm.model_fields)  # every live tm field kept
+    assert issubclass(ReplayTm, Tm)
+    assert ReplayEnd(reason="done").detail is None
+    with pytest.raises(ValidationError):
+        ReplayEnd.model_validate_json('{"kind":"replay_end","reason":"bored"}')
+
+
+def test_replay_models_are_interface_components() -> None:
+    from gs.common.interfaces.replay import ReplayEvent
+
+    names = {m.__name__ for m in INTERFACE_MODELS}
+    assert {"ReplayStart", "ReplayTm", "ReplayAlarm", "ReplayLink", "ReplayClock", "ReplayEnd",
+            "ReplayEvent"} <= names  # fmt: skip
+    assert ReplayEvent in INTERFACE_MODELS
+
+
+def test_old_report_without_alarm_quality_loads() -> None:  # reports frozen in Gate 3b
+    from gs.api.bodies import AlarmQuality, SessionReport
+
+    old = {
+        "session": {
+            "id": 1, "vehicle": "NYX-TA1", "name": "s", "conductor": "fc1",
+            "started_at": "2026-11-15T10:00:00.000000Z", "ended_at": "2026-11-15T11:00:00.000000Z",
+            "ended_by": "fc1",
+        },
+        "complete": True, "note": None, "frozen_at": "2026-11-15T11:01:00.000000Z",
+        "duration_s": 3600.0, "frames": 36000, "expected": 36000, "parameters": {},
+        "link_events": [], "alarms": [], "commands": [],
+    }  # fmt: skip
+    r = SessionReport.model_validate_json(json.dumps(old))
+    assert r.alarm_quality is None
+    q = AlarmQuality(
+        raises=2, false_raises=None, psi={"NYX-TA1/p": 0.1}, chattering=["NYX-TA1/p"],
+        short_t1=1, short_t0=0, peak_10min={"all": 2}, time_in_flood_s=0.0,
+    )  # fmt: skip
+    new = SessionReport.model_validate_json(json.dumps({**old, "alarm_quality": q.model_dump()}))
+    assert new.alarm_quality == q
+    with pytest.raises(ValidationError):
+        AlarmQuality.model_validate({**q.model_dump(), "x": 1})
+
+
+def test_replay_request_reads_from_and_to() -> None:
+    from gs.api.bodies import ReplayRequest
+
+    body = {"vehicle": "NYX-TA1", "from": "2026-11-15T10:00:00Z", "to": "2026-11-15T11:00:00Z",
+            "speed": 1}  # fmt: skip
+    r = ReplayRequest.model_validate(body)  # python mode, as FastAPI validates a body
+    assert (r.t_from, r.t_to) == (T0, datetime(2026, 11, 15, 11, tzinfo=UTC))
+    for bad in ({**body, "speed": 5}, {**body, "from": "2026-11-15T10:00:00"}, {**body, "x": 1}):
+        with pytest.raises(ValidationError):
+            ReplayRequest.model_validate(bad)

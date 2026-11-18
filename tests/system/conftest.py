@@ -5,7 +5,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from tests.support.compose import api_url, recreate
+from tests.support.compose import api_url, compose_ps, recreate, stack_problems
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -14,8 +14,11 @@ def stack_is_up() -> None:
         ok = urllib.request.urlopen(f"{api_url()}/healthz", timeout=3).status == 200
     except OSError:
         ok = False
-    if not ok:
-        pytest.fail("stack is not up: run make up", pytrace=False)
+    problems = stack_problems(ok, compose_ps())
+    if problems:  # e.g. a coverage run stopped the simulator: fail here, not with ECONNREFUSED
+        pytest.fail(
+            f"stack not fully up: run make up (not up: {', '.join(problems)})", pytrace=False
+        )
 
 
 @pytest.fixture(scope="module")

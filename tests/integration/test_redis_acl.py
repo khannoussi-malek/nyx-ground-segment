@@ -75,3 +75,26 @@ def test_api_command_set_permitted() -> None:  # every command the API sends (D-
     log: Any = admin.acl_log()
     mine = [e for e in log if e["username"] == "api" and e["timestamp-last-updated"] >= since_ms]
     assert mine == []
+
+
+def test_sim_may_read_group_lag_of_tm_streams_only() -> None:  # backfill pacing (G4-9)
+    v = vid()
+    sim, ing = client("sim"), client("ingest")
+    sim.xadd(f"tm:{v}", {"data": "{}"})
+    ing.xgroup_create(f"tm:{v}", "ingest", id="0")
+    groups: Any = sim.xinfo_groups(f"tm:{v}")
+    assert groups[0]["name"] == "ingest" and groups[0]["lag"] == 1
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        sim.xinfo_groups("ui:events")
+    with pytest.raises(redis.exceptions.NoPermissionError):
+        sim.xread({f"tm:{v}": "0"}, count=1)  # the lag permission does not allow reading frames
+    client("admin").delete(f"tm:{v}")
+
+
+def test_health_user_redis_py_ping_is_permitted() -> None:  # the archiver's probe (CI PR #4)
+    admin = client("admin")
+    since_ms = int(admin.time()[0]) * 1000
+    assert client("health").ping()  # redis-py sends CLIENT SETINFO on connect
+    log: Any = admin.acl_log()
+    mine = [e for e in log if e["username"] == "health" and e["timestamp-last-updated"] >= since_ms]
+    assert mine == []

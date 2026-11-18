@@ -99,8 +99,8 @@ export async function apiLogin(user: string): Promise<string> {
 /** The Commands panel: choose vehicle, command and its args, then Send. */
 export async function sendCommand(page: Page, vehicle: string, name: string, args: Record<string, string> = {}, reason = ""): Promise<void> {
   const panel = page.getByRole("region", { name: "Commands" });
-  await panel.getByLabel("Vehicle").selectOption(vehicle);
-  await panel.getByLabel("Command").selectOption(name);
+  await panel.getByLabel(/^Vehicle/).selectOption(vehicle);
+  await panel.getByLabel(/^Command/).selectOption(name);
   for (const [k, v] of Object.entries(args)) {
     // an arg's <label> wraps its control (and a unit): match the label by its leading name
     const field = panel.locator("label").filter({ hasText: new RegExp(`^${k}`) }).locator("select, input");
@@ -139,7 +139,8 @@ export async function ackLeftovers(page: Page, rows: ReturnType<Page["locator"]>
     const acked = page.locator(`tr[data-alarm-id="${id}"]`).getByRole("button", { name: /^Acknowledge / });
     await expect(acked).toHaveCount(0, { timeout: 5_000 }).catch(() => {});
   }
-  await expect(rows).toHaveCount(0, { timeout: 5_000 });
+  // ACKED and still violating is allowed (it neither beeps nor counts as unacknowledged)
+  await expect(rows.filter({ has: page.getByRole("button", { name: /^Acknowledge / }) })).toHaveCount(0, { timeout: 5_000 });
 }
 
 /** `docker compose ...` without blocking the test's event loop (the page keeps being observed). */

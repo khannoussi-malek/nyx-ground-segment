@@ -6,8 +6,10 @@ dependencies = [
     "fastapi==0.162.6",
     "httpx==0.28.1",
     "itsdangerous==2.2.0",
+    "minio==7.2.20",
     "psycopg-pool==3.3.3",
     "psycopg[binary]==3.3.9",
+    "pyarrow==26.0.0",
     "pydantic==2.14.3",
     "pyyaml==6.0.3",
     "redis==8.1.0",
@@ -16,9 +18,10 @@ dependencies = [
 
 [project.scripts]
 gs-migrate = "gs.common.migrate:main"
-gs-sim = "gs.simulator.main:main"
+gs-sim = "gs.simulator.cli:main"
 gs-ingest = "gs.ingest.main:main"
 gs-api = "gs.api.server:main"
+gs-archiver = "gs.archiver.main:main"
 
 [build-system]
 requires = ["uv_build>=0.12.18,<0.13"]
@@ -43,9 +46,19 @@ known-third-party = ["redis"]
 strict = true
 plugins = ["pydantic.mypy"]
 
+[[tool.mypy.overrides]]
+module = ["pyarrow", "pyarrow.*"]  # no stubs, no py.typed
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration", "tests/meta"]
 asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+addopts = "--import-mode=importlib -m 'not spike and not after_coverage'"  # on demand: pytest -m spike / -m after_coverage
+markers = [
+    "spike: exploratory tool trial, not part of the gate",
+    "after_coverage: needs coverage.json from the coverage run; gate on from Task 24 (D-ENG-21)",
+]
 pythonpath = ["."]
 
 [dependency-groups]
@@ -62,10 +75,12 @@ dev = [
 ]
 
 [tool.uv]
-# P-pf41 (2026-11-15): packages newly added to uv.lock must be at least 14 days old. These
-# transitive dependencies of schemathesis were younger; hold each to its newest older release.
+# P-pf41 (2026-11-15): packages newly added to uv.lock must be at least 14 days old, transitive
+# ones too. Each younger release is held to its newest older release.
 constraint-dependencies = [
     "graphql-core<3.3.2",   # 3.3.2 is from 2026-11-06; 3.3.1 is from 2026-10-25
     "hypothesis<6.170.15",  # 6.170.15 is from 2026-11-07; 6.170.14 is from 2026-10-30
     "markdown-it-py<4.3.0", # 4.3.0 is from 2026-11-11; 4.2.0 is from 2026-05-07
+    "argon2-cffi-bindings==26.1.0",  # 26.2.0 is from 2026-11-13; 26.1.0 from 2026-08-20
+    "pycryptodome==4.2.0",           # 4.4.0 is from 2026-11-07; 4.2.0 from 2026-10-24
 ]

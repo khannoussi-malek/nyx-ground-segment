@@ -11,6 +11,7 @@ import redis.asyncio
 import redis.exceptions
 
 from gs.ingest import liveness
+from gs.ingest.errors import OperationalDbError
 from gs.ingest.owner import LOCK_SQL
 from gs.ingest.worker import Timing
 from tests.support.env import until, vid
@@ -281,5 +282,16 @@ async def test_steal_never_terminates_a_session_that_does_not_hold_the_lock(
             assert await liveness.steal_tick(ctx, c) == []  # same pid twice, but not the holder
             await bystander.execute("SELECT 1")  # still alive
             await ghost.execute("SELECT 1")
+    finally:
+        await ctx.redis.aclose()
+
+
+async def test_run_ticks_db_error_is_an_operational_db_error() -> None:  # the handler always runs
+    ctx = make_ctx("w1")
+    try:
+        with pytest.raises(OperationalDbError, match="^tick: "):
+            await liveness.run_ticks(
+                ctx, "postgresql://nobody@127.0.0.1:1/none", asyncio.Event(), watchdog=False
+            )
     finally:
         await ctx.redis.aclose()

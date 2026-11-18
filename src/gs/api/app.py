@@ -20,13 +20,14 @@ from redis.maint_notifications import MaintNotificationsConfig
 from starlette.exceptions import HTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
-from gs.api import alarms, auth, commands, deps, events, sessions, telemetry
+from gs.api import alarms, auth, commands, deps, events, replays, sessions, telemetry
 from gs.api.auth import SESSION_TTL_S, load_users
 from gs.api.bodies import ErrorBody, Health
 from gs.api.deps import ApiError, User, errors
 from gs.api.hub import Hub, format_sse
 from gs.api.openapi import build_openapi
 from gs.api.settings import Settings
+from gs.archiver.s3 import client as s3_client
 from gs.common.audit import audit
 from gs.common.interfaces import build_frame_model
 from gs.common.interfaces.missiondb import MissionDbView, Vehicles
@@ -162,7 +163,9 @@ ROUTER.add_api_route(
     response_class=StreamingResponse,
     responses={200: {"content": {"text/event-stream": {}}}, **errors(401, 503)},
 )
-for _r in (auth.router, commands.router, alarms.router, sessions.router, telemetry.router):
+for _r in (
+    auth.router, commands.router, alarms.router, sessions.router, telemetry.router, replays.router,
+):  # fmt: skip
     ROUTER.include_router(_r)
 
 
@@ -179,6 +182,8 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.users = load_users(settings.users_file)
         mdb = await _start_set(settings)
         app.state.vehicles = settings.vehicles
+        app.state.s3, app.state.s3_bucket = s3_client(settings.s3), settings.s3.bucket
+        app.state.database_url, app.state.replays = settings.database_url, {}
         # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
         # no client-side retry: connection errors reach our own handling (R28). Maintenance
         # notifications off: while on (8.1's default) the pool skips its checkout check, so a
@@ -213,6 +218,8 @@ def create_app(settings: Settings) -> FastAPI:
             yield
         finally:
             app.state.shutdown.set()
+            for rep in list(app.state.replays.values()):  # end the replay streams too
+                rep.stop.set()
             try:
                 await asyncio.gather(*tasks)
             finally:  # a task error at shutdown must not leak the pool or the client

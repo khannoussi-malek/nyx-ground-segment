@@ -443,7 +443,7 @@ async def test_tracker_error_never_touches_frames(
             # which only this loop can finish (a sync call here deadlocked the full run for 2 h)
             await asyncio.to_thread(drop_trigger, fn)
             await until(lambda: row_of(v, cmd_id)["state"] == "RECEIVED", 5)
-            assert pending(v) == 0
+            await until(lambda: pending(v) == 0, 5)  # commit, then ack: the XACK follows the state
     finally:
         with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
             c.execute(f"DROP TRIGGER IF EXISTS {fn} ON commands")

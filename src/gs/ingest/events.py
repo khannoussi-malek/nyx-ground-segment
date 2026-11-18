@@ -28,6 +28,7 @@ EventKind = Literal[
     "ENGINE_STATE_RESET",
     "LATE_VERIFICATION",
     "INTERFACE_MISMATCH",
+    "ARCHIVE_CORRUPT",
 ]
 
 

@@ -70,3 +70,39 @@ def test_rest_surface_is_final() -> None:
     ]  # fmt: skip
     assert "HTTPValidationError" not in str(paths)
     assert not [n for n in doc["components"]["schemas"] if n.endswith(("-Input", "-Output"))]
+
+
+GATE4 = {  # path, method -> (success status, declared error statuses); Task 11 (T4-f, T4-m)
+    ("/api/replays", "post"): ("201", {"400", "401", "403", "404", "409", "422", "503"}),
+    ("/api/replays/{replay_id}", "delete"): ("204", {"401", "403", "404", "422"}),
+    ("/api/replays/{replay_id}/events", "get"): ("200", {"401", "404", "422"}),
+    ("/api/sessions/{session_id}/report/refreeze", "post"): (
+        "200", {"401", "403", "404", "409", "410", "422", "503"},
+    ),
+}  # fmt: skip
+
+
+def test_gate4_routes_declared() -> None:
+    doc = build_openapi(ROUTER.routes)
+    paths, schemas = doc["paths"], doc["components"]["schemas"]
+    for (path, method), (ok, errs) in GATE4.items():
+        responses = paths[path][method]["responses"]
+        assert set(responses) == {ok, *errs}, path
+        plain = errs - {"409"} if "refreeze" in path else errs  # refreeze 409: ReportConflict
+        for code in plain:
+            assert _schema(paths[path][method], code) == ERR, (path, code)
+    refreeze = paths["/api/sessions/{session_id}/report/refreeze"]["post"]
+    assert _schema(refreeze, "409").endswith("/ReportConflict")
+    assert _schema(refreeze, "200").endswith("/SessionReport")
+    create = paths["/api/replays"]["post"]
+    assert _schema(create, "201").endswith("/ReplayCreated")
+    body = create["requestBody"]["content"]["application/json"]["schema"]["$ref"]
+    assert body.endswith("/ReplayRequest")
+    assert set(schemas["ReplayRequest"]["required"]) == {"vehicle", "from", "to", "speed"}
+    stream = paths["/api/replays/{replay_id}/events"]["get"]["responses"]["200"]["content"]
+    assert list(stream) == ["text/event-stream"]
+    assert "content" not in paths["/api/replays/{replay_id}"]["delete"]["responses"]["204"]
+    for name in ("ReplayStart", "ReplayTm", "ReplayAlarm", "ReplayLink", "ReplayClock",
+                 "ReplayEnd", "ReplayEvent", "AlarmQuality"):  # fmt: skip
+        assert name in schemas, name
+    assert "alarm_quality" not in schemas["SessionReport"]["required"]

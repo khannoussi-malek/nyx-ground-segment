@@ -1,6 +1,8 @@
 import asyncio
 import io
 import logging
+import os
+import time
 import tarfile
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
@@ -205,3 +207,29 @@ async def test_failed_sidecar_leaves_no_orphan_tarball(monkeypatch: pytest.Monke
     assert [o.object_name for o in s3_client("archiver").list_objects("archive", prefix=key)] == [
         key
     ]  # the tarball is there, the sidecar is not: not a snapshot
+
+
+async def test_snapshot_compression_off_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    blob = os.urandom(20_000_000)  # made before the probe runs: only the snapshot is measured
+
+    async def big(conn: Any, table: str) -> bytes:
+        return blob if table == "audit_log" else b"x\n"
+
+    monkeypatch.setattr(snap_mod, "_copy_table", big)
+    worst = 0.0
+    done = False
+
+    async def probe() -> None:
+        nonlocal worst
+        while not done:
+            t0 = time.perf_counter()
+            await asyncio.sleep(0)
+            worst = max(worst, time.perf_counter() - t0)
+
+    with throwaway_db() as db:
+        async with app_conn(db) as c:
+            p = asyncio.create_task(probe())
+            await take_snapshot(archiver_ctx(), c, NOW + timedelta(minutes=5))
+            done = True
+            await p
+    assert worst < 0.05, f"the event loop stalled {worst * 1000:.0f} ms"

@@ -49,20 +49,25 @@ async def _copy_table(conn: psycopg.AsyncConnection[Any], table: str) -> bytes:
     return out.getvalue()
 
 
-async def _tarball(conn: psycopg.AsyncConnection[Any]) -> bytes:
-    """One REPEATABLE READ read-only transaction: every table is read from the same view."""
+def _compress(tables: dict[str, bytes]) -> bytes:
     buf = io.BytesIO()
+    with tarfile.open(fileobj=buf, mode="w:gz") as tar:
+        for t, data in tables.items():
+            info = tarfile.TarInfo(f"{t}.csv")
+            info.size = len(data)
+            tar.addfile(info, io.BytesIO(data))
+    return buf.getvalue()
+
+
+async def _tarball(conn: psycopg.AsyncConnection[Any]) -> bytes:
+    """One REPEATABLE READ read-only transaction: every table is read from the same view.
+    The gzip runs in a thread, after the transaction: it must not stall the health server."""
     await conn.execute("BEGIN ISOLATION LEVEL REPEATABLE READ, READ ONLY")
     try:
-        with tarfile.open(fileobj=buf, mode="w:gz") as tar:
-            for t in TABLES:
-                data = await _copy_table(conn, t)
-                info = tarfile.TarInfo(f"{t}.csv")
-                info.size = len(data)
-                tar.addfile(info, io.BytesIO(data))
+        tables = {t: await _copy_table(conn, t) for t in TABLES}
     finally:
         await conn.execute("ROLLBACK")
-    return buf.getvalue()
+    return await asyncio.to_thread(_compress, tables)
 
 
 async def _exists(ctx: ArchiverCtx, key: str) -> bool:

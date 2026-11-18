@@ -69,4 +69,4 @@ make up
 
 The first command creates the schema on the empty volume. The second lists the snapshots (or use the MinIO console); pick the newest key that has its `.sha256` sidecar. The third restores it (`--db` names another database, default `gs`). Then `make up` starts the rest of the stack. History since that snapshot is lost.
 
-`make reset` refuses while the archive holds archived hours, because it also deletes the MinIO archive; `FORCE=1 make reset` confirms.
+`make reset` also deletes the MinIO archive, so it first counts the archived hours through the db container (the stack must be up). It refuses when the count is above 0 and when it cannot count; only `FORCE=1 make reset` overrides.

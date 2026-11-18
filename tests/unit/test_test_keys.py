@@ -30,7 +30,7 @@ class FakeRedis:
 
 
 def test_purge_matches_only_test_vehicles() -> None:
-    assert set(keys.test_keys(FakeRedis())) == WANTED  # type: ignore[arg-type]
+    assert set(keys.vehicle_keys(FakeRedis())) == WANTED  # type: ignore[arg-type]
 
 
 def test_purge_deletes_in_batches_of_500() -> None:

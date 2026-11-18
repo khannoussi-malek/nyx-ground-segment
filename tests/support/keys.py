@@ -12,7 +12,7 @@ BATCH = 500
 log = logging.getLogger(__name__)
 
 
-def test_keys(r: redis.Redis) -> list[str]:
+def vehicle_keys(r: redis.Redis) -> list[str]:
     found: list[str] = []
     for prefix in PREFIXES:
         for key in r.scan_iter(match=f"{prefix}NYX-T*", count=1000):
@@ -22,7 +22,7 @@ def test_keys(r: redis.Redis) -> list[str]:
 
 
 def purge_test_keys(r: redis.Redis) -> int:
-    keys = test_keys(r)
+    keys = vehicle_keys(r)
     for i in range(0, len(keys), BATCH):
         r.delete(*keys[i : i + BATCH])
     return len(keys)

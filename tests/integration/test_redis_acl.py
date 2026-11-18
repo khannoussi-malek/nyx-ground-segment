@@ -89,3 +89,12 @@ def test_sim_may_read_group_lag_of_tm_streams_only() -> None:  # backfill pacing
     with pytest.raises(redis.exceptions.NoPermissionError):
         sim.xread({f"tm:{v}": "0"}, count=1)  # the lag permission does not allow reading frames
     client("admin").delete(f"tm:{v}")
+
+
+def test_health_user_redis_py_ping_is_permitted() -> None:  # the archiver's probe (CI PR #4)
+    admin = client("admin")
+    since_ms = int(admin.time()[0]) * 1000
+    assert client("health").ping()  # redis-py sends CLIENT SETINFO on connect
+    log: Any = admin.acl_log()
+    mine = [e for e in log if e["username"] == "health" and e["timestamp-last-updated"] >= since_ms]
+    assert mine == []

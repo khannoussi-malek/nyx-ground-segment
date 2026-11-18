@@ -163,7 +163,9 @@ Each item: failing test first, then the fix, one commit per item (`fix:` or `tes
 - [ ] **6d** G4-28 follow-ups in `src/gs/alarms/checks/roc.py`: the span test gets the same `(1 - _EPS)` tolerance as the count (`span < (need - 1) * s.period_s * (1 - _EPS)`); strengthen the burst test's second assertion to "the first judged reading after the burst is NOMINAL and comes within 1 s of normal cadence".
 - [ ] **6e** Flaky `tests/integration/test_alarm_ack_api.py::test_reraised_after_request_superseded` (Redis socket timeout under load): use superpowers:systematic-debugging; fix the root cause (not a longer timeout unless the cause is the client's own socket timeout being below one BLOCK_MS read) and prove it by 20 consecutive passes through syslock while `tests/integration/test_hub.py` runs alongside.
 - [ ] **6f** Replay concurrency (Task 13 M4): at most 2 open replays per user; a third `POST /api/replays` gets 429 `TOO_MANY_REPLAYS` with message `at most 2 replays at once; stop one first`; integration test; operator guide line; the limit goes into the replay decision row in `docs/design.md` (new decision, spec silent: one console user rarely needs more, each replay holds a Postgres connection for up to hours).
-- [ ] **Verification:** unit + meta, the touched integration modules through syslock, vitest/tsc/build for 6a.
+- [ ] **6g** FRAMES REJECTED follow-ups (Task 4 review): rejected entries that come after the batch's last stored frame (entry order) still count after the clear, so a batch "good frames, then rejected ones" names them on the following LOS (integration test with one mixed batch); a vitest that fails if `bannerText` drops its `kind === "LOS"` check (newest link an AOS carrying a stale `rejected` → no FRAMES REJECTED text).
+- [ ] **6h** `tests/system/test_json_logs.py::test_every_service_logs_json` reads only lines written since the test started (it failed after test_ownership's deliberate watchdog dump); a test-order run proves it.
+- [ ] **Verification:** unit + meta, the touched integration modules through syslock, vitest/tsc/build for 6a and 6g.
 
 ---
 

@@ -1,12 +1,15 @@
 """Daily snapshot of every non-telemetry table into the archive bucket (D-ARC-12, R3-01)."""
 
+import asyncio
 import hashlib
 import io
+import logging
 import tarfile
 from datetime import datetime
 from typing import Any
 
 import psycopg
+from minio.error import S3Error
 
 from gs.archiver import s3
 from gs.archiver.job import ArchiverCtx
@@ -27,6 +30,7 @@ ORDER_BY = {
     "audit_log": "id",
 }
 TABLES = tuple(ORDER_BY)
+log = logging.getLogger(__name__)
 
 
 def snapshot_key(t: datetime) -> str:
@@ -61,10 +65,23 @@ async def _tarball(conn: psycopg.AsyncConnection[Any]) -> bytes:
     return buf.getvalue()
 
 
+async def _exists(ctx: ArchiverCtx, key: str) -> bool:
+    try:
+        await asyncio.to_thread(ctx.s3.stat_object, ctx.bucket, key)
+    except S3Error as e:
+        if e.code in ("NoSuchKey", "NoSuchObject"):
+            return False
+        raise
+    return True
+
+
 async def take_snapshot(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], now: datetime) -> str:
     """PUT the tarball, read it back and compare, and only then PUT `<key>.sha256` (the sidecar
     is the commit mark: no sidecar, no snapshot). Returns the key."""
     key = snapshot_key(now)
+    if await _exists(ctx, key):  # D-ARC-09: no overwrite
+        log.error("state snapshot %s already exists: refusing to overwrite it", key)
+        raise FileExistsError(key)
     data = await _tarball(conn)
     sent = await s3.put(ctx.s3, ctx.bucket, key, data)
     if hashlib.sha256(await s3.get(ctx.s3, ctx.bucket, key)).hexdigest() != sent:

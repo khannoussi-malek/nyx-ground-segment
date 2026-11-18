@@ -168,3 +168,17 @@ async def test_snapshot_failure_never_blocks_the_pass(
             res = await run_pass(archiver_ctx(), c, snapshot=True)
             assert res.deleted == 1 and stored_in(v, h, db) == 0
             assert [r["hour"] for r in archive_rows(v, db)] == [h]
+
+
+async def test_snapshot_refuses_existing_key(caplog: pytest.LogCaptureFixture) -> None:
+    now = NOW + timedelta(minutes=3)
+    with throwaway_db() as db:
+        async with app_conn(db) as c:
+            key = await take_snapshot(archiver_ctx(), c, now)
+            first = members(key)
+            seed(db)  # the second snapshot would differ
+            with caplog.at_level(logging.ERROR):
+                with pytest.raises(FileExistsError):
+                    await take_snapshot(archiver_ctx(), c, now)
+    assert members(key) == first
+    assert any(r.levelno == logging.ERROR and key in r.message for r in caplog.records)

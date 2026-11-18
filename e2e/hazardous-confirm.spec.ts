@@ -1,7 +1,20 @@
 import { expect, test } from "@playwright/test";
-import { API, apiLogin, commandItem, login, sendCommand } from "./helpers";
+import { API, CLIENT, apiLogin, commandItem, login, sendCommand } from "./helpers";
 
 const REASON = "venting for the confirm spec";
+
+// the vents leave NYX-TA2 about 6 kPa low (YELLOW) for every later spec, and the simulator never
+// repressurises on its own: isolate_valve brings it back at 0.5 kPa/s (CI PR #4, replay.spec)
+test.afterAll(async () => {
+  const cookie = await apiLogin("fc1");
+  const send = () =>
+    fetch(`${API}/api/commands`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", cookie, ...CLIENT },
+      body: JSON.stringify({ vehicle: "NYX-TA2", name: "isolate_valve", args: { valve: "A" } }),
+    }).then((r) => r.status);
+  await expect.poll(send, { timeout: 10_000, intervals: [500] }).toBe(202); // after the 2 s interlock
+});
 
 test("Confirm stays disabled for a wrong, partial or lowercase vehicle id; the exact id enables it", async ({ page }) => {
   await login(page, "fc1");

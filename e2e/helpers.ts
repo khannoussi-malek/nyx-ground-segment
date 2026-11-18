@@ -139,7 +139,8 @@ export async function ackLeftovers(page: Page, rows: ReturnType<Page["locator"]>
     const acked = page.locator(`tr[data-alarm-id="${id}"]`).getByRole("button", { name: /^Acknowledge / });
     await expect(acked).toHaveCount(0, { timeout: 5_000 }).catch(() => {});
   }
-  await expect(rows).toHaveCount(0, { timeout: 5_000 });
+  // ACKED and still violating is allowed (it neither beeps nor counts as unacknowledged)
+  await expect(rows.filter({ has: page.getByRole("button", { name: /^Acknowledge / }) })).toHaveCount(0, { timeout: 5_000 });
 }
 
 /** `docker compose ...` without blocking the test's event loop (the page keeps being observed). */

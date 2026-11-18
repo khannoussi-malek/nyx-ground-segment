@@ -196,3 +196,13 @@ export function restoreParameters(): void {
   if (originalParams !== null) writeFileSync(PARAMS, originalParams);
   originalParams = null;
 }
+
+/** XADD `n` copies of the newest tm:`vehicle` frame with t_onboard 10 min ahead (the DLQ rejects them as t_onboard_range). */
+export function xaddBadFrames(vehicle: string, n: number): void {
+  const code =
+    "import json,sys;from datetime import datetime,timedelta;from tests.support.redisx import client;" +
+    "r=client('admin');v=sys.argv[1];last=r.xrevrange('tm:'+v,count=1)[0][1];f=json.loads(last['data']);" +
+    "t=datetime.fromisoformat(f['t_onboard'].replace('Z','+00:00'))+timedelta(minutes=10);" +
+    "[r.xadd('tm:'+v,{'data':json.dumps({**f,'t_onboard':t.isoformat(),'seq':f['seq']+1+i})}) for i in range(int(sys.argv[2]))]";
+  execFileSync("uv", ["run", "-q", "python", "-c", code, vehicle, String(n)], { cwd: REPO, env: { ...process.env, PYTHONPATH: REPO } });
+}

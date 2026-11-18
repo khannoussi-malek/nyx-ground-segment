@@ -1,8 +1,11 @@
 """LOS/AOS and FROZEN detectors over vehicle time (pure; D-ING-21, data-STALE / LOS at > 2 s)."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from typing import get_args
 
+from gs.common.interfaces.dlq import DlqReason
 from gs.ingest.events import GroundEvent, frozen_key, link_key
 from gs.ingest.seq import SeqState
 
@@ -17,19 +20,26 @@ class LinkState:
     last_seq: int | None = None
 
 
-def _los(vehicle: str, prev: SeqState) -> GroundEvent:
-    details = {"epoch": prev.epoch, "last_seq": prev.last_seq}
+def _los(vehicle: str, prev: SeqState, rejected: Mapping[str, int] | None = None) -> GroundEvent:
+    details: dict[str, object] = {"epoch": prev.epoch, "last_seq": prev.last_seq}
+    count = sum((rejected or {}).values())
+    if rejected and count > 0:  # D-UI-25: DLQ reasons since the last new frame
+        top = max(get_args(DlqReason), key=lambda r: rejected.get(r, 0))  # ties: DlqReason order
+        details["rejected"] = {"count": count, "reason": top}
     key = link_key("LOS", vehicle, prev.epoch, prev.last_seq)
     return GroundEvent(key, vehicle, "LOS", prev.last_t, details)
 
 
 def on_silence(
-    s: LinkState, vehicle: str, prev: SeqState | None
+    s: LinkState,
+    vehicle: str,
+    prev: SeqState | None,
+    rejected: Mapping[str, int] | None = None,
 ) -> tuple[LinkState, tuple[GroundEvent, ...]]:
     """Called by the read loop after STALE_S without a new frame."""
     if s.los_open or prev is None:
         return s, ()
-    return LinkState(True, prev.epoch, prev.last_seq), (_los(vehicle, prev),)
+    return LinkState(True, prev.epoch, prev.last_seq), (_los(vehicle, prev, rejected),)
 
 
 def on_frame(

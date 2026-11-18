@@ -65,3 +65,18 @@ def test_silence_without_frames_no_los() -> None:
 def test_reset_lost_unknown() -> None:
     _, (_, aos), _ = on_frame(LinkState(), V, prev_at(seq=500, t=50.0), t_at(60.0), lost=None)
     assert aos.details["lost_frames"] is None
+
+
+def test_los_carries_rejected() -> None:
+    _, (los,) = on_silence(
+        LinkState(), V, prev_at(seq=9, t=1.0), {"schema": 2, "t_onboard_range": 2}
+    )
+    assert los.details["rejected"] == {"count": 4, "reason": "schema"}  # tie: DlqReason order
+    _, (los,) = on_silence(LinkState(), V, prev_at(seq=9), {"poison": 1, "json_invalid": 3})
+    assert los.details["rejected"] == {"count": 4, "reason": "json_invalid"}
+
+
+def test_los_without_rejected_has_no_key() -> None:
+    for rej in (None, {}, {"schema": 0}):
+        _, (los,) = on_silence(LinkState(), V, prev_at(seq=9), rej)
+        assert "rejected" not in los.details

@@ -36,3 +36,16 @@ export function vehicleCondition(store: Store, v: string, now: number): Conditio
   const ageMs = ageAt(tm?.age_ms, store.receivedAt(v), now);
   return conditionFor({ ...link, processing: link.processing[v], ageMs, frozen: tm?.frozen ?? false, healthyMs: since === null ? null : now - since });
 }
+
+/** D-UI-25: the text for a LOSS OF SIGNAL that frames rejected to the DLQ preceded (condition, tone and key unchanged). */
+export function rejectedText(count: number, reason: string): string {
+  return `FRAMES REJECTED – ${count} ${count === 1 ? "frame" : "frames"}, ${reason} – check tm:dlq`;
+}
+
+/** The summary text the live table shows for a vehicle in `condition`: rejectedText for a LOS the server tagged. */
+export function bannerText(store: Store, v: string, condition: Condition): string | undefined {
+  if (condition !== "LOSS OF SIGNAL") return undefined;
+  const e = store.lastLink(v);
+  const r = e?.kind === "LOS" ? (e.details as { rejected?: { count: number; reason: string } }).rejected : undefined;
+  return r ? rejectedText(r.count, r.reason) : undefined;
+}

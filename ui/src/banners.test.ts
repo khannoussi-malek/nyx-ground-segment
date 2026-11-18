@@ -1,5 +1,5 @@
 import { expect, test } from "vitest";
-import { conditionFor, vehicleCondition } from "./banners";
+import { bannerText, conditionFor, rejectedText, vehicleCondition } from "./banners";
 import { eventView } from "./fixtures";
 import { toneActive } from "./audio";
 import { createStore, ingest, type EventView, type Snapshot, type Tm } from "./store";
@@ -163,4 +163,32 @@ test("a snapshot without a vehicle's link or FROZEN event keeps the store's; one
   const aos = eventView("AOS/NYX-TA1/e/1", { kind: "AOS", vehicle: V });
   ingest(s, "snapshot", { ...serverSnapshot(15_000), events: [aos] });
   expect(s.lastLink(V)?.key).toBe(aos.key);
+});
+
+test("rejectedText", () => {
+  expect(rejectedText(1, "t_onboard_range")).toBe("FRAMES REJECTED – 1 frame, t_onboard_range – check tm:dlq");
+  expect(rejectedText(12, "schema")).toBe("FRAMES REJECTED – 12 frames, schema – check tm:dlq");
+});
+
+test("a LOS with details.rejected shows FRAMES REJECTED; outages outrank it; an AOS clears it", () => {
+  const s = createStore(() => 10_000, { setTimeout: (() => 1) as never, clearTimeout: () => {} });
+  const rej = eventView("LOS/NYX-TA1/e/0", { kind: "LOS", vehicle: V, details: { rejected: { count: 3, reason: "schema" } } });
+  ingest(s, "snapshot", serverSnapshot(5000, rej));
+  ingest(s, "hb", { processing: { [V]: true } });
+  const text = () => bannerText(s, V, vehicleCondition(s, V, 10_000));
+  expect(vehicleCondition(s, V, 10_000)).toBe("LOSS OF SIGNAL");
+  expect(text()).toBe("FRAMES REJECTED – 3 frames, schema – check tm:dlq");
+  ingest(s, "hb", { processing: { [V]: false } });
+  expect(vehicleCondition(s, V, 10_000)).toBe("GROUND PROCESSING DOWN");
+  expect(text()).toBeUndefined();
+  ingest(s, "hb", { processing: { [V]: true } });
+  ingest(s, "ground", { broker: "down" });
+  expect(text()).toBeUndefined();
+  ingest(s, "ground", { broker: "up" });
+  ingest(s, "link", { event: eventView("AOS/NYX-TA1/e/0", { kind: "AOS", vehicle: V }) });
+  ingest(s, "tm", frame(1));
+  expect(text()).toBeUndefined();
+  // a plain LOS keeps the plain text
+  ingest(s, "link", { event: LOS });
+  expect(bannerText(s, V, "LOSS OF SIGNAL")).toBeUndefined();
 });

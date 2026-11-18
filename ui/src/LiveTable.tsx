@@ -1,6 +1,6 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import type { MissionDb } from "./api";
-import { vehicleCondition } from "./banners";
+import { bannerText, vehicleCondition } from "./banners";
 import { ageAt } from "./format";
 import { paramViews } from "./params";
 import type { Probe } from "./probe";
@@ -43,6 +43,7 @@ function Vehicle({ store, v, mission, clock, probe }: { store: Store; v: string;
       ageMs={ageMs}
       params={params}
       banner={banner}
+      bannerText={bannerText(store, v, condition)}
       statesWired={wired}
       onCommit={probe && (() => probe.painted(v, tm.seq))}
     />

@@ -96,6 +96,8 @@ class Ctx:
     # reached the consoles, database clock (P-pf42b: margins count from the publish); pruned
     # to the open alarms at each stamp
     shown: dict[str, dict[UUID, datetime]] = field(default_factory=dict)
+    # vehicle -> DLQ reason counts since its last new frame (named by the next LOS, D-UI-25)
+    rejected: dict[str, Counter[str]] = field(default_factory=dict)
 
 
 class Unpublished(redis.exceptions.ConnectionError):
@@ -304,6 +306,8 @@ async def _process(
                 ack.xadd(DLQ, {"data": rec.model_dump_json()})
             ack.xack(stream, GROUP, *(eid for eid, _ in entries))
             await ack.execute()
+            if dlq:  # counted once the DLQ write is done (a redelivery would count twice)
+                ctx.rejected.setdefault(vehicle, Counter()).update(r.reason for r in dlq)
     except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
         raise Unpublished(nvs, msgs) from e  # the entries stay pending and are re-read
     ctx.hooks.fire("after_xack")
@@ -450,12 +454,15 @@ async def load_state(
 
 
 async def _silence(
-    conn: psycopg.AsyncConnection, vehicle: str, vs: VehicleState
+    conn: psycopg.AsyncConnection,
+    vehicle: str,
+    vs: VehicleState,
+    rejected: Mapping[str, int] | None = None,
 ) -> tuple[VehicleState, list[Link]]:
     """LOS after STALE_S without a new frame: LOS and engine_state in one small transaction.
     Returns the committed state (LOS open) and its `link` for the caller to publish; `vs`
     unchanged and no link when no LOS was due."""
-    ls, ev = on_silence(vs.link, vehicle, vs.seq)
+    ls, ev = on_silence(vs.link, vehicle, vs.seq, rejected)
     if not ev:
         return vs, []
     nvs = replace(vs, link=ls)
@@ -551,9 +558,10 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
             nvs, _ = await process_batch(ctx, conn, stream, entries, vs, acks)
             if nvs.seq != vs.seq:  # a new frame advanced the tracker
                 last_new = time.monotonic()
+                ctx.rejected.pop(vehicle, None)
             vs = nvs
             if time.monotonic() - last_new > ctx.timing.los_s:
-                vs, links = await _silence(conn, vehicle, vs)
+                vs, links = await _silence(conn, vehicle, vs, ctx.rejected.get(vehicle))
                 unsent = [*links]
                 await publish_ui(ctx.redis, unsent)
                 unsent = []

@@ -233,3 +233,15 @@ async def test_snapshot_compression_off_the_loop(monkeypatch: pytest.MonkeyPatch
             done = True
             await p
     assert worst < 0.05, f"the event loop stalled {worst * 1000:.0f} ms"
+
+
+async def test_restore_uses_the_csv_header() -> None:
+    with throwaway_db() as src, throwaway_db() as dst:
+        seed(src)
+        async with app_conn(src) as c:
+            key = await take_snapshot(archiver_ctx(), c, NOW + timedelta(minutes=6))
+        with psycopg.connect(owner_dsn(dst)) as c:  # report now sits after created_at
+            c.execute("alter table session_report drop column report")
+            c.execute("alter table session_report add column report jsonb not null")
+        assert await asyncio.to_thread(restore_main, [key, "--db", dst]) == 0
+        assert table_rows(dst, "session_report") == table_rows(src, "session_report") != []

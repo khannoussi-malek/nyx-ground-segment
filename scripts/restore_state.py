@@ -6,6 +6,7 @@ the archiver's own S3 helpers.
 
 import argparse
 import asyncio
+import csv
 import hashlib
 import io
 import sys
@@ -36,12 +37,18 @@ def restore(conn: psycopg.Connection, data: bytes) -> int:
         for t in TABLES:
             member = tar.extractfile(f"{t}.csv")
             assert member is not None, f"{t}.csv missing from the snapshot"
+            # the column list comes from the CSV header, never from the target's column order
+            header = member.readline()
+            cols = next(csv.reader([header.decode()]))
             with (
                 conn.cursor() as cur,
                 cur.copy(
-                    sql.SQL("COPY {} FROM STDIN (FORMAT csv, HEADER)").format(sql.Identifier(t))
+                    sql.SQL("COPY {} ({}) FROM STDIN (FORMAT csv, HEADER)").format(
+                        sql.Identifier(t), sql.SQL(", ").join(map(sql.Identifier, cols))
+                    )
                 ) as cp,
             ):
+                cp.write(header)  # HEADER skips it
                 while block := member.read(1 << 16):
                     cp.write(block)
         # COPY wrote the ids itself, so the sequences must catch up before the next INSERT

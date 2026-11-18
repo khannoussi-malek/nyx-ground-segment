@@ -5,7 +5,7 @@ import hashlib
 import io
 import logging
 import tarfile
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import psycopg
@@ -30,6 +30,7 @@ ORDER_BY = {
     "audit_log": "id",
 }
 TABLES = tuple(ORDER_BY)
+ORPHAN_GRACE_S = 60.0  # a tarball younger than this may still be waiting for its sidecar
 log = logging.getLogger(__name__)
 
 
@@ -80,15 +81,24 @@ async def _exists(ctx: ArchiverCtx, key: str) -> bool:
     return True
 
 
-async def count_orphans(ctx: ArchiverCtx) -> int:
-    """Tarballs under state/ with no `.sha256` sibling (one listing). The archiver cannot delete
-    them (D-ARC-09), so they stay counted until a person removes them."""
+async def count_orphans(ctx: ArchiverCtx, grace_s: float = ORPHAN_GRACE_S) -> int:
+    """Tarballs under state/ with no `.sha256` sibling (one listing), older than `grace_s` so a
+    snapshot being written is not counted. The archiver cannot delete them (D-ARC-09), so they
+    stay counted until a person removes them."""
 
-    def listing() -> list[str]:
-        return [o.object_name for o in ctx.s3.list_objects(ctx.bucket, "state/", recursive=True)]
+    def listing() -> list[Any]:
+        return list(ctx.s3.list_objects(ctx.bucket, "state/", recursive=True))
 
-    keys = set(await asyncio.to_thread(listing))
-    return sum(1 for k in keys if k.endswith(".tar.gz") and f"{k}.sha256" not in keys)
+    objs = await asyncio.to_thread(listing)
+    keys = {o.object_name for o in objs}
+    cutoff = datetime.now(UTC) - timedelta(seconds=grace_s)
+    return sum(
+        1
+        for o in objs
+        if o.object_name.endswith(".tar.gz")
+        and f"{o.object_name}.sha256" not in keys
+        and (o.last_modified is None or o.last_modified <= cutoff)
+    )
 
 
 async def take_snapshot(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], now: datetime) -> str:

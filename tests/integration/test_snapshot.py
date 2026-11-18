@@ -204,6 +204,14 @@ async def test_snapshot_refuses_a_tarball_without_its_sidecar(
     assert any(r.levelno == logging.ERROR and key in r.message for r in caplog.records)
 
 
+async def test_orphan_probe_ignores_a_tarball_still_being_written() -> None:
+    """Between the tarball PUT and the sidecar PUT a probe must not count it (M1)."""
+    key = snapshot_key(NOW + timedelta(minutes=8))
+    s3_client("root").put_object("archive", key, io.BytesIO(b"x"), 1)
+    assert await count_orphans(archiver_ctx()) == 0  # younger than the grace
+    assert await count_orphans(archiver_ctx(), grace_s=0) == 1
+
+
 async def test_failed_sidecar_leaves_a_tarball_the_bucket_reports(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -218,7 +226,7 @@ async def test_failed_sidecar_leaves_a_tarball_the_bucket_reports(
 
     monkeypatch.setattr(s3_mod, "put", sidecar_dies)
     now = NOW + timedelta(minutes=4)
-    assert await count_orphans(archiver_ctx()) == 0
+    assert await count_orphans(archiver_ctx(), grace_s=0) == 0
     with throwaway_db() as db:
         async with app_conn(db) as c:
             with pytest.raises(OSError):
@@ -227,12 +235,12 @@ async def test_failed_sidecar_leaves_a_tarball_the_bucket_reports(
     assert [o.object_name for o in s3_client("archiver").list_objects("archive", prefix=key)] == [
         key
     ]  # the tarball is there, the sidecar is not: not a snapshot
-    assert await count_orphans(archiver_ctx()) == 1  # a fresh ctx: nothing in memory
+    assert await count_orphans(archiver_ctx(), grace_s=0) == 1  # a fresh ctx: nothing in memory
     monkeypatch.setattr(s3_mod, "put", real)
     with throwaway_db() as db:
         async with app_conn(db) as c:
             await take_snapshot(archiver_ctx(), c, now + timedelta(minutes=1))  # complete one
-    assert await count_orphans(archiver_ctx()) == 1
+    assert await count_orphans(archiver_ctx(), grace_s=0) == 1
 
 
 async def test_snapshot_compression_off_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -14,7 +14,7 @@ from psycopg_pool import PoolTimeout
 
 from gs.alarms.contract import AlarmState
 from gs.api.bodies import AckAccepted, AckRequest
-from gs.api.deps import ApiError, User, errors
+from gs.api.deps import ApiError, User, errors, vehicles
 from gs.common.audit import audit
 from gs.common.interfaces.base import VehicleId
 from gs.common.interfaces.sse import AlarmView
@@ -48,7 +48,12 @@ async def list_alarms(
     # docstring: FastAPI would put it in the frozen OpenAPI document
     async with _db(request) as conn:
         return await alarm_views(
-            conn, vehicle=vehicle, severity=severity, state=state, open_only=state != "CLEARED"
+            conn,
+            vehicle=vehicle,
+            vehicles=None if vehicle else vehicles(request),  # G4-19: never TA9 in the list
+            severity=severity,
+            state=state,
+            open_only=state != "CLEARED",
         )
 
 

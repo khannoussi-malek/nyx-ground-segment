@@ -55,6 +55,7 @@ LEFT JOIN LATERAL (SELECT e.level, e.value FROM alarm_events e
 LEFT JOIN LATERAL (SELECT * FROM alarm_ack_request q WHERE q.alarm_id = a.alarm_id
                    ORDER BY q.requested_at DESC LIMIT 1) r ON true
 WHERE (%(vehicle)s::text IS NULL OR a.vehicle = %(vehicle)s)
+  AND (%(vehicles)s::text[] IS NULL OR a.vehicle = ANY(%(vehicles)s))
   AND (%(severity)s::text IS NULL OR a.severity = %(severity)s)
   AND (%(state)s::text IS NULL OR a.state = %(state)s)
   AND (%(ids)s::uuid[] IS NULL OR a.alarm_id = ANY(%(ids)s))
@@ -138,6 +139,7 @@ async def alarm_views(
     conn: psycopg.AsyncConnection,
     *,
     vehicle: str | None = None,
+    vehicles: Sequence[str] | None = None,
     severity: str | None = None,
     state: str | None = None,
     alarm_ids: Sequence[UUID] | None = None,
@@ -146,7 +148,8 @@ async def alarm_views(
     """Newest opened_at first; `level`/`value` = the last non-NOMINAL level in any state
     (RTN_UNACK, CLEARED: what it was); an alarm without any alarm_events row is not listed."""
     ids = None if alarm_ids is None else list(alarm_ids)
-    p = {"vehicle": vehicle, "severity": severity, "state": state, "ids": ids,
+    p = {"vehicle": vehicle, "vehicles": None if vehicles is None else list(vehicles),
+         "severity": severity, "state": state, "ids": ids,
          "open_only": open_only}  # fmt: skip
     return [_alarm(r) for r in await _rows(conn, _ALARMS, p)]
 

@@ -376,6 +376,12 @@ async def list_commands(
     # comment, not a docstring: FastAPI would put a docstring into the frozen openapi.json)
     try:
         async with request.app.state.pool.connection(timeout=DB_TIMEOUT_S) as conn:
-            return await command_views(conn, vehicle=vehicle, since=since, limit=LIST_LIMIT)
+            return await command_views(
+                conn,
+                vehicle=vehicle,
+                vehicles=None if vehicle else vehicles(request),
+                since=since,
+                limit=LIST_LIMIT,
+            )
     except psycopg.Error as e:
         raise _db_down(e) from e

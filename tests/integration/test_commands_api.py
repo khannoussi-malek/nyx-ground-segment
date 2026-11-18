@@ -556,6 +556,18 @@ async def test_list_commands_filters(api: Api) -> None:
         assert (await anon.get("/api/commands")).status_code == 401
 
 
+async def test_list_without_vehicle_hides_recorded_only(api: Api) -> None:  # G4-19
+    other = vid()
+    api.app.state.vehicles = (api.v, other)
+    sent = await api.fc1.post("/api/commands", json={**api.iso("A"), "vehicle": other})
+    assert sent.status_code == 202, sent.text
+    api.app.state.vehicles = (api.v,)  # `other` is now recorded-only
+    unfiltered = (await api.fc1.get("/api/commands")).json()
+    assert sent.json()["cmd_id"] not in [c["cmd_id"] for c in unfiltered]
+    named = (await api.fc1.get("/api/commands", params={"vehicle": other})).json()
+    assert [c["cmd_id"] for c in named] == [sent.json()["cmd_id"]]
+
+
 # ---- ATP-03 backend: API + in-process simulator + ingest worker on one vehicle (Task 7)
 @dataclasses.dataclass
 class Live:

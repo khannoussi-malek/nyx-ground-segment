@@ -129,6 +129,7 @@ async def test_list_filters(app: Any) -> None:
     red_id, yellow_id = await alarm_of(red, 31.0), await alarm_of(yellow, 28.0)
     gone_id = await alarm_of(gone, 28.0, nominal_after=5)  # RTN_UNACK
     async with authed(app) as c:
+        app.state.vehicles = (red, yellow, gone)  # the live list the unfiltered GET honours
         async with owned(gone):
             assert (await ack(c, gone_id)).status_code == 202
             await until(lambda: open_alarm(gone, TEMP) is None, 5)  # ACK of RTN_UNACK clears
@@ -147,6 +148,19 @@ async def test_list_filters(app: Any) -> None:
         assert (view["level"], view["severity"]) == ("YELLOW_HIGH", "YELLOW")  # P-pf20
         bad = await c.get("/api/alarms?severity=GREEN")
         assert (bad.status_code, bad.json()["error"]) == (422, "VALIDATION_ERROR")
+
+
+async def test_list_without_vehicle_hides_recorded_only(
+    app: Any,
+) -> None:  # G4-19, like the snapshot
+    live, recorded = vid(), vid()
+    live_id, recorded_id = await alarm_of(live, 31.0), await alarm_of(recorded, 31.0)
+    async with authed(app) as c:
+        app.state.vehicles = (live,)
+        ids = {a["alarm_id"] for a in await get_json(c, "/api/alarms")}
+        assert live_id in ids and recorded_id not in ids
+        (named,) = await get_json(c, f"/api/alarms?vehicle={recorded}")  # asked for by name: shown
+        assert named["alarm_id"] == recorded_id
 
 
 async def test_ack_requires_session_and_header(app: Any) -> None:

@@ -24,12 +24,12 @@ def archiver_status(
     backlog_h: float = BACKLOG_H,
     last_snapshot: datetime | None = None,
     snapshot_every_h: float = 24,
-    orphans: int = 0,
+    orphans: int | None = 0,
 ) -> tuple[State, dict[str, object]]:
     """down: the database is unreachable; degraded: Redis or MinIO unreachable, a backlog older
     than `backlog_h`, an unresolved ARCHIVE_CORRUPT, a refused hot delete or a state snapshot
     older than twice `snapshot_every_h` (D-ARC-12), or a snapshot tarball left without its sidecar
-    (`orphans`: the archiver cannot delete it, D-ARC-09)."""
+    (`orphans`: the archiver cannot delete it, D-ARC-09; None: the count could not be read)."""
     checks: dict[str, object] = {
         "oldest_unarchived_hour": None if oldest_unarchived is None else iso_z(oldest_unarchived),
         "scrub": "ok" if corrupt == 0 else f"{corrupt} corrupt",
@@ -48,5 +48,6 @@ def archiver_status(
     stale = (last_pass is not None and last_snapshot is None) or (
         last_snapshot is not None and now - last_snapshot > timedelta(hours=2 * snapshot_every_h)
     )
-    bad = not redis_ok or not s3_ok or behind or corrupt > 0 or refused > 0 or stale or orphans > 0
+    orphaned = orphans is None or orphans > 0  # unknown counts as a fault
+    bad = not redis_ok or not s3_ok or behind or corrupt > 0 or refused > 0 or stale or orphaned
     return ("degraded" if bad else "ok"), checks

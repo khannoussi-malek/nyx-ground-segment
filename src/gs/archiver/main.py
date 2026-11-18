@@ -203,7 +203,7 @@ class Snapshot:
     oldest_unarchived: datetime | None = None
     last_pass: datetime | None = None
     last_snapshot: datetime | None = None
-    orphans: int = 0  # state tarballs without a sidecar, listed from the bucket each probe
+    orphans: int | None = 0  # state tarballs without a sidecar; None: the listing failed
 
 
 @dataclass
@@ -231,18 +231,27 @@ async def _db_facts(s: ArchiverSettings) -> int | None:
         return await unresolved_corrupt(conn)
 
 
+async def _orphan_count(ctx: ArchiverCtx) -> int | None:
+    """The state/ orphan count, or None when the listing fails or hangs: unknown, never zero."""
+    try:
+        return await asyncio.wait_for(count_orphans(ctx), PROBE_TIMEOUT_S)
+    except TimeoutError:
+        log.warning("state/ listing failed or timed out")
+    except Exception as e:  # noqa: BLE001  any listing failure is reported as unknown, not zero
+        log.warning("state/ listing failed: %s: %s", type(e).__name__, e)
+    return None
+
+
 async def _probe(s: ArchiverSettings, ctx: ArchiverCtx, r: redis.asyncio.Redis) -> Snapshot:
-    """Cheap health facts only (the backlog and last_pass come from the pass); the three probes
+    """Cheap health facts only (the backlog and last_pass come from the pass); the probes
     run concurrently, each bounded."""
     pinged, listed, corrupt, orphans = await asyncio.gather(
         _bounded(r.ping()),
         _bounded(bucket_answers(ctx)),
         _bounded(_db_facts(s)),
-        _bounded(count_orphans(ctx)),
+        _orphan_count(ctx),
     )
-    return Snapshot(
-        corrupt is not None, bool(pinged), bool(listed), corrupt or 0, orphans=orphans or 0
-    )
+    return Snapshot(corrupt is not None, bool(pinged), bool(listed), corrupt or 0, orphans=orphans)
 
 
 async def _sleep(stop: asyncio.Event, seconds: float) -> None:

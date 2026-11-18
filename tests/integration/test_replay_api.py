@@ -3,7 +3,7 @@ filter (Track RP Task 13). Rows are seeded hot (or archived) for a vid() vehicle
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Callable, Iterator
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -244,24 +244,58 @@ async def test_taken_replay_whose_stream_never_starts_frees_its_slot(
         await until(lambda: registry(live_api) == {}, 2)
 
 
+IDLE_MARK = 12345.0  # REPLAY_IDLE_S for the tests below: only its timers are captured
+
+
+def capture_idle_timers(monkeypatch: pytest.MonkeyPatch) -> list[Callable[[], None]]:
+    """Replace the replay idle timers by a list the test fires by hand; every other timer on
+    the loop (httpx, the app) runs as usual."""
+    timers: list[Callable[[], None]] = []
+    loop = asyncio.get_running_loop()
+    real = loop.call_later
+    monkeypatch.setattr(replays, "REPLAY_IDLE_S", IDLE_MARK)
+
+    def call_later(delay: float, fn: Callable[..., Any], *a: Any) -> Any:
+        if delay == IDLE_MARK:
+            timers.append(lambda: fn(*a))
+            return None
+        return real(delay, fn, *a)
+
+    monkeypatch.setattr(loop, "call_later", call_later, raising=False)
+    return timers
+
+
 async def test_taken_replay_that_starts_late_survives_expiry(
     live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
 ) -> None:  # a GET accepted just before the idle timer, whose first byte is slow
     v = vehicle()
     hot_hour(v, H, n=30, rate_hz=1.0)
-    monkeypatch.setattr(replays, "REPLAY_IDLE_S", 0.4)
+    timers = capture_idle_timers(monkeypatch)
     async with client(live_api) as c:
-        rid = await create(c, body(v))
+        await create(c, body(v))
         (r,) = registry(live_api).values()
-        await asyncio.sleep(0.3)
         r.taken = True  # taken, not started
-        await asyncio.sleep(0.2)  # past the first timer
-        assert str(rid) in {str(k) for k in registry(live_api)}
-        assert not r.stop.is_set()
-        r.started = True  # starts before the second timer
-        await asyncio.sleep(0.4)  # past the second timer
-        assert str(rid) in {str(k) for k in registry(live_api)}
-        assert not r.stop.is_set()
+        timers[0]()  # the first timer fires
+        assert r.id in registry(live_api) and not r.stop.is_set()
+        assert len(timers) == 2  # re-armed once
+        r.started = True
+        timers[1]()  # the second timer fires
+        assert r.id in registry(live_api) and not r.stop.is_set()
+
+
+async def test_taken_replay_still_not_started_after_the_second_timer_is_dropped(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    v = vehicle()
+    hot_hour(v, H, n=30, rate_hz=1.0)
+    timers = capture_idle_timers(monkeypatch)
+    async with client(live_api) as c:
+        await create(c, body(v))
+        (r,) = registry(live_api).values()
+        r.taken = True
+        timers[0]()
+        timers[1]()
+        assert r.id not in registry(live_api) and r.stop.is_set()
 
 
 def _live_msg(kind: str, v: str | None) -> dict[str, Any]:

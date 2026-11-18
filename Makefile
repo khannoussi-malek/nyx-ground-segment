@@ -23,10 +23,10 @@ gen:
 	uv run python -m gs.common.interfaces.export
 	cd ui && npx openapi-typescript ../interfaces/openapi.json -o src/api/schema.d.ts
 
-e2e:
+e2e: e2e/node_modules
 	cd e2e && npx playwright test
 
-perf:
+perf: e2e/node_modules
 	uv run python -m perf.run_n
 
 perf-p:
@@ -34,3 +34,7 @@ perf-p:
 
 soak:
 	uv run python -m perf.soak_count --hours 2
+
+# ponytail: a file target, installed once per clone; delete the folder to reinstall
+e2e/node_modules: e2e/package-lock.json
+	cd e2e && npm ci && npx playwright install chromium

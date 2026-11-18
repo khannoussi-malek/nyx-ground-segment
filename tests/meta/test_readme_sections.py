@@ -23,11 +23,7 @@ README_HEADINGS = [
 ATPS = ["ATP-01", "ATP-07", "ATP-08"]
 # Things a doc names that other Gate 4 tasks (19-21) and Gate 5 add, per doc: "make <target>" or a
 # path. test_landing_entries_are_removed_when_they_land fails once an entry exists.
-LANDING = {
-    "ATP-01.md": {"docs/atp-report.md"},
-    "ATP-07.md": {"docs/atp-report.md"},
-    "ATP-08.md": {"docs/atp-report.md"},
-}
+LANDING: dict[str, set[str]] = {}  # Gate 5 landed docs/atp-report.md; add entries for future docs
 DOCS = [REPO / "README.md", REPO / "CHANGELOG.md", *sorted((REPO / "docs/atp").glob("*.md"))]
 DOCS += [REPO / "docs/operator-guide.md", REPO / "docs/dev-guide.md"]
 
@@ -49,7 +45,15 @@ def test_readme_run_block_is_the_three_commands() -> None:
     assert len(blocks) == 1
     cmds = blocks[0].strip().splitlines()
     assert len(cmds) == 3
-    assert cmds[0].startswith("git clone ") and cmds[1] == "cd nyx" and cmds[2] == "make up"
+    assert cmds[0].startswith("git clone ")
+    assert cmds[1] == "cd nyx-ground-segment" and cmds[2] == "make up"
+
+
+def test_readme_clone_url_matches_the_repository() -> None:
+    lines = (REPO / "README.md").read_text().splitlines()
+    clone = [ln for ln in lines if ln.startswith("git clone ")]
+    assert len(clone) == 1
+    assert clone[0].endswith("/nyx-ground-segment"), clone[0]
 
 
 def test_readme_screenshot_is_a_real_png() -> None:
@@ -63,9 +67,9 @@ def test_readme_limitations_name_the_single_minio_copy() -> None:
     assert "single copy" in text and "nothing repairs it" in text and "scrub" in text
 
 
-def test_changelog_has_unreleased_and_limitations() -> None:
+def test_changelog_has_a_release_and_limitations() -> None:
     text = (REPO / "CHANGELOG.md").read_text()
-    assert "[Unreleased]" in _h2(REPO / "CHANGELOG.md")
+    assert any(h.startswith(("[Unreleased]", "[1.0.0]")) for h in _h2(REPO / "CHANGELOG.md"))
     assert "### What's in" in text and "### Known limitations" in text
 
 
@@ -228,3 +232,11 @@ def test_atp07_step2_waits_for_both_hours_to_be_recorded() -> None:
     step2 = _atp("ATP-07").split("\n2. **", 1)[1].split("\n3. **", 1)[0]
     assert "from archive_object where vehicle='NYX-TA9'" in step2
     assert "2026-11-16 08:00:00+00" in step2 and "2026-11-16 09:00:00+00" in step2
+
+
+def test_readme_links_the_gate5_report_and_demo() -> None:
+    text = (REPO / "README.md").read_text()
+    for target in ("docs/atp-report.md", "docs/demo/README.md"):
+        assert f"]({target})" in text and (REPO / target).exists(), target
+    assert "](gate5-demo.mp4)" in (REPO / "docs/demo/README.md").read_text()
+    assert (REPO / "docs/demo/gate5-demo.mp4").stat().st_size > 0

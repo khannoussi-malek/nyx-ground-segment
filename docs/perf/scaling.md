@@ -4,9 +4,9 @@ Extrapolated linearly from run P (2 vehicles x 100 Hz, 300 s) to 10 vehicles x 1
 
 | Quantity | At 1000 frames/s |
 |---|---|
-| Worker CPU | 228 % of one core (capacity 439 frames/s) |
+| Worker CPU | 113 % of one core (capacity 882 frames/s) |
 | Redis growth | not measurable (streams capped at MAXLEN) |
-| Ingest time p95 | 16.7 ms |
+| Ingest time p95 | 49.9 ms |
 
 ## Headroom
 

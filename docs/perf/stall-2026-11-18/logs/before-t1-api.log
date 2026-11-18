@@ -1,0 +1,30 @@
+api-1  | 2026-11-18T21:20:14.157126798Z {"t": "2026-11-18T21:20:14.156228Z", "level": "WARNING", "service": "gs-api", "logger": "gs.api.hub", "msg": "ui:events unreachable (TimeoutError: Timeout reading from redis:6379)"}
+api-1  | 2026-11-18T21:20:15.207141924Z {"t": "2026-11-18T21:20:15.206808Z", "level": "INFO", "service": "gs-api", "logger": "gs.api.hub", "msg": "ui:events reachable again"}
+api-1  | 2026-11-18T21:20:16.246437591Z {"t": "2026-11-18T21:20:16.246133Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:50434 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:18.376604175Z {"t": "2026-11-18T21:20:18.376448Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:50438 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:20.446944593Z {"t": "2026-11-18T21:20:20.446754Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:50450 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:22.518915969Z {"t": "2026-11-18T21:20:22.518704Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:59580 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:24.587149387Z {"t": "2026-11-18T21:20:24.586853Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:59596 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:26.663339096Z {"t": "2026-11-18T21:20:26.663162Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:59598 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:28.738666847Z {"t": "2026-11-18T21:20:28.738533Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:59608 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:30.806504125Z {"t": "2026-11-18T21:20:30.806379Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:59614 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:32.869557668Z {"t": "2026-11-18T21:20:32.869421Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:56110 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:34.947733919Z {"t": "2026-11-18T21:20:34.946252Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:56112 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:37.047891378Z {"t": "2026-11-18T21:20:37.047580Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:56126 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:39.138737463Z {"t": "2026-11-18T21:20:39.138532Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:56132 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:41.218784922Z {"t": "2026-11-18T21:20:41.218588Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:35048 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:43.299923923Z {"t": "2026-11-18T21:20:43.299736Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:35064 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:45.365786174Z {"t": "2026-11-18T21:20:45.365635Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:35068 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:47.431002758Z {"t": "2026-11-18T21:20:47.430846Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:35072 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:49.544561468Z {"t": "2026-11-18T21:20:49.541955Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:35078 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:51.724955760Z {"t": "2026-11-18T21:20:51.724545Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:50666 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:53.931597720Z {"t": "2026-11-18T21:20:53.931190Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:50670 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:56.035496596Z {"t": "2026-11-18T21:20:56.035117Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:50686 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:20:58.124675763Z {"t": "2026-11-18T21:20:58.124406Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:50702 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:21:00.202672583Z {"t": "2026-11-18T21:21:00.202527Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:50714 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:21:02.354458918Z {"t": "2026-11-18T21:21:02.354115Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:33044 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:21:04.540273419Z {"t": "2026-11-18T21:21:04.539479Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:33052 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:21:06.900617045Z {"t": "2026-11-18T21:21:06.898238Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:33062 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:21:09.017171171Z {"t": "2026-11-18T21:21:09.015790Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:33068 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:21:11.107941755Z {"t": "2026-11-18T21:21:11.107543Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:46386 - \"GET /healthz HTTP/1.1\" 200"}
+api-1  | 2026-11-18T21:21:13.191689090Z {"t": "2026-11-18T21:21:13.191080Z", "level": "INFO", "service": "gs-api", "logger": "uvicorn.access", "msg": "127.0.0.1:46398 - \"GET /healthz HTTP/1.1\" 200"}

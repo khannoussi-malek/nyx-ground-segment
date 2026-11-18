@@ -5,13 +5,13 @@
 ## What it is
 A ground segment for a test campaign: it ingests telemetry from two simulated test articles (NYX-TA1 and NYX-TA2, 10 Hz each, with fault injection), stores every frame once, classifies each value against limits with hysteresis and persistence, raises and tracks alarms with acknowledgement, sends commands with a confirmation and a 2 s interlock, runs test sessions with a frozen report, archives finished hours to verified Parquet files and replays them. Python backend, React + TypeScript console, everything in Docker Compose. Requirements are in [docs/requirements.md](docs/requirements.md), the design in [docs/design.md](docs/design.md).
 
-Status: Gate 4, test readiness. In: the archiver, replay, session re-freeze, alarm-quality metrics and test hooks. Run P and the scaling analysis are in; their commands are documented in the ATP procedures. [CHANGELOG.md](CHANGELOG.md) says what is in per gate.
+Status: v1.0, accepted at Gate 5 from a fresh clone: the [acceptance report](docs/atp-report.md) gives each ATP's result, evidence and numbers; the non-conformances are in [docs/ncr/](docs/ncr/); a 3.5-minute [demo](docs/demo/README.md) shows ATP-02, ATP-04 and ATP-07 in the console. [CHANGELOG.md](CHANGELOG.md) says what is in per gate.
 
 ## Run
 Needs only Docker and make.
 ```
-git clone https://github.com/khannoussi-malek/nyx
-cd nyx
+git clone https://github.com/khannoussi-malek/nyx-ground-segment
+cd nyx-ground-segment
 make up
 ```
 `make up` creates `.env`, `users.yaml` and the Redis ACL on the first run and prints the three demo users (`conductor`, `fc1`, `fc2`) and their passwords once; they stay in `.env` as `DEMO_PW_<USER>`. Open http://127.0.0.1:8000 and log in. `make down` stops the stack and keeps the data; `make reset` deletes everything (database, archive, secrets).
@@ -62,6 +62,7 @@ From [design §4](docs/design.md#4-deliberately-not-built):
 - Stream interfaces are not versioned: after any change to a stream schema, restart all services together.
 - No in-place schema migrations of a long-lived database; a schema change during development means `make reset`.
 - Measurements run on one laptop with the load driver on the same machine; numbers are in `docs/perf/`.
+- ING-10 holds only on a host that is not CPU-oversubscribed ([NCR-01](docs/ncr/NCR-01.md)): run P 2026-11-18 had a max lag of 0.648 s at 2 × 100 Hz (load 3.81, `docs/perf/run-p-2026-11-18`), and 19.56 s at load 28; at 10 vehicles × 100 Hz a restarted ingest worker does not catch up ([scaling](docs/perf/scaling.md)).
 
 ## Next steps
 Identity and roles; TLS and a secret store; tamper-evident audit; replicated Redis and Postgres; a maintained S3 store with a second copy; a real decoder for the bench interface; the scaling fixes in `docs/perf/scaling.md`; shelving, latching and flood handling; versioned stream interfaces once a second producer exists. The ordered list is [design §4](docs/design.md#not-production-ready-in-the-order-we-would-fix-it-review-q14).

@@ -1,0 +1,18 @@
+section,key,vehicle,name,kind,time,end_time,by_user,unit,min,max,avg,n,expected,level,value,state,outcome,note,frozen_at,duration_s
+summary,2,NYX-TA2,ATP-01 soak NYX-TA2,complete,2026-11-18T17:45:08.676953Z,2026-11-18T19:45:08.724775Z,conductor,,,,,72000,71900,,,,,,2026-11-18T19:45:13.813233Z,7200.047822
+parameter,cabin_pressure_kpa,,cabin_pressure_kpa,,,,,kPa,101.2170356148632,101.38525321222875,101.30004549554303,72000,,,,,,,,
+parameter,cabin_temp_c,,cabin_temp_c,,,,,degC,21.780290959143347,22.241667453506363,22.000006282050332,72000,,,,,,,,
+parameter,bus_voltage_v,,bus_voltage_v,,,,,V,27.771995532287427,28.21723667561447,28.000293656869008,72000,,,,,,,,
+parameter,bus_current_a,,bus_current_a,,,,,A,4.790338761291222,5.202294854647309,5.000039024871728,72000,,,,,,,,
+parameter,tank_pressure_bar,,tank_pressure_bar,,,,,bar,19.914170259967637,20.081793658358755,20.00009762241655,72000,,,,,,,,
+parameter,rate_x_dps,,rate_x_dps,,,,,deg/s,-0.04450733957942946,0.0400497272122101,1.2452549219073188e-05,72000,,,,,,,,
+parameter,rate_y_dps,,rate_y_dps,,,,,deg/s,-0.04059886784506738,0.04259250511086712,2.3892856863281617e-05,72000,,,,,,,,
+parameter,rate_z_dps,,rate_z_dps,,,,,deg/s,-0.0469542007039053,0.043370468381480336,2.17667133845078e-05,72000,,,,,,,,
+link_event,LOS/NYX-TA2/2026-11-18T17:45:04.956226Z/6857,NYX-TA2,,LOS,2026-11-18T17:56:31.156346Z,,,,,,,,,,,,,"{""epoch"": ""2026-11-18T17:45:04.956226Z"", ""last_seq"": 6857}",,
+link_event,AOS/NYX-TA2/2026-11-18T17:45:04.956226Z/6857,NYX-TA2,,AOS,2026-11-18T17:56:33.392540Z,,,,,,,,,,,,,"{""epoch"": ""2026-11-18T17:45:04.956226Z"", ""last_seq"": 6857, ""lost_frames"": 0}",,
+alarm_quality,raises,,,,,,,,,,,,,,0,,,,,
+alarm_quality,false_raises,,,,,,,,,,,,,,,,,,,
+alarm_quality,short_t1,,,,,,,,,,,,,,0,,,,,
+alarm_quality,short_t0,,,,,,,,,,,,,,0,,,,,
+alarm_quality,time_in_flood_s,,,,,,,,,,,,,,0.0,,,,,
+alarm_quality,peak_10min:all,,,,,,,,,,,,,,0,,,,,

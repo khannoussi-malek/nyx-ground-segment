@@ -1,0 +1,3 @@
+ingest-1-1  | 2026-11-18T21:24:37.763580920Z {"t": "2026-11-18T21:24:37.761976Z", "level": "WARNING", "service": "gs-ingest", "logger": "gs.ingest.worker", "msg": "redis unavailable for tm:NYX-TA1 (Timeout reading from redis:6379); retry in 0.5s"}
+ingest-1-1  | 2026-11-18T21:24:38.378625629Z {"t": "2026-11-18T21:24:38.378308Z", "level": "INFO", "service": "gs-ingest", "logger": "gs.ingest.worker", "msg": "LOS LOS/NYX-TA1/2026-11-18T21:19:01.141448Z/32618", "vehicle": "NYX-TA1", "seq": 32718}
+ingest-1-1  | 2026-11-18T21:24:38.378655421Z {"t": "2026-11-18T21:24:38.378515Z", "level": "INFO", "service": "gs-ingest", "logger": "gs.ingest.worker", "msg": "AOS AOS/NYX-TA1/2026-11-18T21:19:01.141448Z/32618", "vehicle": "NYX-TA1", "seq": 32718}

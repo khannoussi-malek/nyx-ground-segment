@@ -73,7 +73,7 @@ def test_rest_surface_is_final() -> None:
 
 
 GATE4 = {  # path, method -> (success status, declared error statuses); Task 11 (T4-f, T4-m)
-    ("/api/replays", "post"): ("201", {"400", "401", "403", "404", "409", "422", "503"}),
+    ("/api/replays", "post"): ("201", {"400", "401", "403", "404", "409", "422", "429", "503"}),
     ("/api/replays/{replay_id}", "delete"): ("204", {"401", "403", "404", "422"}),
     ("/api/replays/{replay_id}/events", "get"): ("200", {"401", "404", "422"}),
     ("/api/sessions/{session_id}/report/refreeze", "post"): (

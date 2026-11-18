@@ -14,6 +14,7 @@ from perf.soak_count import (
     passed,
     render,
     run_sessions,
+    sent_frames,
 )
 
 E1 = datetime(2026, 11, 16, 8, tzinfo=UTC)
@@ -157,3 +158,47 @@ def test_a_stored_frame_missing_from_the_stream_fails_the_count(
         RuntimeError, match=r"soak: 1 stored frames are missing from tm:NYX-TA1 \(deleted"
     ):
         _count(None, None, "NYX-TA1", 1, E1, E2)  # type: ignore[arg-type]
+
+
+class FakeStream:
+    """The slice of redis.Redis that sent_frames reads: XINFO STREAM and XRANGE."""
+
+    def __init__(self, info: dict[str, Any], entries: list[tuple[str, dict[str, str]]]) -> None:
+        self.info, self.entries = info, entries
+
+    def xinfo_stream(self, _key: str) -> dict[str, Any]:
+        return self.info
+
+    def xrange(self, _key: str, lo: str, _hi: str, count: int) -> list[Any]:
+        return [] if lo.startswith("(") else self.entries[:count]  # one page, then the end
+
+
+def _entry(t: datetime, seq: int) -> tuple[str, dict[str, str]]:
+    frame = {"t_onboard": t.isoformat(), "seq": seq}
+    return f"{int(t.timestamp() * 1000)}-0", {"data": json.dumps(frame)}
+
+
+def _stream_info(first: tuple[str, dict[str, str]], deleted: str) -> dict[str, Any]:
+    return {"first-entry": first, "entries-added": 3, "length": 2, "max-deleted-entry-id": deleted}
+
+
+def test_a_deleted_head_entry_reports_missing_frames_not_trimmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    start = E1 + timedelta(seconds=10)
+    head, second, third = (_entry(start + timedelta(seconds=s), s) for s in range(3))
+    monkeypatch.setattr(
+        "perf.soak_count.stored_frames",
+        lambda *_: {(start + timedelta(seconds=s), s) for s in (0, 1)},
+    )
+    r = FakeStream(_stream_info(second, head[0]), [second, third])
+    with pytest.raises(RuntimeError, match=r"1 stored frames are missing from tm:NYX-TA1"):
+        _count(None, r, "NYX-TA1", 1, start, E2)  # type: ignore[arg-type]
+
+
+def test_a_trimmed_head_still_reports_trimmed() -> None:
+    start = E1 + timedelta(seconds=10)
+    second = _entry(start + timedelta(seconds=5), 5)
+    info = {"first-entry": second, "entries-added": 3, "length": 2, "max-deleted-entry-id": "0-0"}
+    with pytest.raises(RuntimeError, match="trimmed past the soak window start"):
+        sent_frames(FakeStream(info, [second]), "NYX-TA1", start, E2)  # type: ignore[arg-type]

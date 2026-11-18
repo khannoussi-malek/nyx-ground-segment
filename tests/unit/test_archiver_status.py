@@ -1,4 +1,6 @@
+import logging
 from datetime import UTC, datetime, timedelta
+from typing import Any, cast
 
 import pytest
 
@@ -24,6 +26,7 @@ def test_ok() -> None:
         "oldest_unarchived_hour": None, "scrub": "ok", "delete_refused": 0, "db": "ok",
         "redis": "ok", "minio": "ok", "last_pass": "2026-11-15T12:00:00.000000Z",
         "last_state_snapshot": "2026-11-15T12:00:00.000000Z",
+        "state_snapshot_orphans": 0,
     }  # fmt: skip
 
 
@@ -113,3 +116,118 @@ def test_archiver_status_snapshot_age() -> None:
     assert st(last_snapshot=None, last_pass=None)[0] == "ok"  # before the first pass
     state, checks = st(last_snapshot=None)  # a pass completed and took none
     assert (state, checks["last_state_snapshot"]) == ("degraded", None)
+
+
+def test_orphan_snapshot_tarballs_degrade() -> None:
+    assert st()[1]["state_snapshot_orphans"] == 0
+    state, checks = st(orphans=2)
+    assert (state, checks["state_snapshot_orphans"]) == ("degraded", 2)
+
+
+def test_unreadable_orphan_count_is_unknown_and_degrades() -> None:
+    state, checks = st(orphans=None)
+    assert (state, checks["state_snapshot_orphans"]) == ("degraded", None)
+    assert st(orphans=0)[0] == "ok"  # a count that was read, zero, is not a fault
+    assert st(orphans=None, db_ok=False)[0] == "down"
+
+
+class _Ping:
+    async def ping(self) -> bool:
+        return True
+
+
+async def _ok(*a: Any, **k: Any) -> bool:
+    return True
+
+
+async def _no_db(*a: Any, **k: Any) -> int:
+    return 0
+
+
+def _probe_patches(monkeypatch: pytest.MonkeyPatch, count: Any) -> Any:
+    from gs.archiver import main
+
+    monkeypatch.setattr(main, "bucket_answers", _ok)
+    monkeypatch.setattr(main, "_db_facts", _no_db)
+    monkeypatch.setattr(main, "count_orphans", count)
+    return main
+
+
+@pytest.fixture(autouse=True)
+def _listing_state_reset() -> None:
+    from gs.archiver import main
+
+    main._orphans_unknown = False
+
+
+async def test_probe_listing_outage_warns_once_and_logs_recovery(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    fail = True
+
+    async def flaky(*a: Any, **k: Any) -> int:
+        if fail:
+            raise RuntimeError("down")
+        return 0
+
+    main = _probe_patches(monkeypatch, flaky)
+    with caplog.at_level(logging.INFO, logger=main.__name__):
+        for _ in range(3):
+            await main._probe(cast(Any, None), cast(Any, None), cast(Any, _Ping()))
+        fail = False
+        await main._probe(cast(Any, None), cast(Any, None), cast(Any, _Ping()))
+        await main._probe(cast(Any, None), cast(Any, None), cast(Any, _Ping()))
+    assert [(r.levelno, r.getMessage()) for r in caplog.records] == [
+        (logging.WARNING, "state/ listing failed: RuntimeError: down"),
+        (logging.INFO, "state/ listing answers again"),
+    ]
+
+
+async def test_probe_unreadable_state_listing_is_unknown_and_logged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def boom(*a: Any, **k: Any) -> int:
+        raise RuntimeError("listing boom")
+
+    main = _probe_patches(monkeypatch, boom)
+    with caplog.at_level(logging.WARNING, logger=main.__name__):
+        snap = await main._probe(cast(Any, None), cast(Any, None), cast(Any, _Ping()))
+    assert snap.orphans is None and snap.db_ok and snap.redis_ok and snap.s3_ok
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warned == ["state/ listing failed: RuntimeError: listing boom"]
+    state, _ = archiver_status(
+        NOW, snap.db_ok, snap.redis_ok, snap.s3_ok, None, snap.corrupt, 0, None,
+        orphans=snap.orphans,
+    )  # fmt: skip
+    assert state == "degraded"
+
+
+async def test_probe_timed_out_state_listing_is_unknown_and_logged(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    import asyncio
+
+    async def hang(*a: Any, **k: Any) -> int:
+        await asyncio.sleep(10)
+        return 0
+
+    main = _probe_patches(monkeypatch, hang)
+    monkeypatch.setattr(main, "PROBE_TIMEOUT_S", 0.05)
+    with caplog.at_level(logging.WARNING, logger=main.__name__):
+        snap = await main._probe(cast(Any, None), cast(Any, None), cast(Any, _Ping()))
+    assert snap.orphans is None
+    warned = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert warned == ["state/ listing failed or timed out"]
+
+
+async def test_probe_read_zero_orphans_stays_zero_and_silent(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    async def zero(*a: Any, **k: Any) -> int:
+        return 0
+
+    main = _probe_patches(monkeypatch, zero)
+    with caplog.at_level(logging.WARNING, logger=main.__name__):
+        snap = await main._probe(cast(Any, None), cast(Any, None), cast(Any, _Ping()))
+    assert snap.orphans == 0
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]

@@ -27,7 +27,6 @@ from gs.api.deps import ApiError, User, errors
 from gs.api.hub import Hub, format_sse
 from gs.api.openapi import build_openapi
 from gs.api.settings import Settings
-from gs.archiver.s3 import client as s3_client
 from gs.common.audit import audit
 from gs.common.interfaces import build_frame_model
 from gs.common.interfaces.missiondb import MissionDbView, Vehicles
@@ -182,7 +181,8 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.users = load_users(settings.users_file)
         mdb = await _start_set(settings)
         app.state.vehicles = settings.vehicles
-        app.state.s3, app.state.s3_bucket = s3_client(settings.s3), settings.s3.bucket
+        app.state.s3_settings = settings.s3
+        app.state.s3 = None  # the first replay builds the client (replays._s3)
         app.state.database_url, app.state.replays = settings.database_url, {}
         # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
         # no client-side retry: connection errors reach our own handling (R28). Maintenance

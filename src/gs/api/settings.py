@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from pathlib import Path
 
-from gs.archiver.s3 import S3Settings
 from gs.common.config import require, vehicle_list
+from gs.common.s3_settings import S3Settings
 
 
 @dataclass(frozen=True)

@@ -165,7 +165,13 @@ def sent_frames(r: redis.Redis, v: str, start: datetime, end: datetime) -> list[
     first_ms = (
         int(str(info["first-entry"][0]).split("-")[0]) if info["first-entry"] else sys.maxsize
     )
-    if info["entries-added"] > info["length"] and first_ms > _ms(start) - STREAM_MARGIN_MS:
+    deleted_ms = int(str(info.get("max-deleted-entry-id", "0-0")).split("-")[0])
+    head_deleted = _ms(start) - STREAM_MARGIN_MS <= deleted_ms < first_ms
+    if (
+        info["entries-added"] > info["length"]
+        and first_ms > _ms(start) - STREAM_MARGIN_MS
+        and not head_deleted  # an XDELed head is not a trim: _count reports it as missing frames
+    ):
         # entries were trimmed and the oldest left is newer than the window's start: sent would be
         # undercounted (a silent pass), so stop here
         raise RuntimeError(f"{key} was trimmed past the soak window start: head lost")

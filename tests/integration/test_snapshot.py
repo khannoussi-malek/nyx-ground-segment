@@ -2,6 +2,7 @@ import asyncio
 import io
 import logging
 import tarfile
+import threading
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -14,7 +15,7 @@ from gs.archiver import s3 as s3_mod
 from gs.archiver import snapshot as snap_mod
 from gs.archiver.hours import hour_of
 from gs.archiver.main import run_pass
-from gs.archiver.snapshot import TABLES, snapshot_key, take_snapshot
+from gs.archiver.snapshot import TABLES, count_orphans, snapshot_key, take_snapshot
 from scripts.restore_state import main as restore_main
 from tests.support.archive import (  # noqa: F401  (archiver_paused is the module fixture)
     app_conn,
@@ -168,3 +169,103 @@ async def test_snapshot_failure_never_blocks_the_pass(
             res = await run_pass(archiver_ctx(), c, snapshot=True)
             assert res.deleted == 1 and stored_in(v, h, db) == 0
             assert [r["hour"] for r in archive_rows(v, db)] == [h]
+
+
+async def test_snapshot_same_minute_after_a_complete_one_returns_the_key(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A restart in the minute of the last snapshot: the key and its sidecar exist, so it is
+    done. INFO, no ERROR, nothing overwritten, no orphan."""
+    now = NOW + timedelta(minutes=3)
+    with throwaway_db() as db:
+        async with app_conn(db) as c:
+            key = await take_snapshot(archiver_ctx(), c, now)
+            first = members(key)
+            seed(db)  # a second snapshot would differ
+            with caplog.at_level(logging.INFO, logger=snap_mod.__name__):
+                assert await take_snapshot(archiver_ctx(), c, now) == key
+    assert members(key) == first
+    assert [r.levelno for r in caplog.records if key in r.message] == [logging.INFO]
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert await count_orphans(archiver_ctx()) == 0
+
+
+async def test_snapshot_refuses_a_tarball_without_its_sidecar(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    now = NOW + timedelta(minutes=7)
+    key = snapshot_key(now)
+    s3_client("root").put_object("archive", key, io.BytesIO(b"x"), 1)
+    with throwaway_db() as db:
+        async with app_conn(db) as c:
+            with caplog.at_level(logging.ERROR):
+                with pytest.raises(FileExistsError):
+                    await take_snapshot(archiver_ctx(), c, now)
+    assert any(r.levelno == logging.ERROR and key in r.message for r in caplog.records)
+
+
+async def test_orphan_probe_ignores_a_tarball_still_being_written() -> None:
+    """Between the tarball PUT and the sidecar PUT a probe must not count it (M1)."""
+    key = snapshot_key(NOW + timedelta(minutes=8))
+    s3_client("root").put_object("archive", key, io.BytesIO(b"x"), 1)
+    assert await count_orphans(archiver_ctx()) == 0  # younger than the grace
+    assert await count_orphans(archiver_ctx(), grace_s=0) == 1
+
+
+async def test_failed_sidecar_leaves_a_tarball_the_bucket_reports(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No delete in the archiver policy (D-ARC-09): the orphan stays, and is counted from the
+    bucket, so a restart (a new ArchiverCtx) still sees it."""
+    real = s3_mod.put
+
+    async def sidecar_dies(c: Any, bucket: str, key: str, data: bytes) -> str:
+        if key.endswith(".sha256"):
+            raise OSError("minio died")
+        return await real(c, bucket, key, data)
+
+    monkeypatch.setattr(s3_mod, "put", sidecar_dies)
+    now = NOW + timedelta(minutes=4)
+    assert await count_orphans(archiver_ctx(), grace_s=0) == 0
+    with throwaway_db() as db:
+        async with app_conn(db) as c:
+            with pytest.raises(OSError):
+                await take_snapshot(archiver_ctx(), c, now)
+    key = snapshot_key(now)
+    assert [o.object_name for o in s3_client("archiver").list_objects("archive", prefix=key)] == [
+        key
+    ]  # the tarball is there, the sidecar is not: not a snapshot
+    assert await count_orphans(archiver_ctx(), grace_s=0) == 1  # a fresh ctx: nothing in memory
+    monkeypatch.setattr(s3_mod, "put", real)
+    with throwaway_db() as db:
+        async with app_conn(db) as c:
+            await take_snapshot(archiver_ctx(), c, now + timedelta(minutes=1))  # complete one
+    assert await count_orphans(archiver_ctx(), grace_s=0) == 1
+
+
+async def test_snapshot_compression_off_the_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    loop_thread = threading.get_ident()
+    ran_on: list[int] = []
+    real = snap_mod._compress
+
+    def spy(tables: dict[str, bytes]) -> bytes:
+        ran_on.append(threading.get_ident())
+        return real(tables)
+
+    monkeypatch.setattr(snap_mod, "_compress", spy)
+    with throwaway_db() as db:
+        async with app_conn(db) as c:
+            await take_snapshot(archiver_ctx(), c, NOW + timedelta(minutes=5))
+    assert len(ran_on) == 1 and ran_on[0] != loop_thread
+
+
+async def test_restore_uses_the_csv_header() -> None:
+    with throwaway_db() as src, throwaway_db() as dst:
+        seed(src)
+        async with app_conn(src) as c:
+            key = await take_snapshot(archiver_ctx(), c, NOW + timedelta(minutes=6))
+        with psycopg.connect(owner_dsn(dst)) as c:  # report now sits after created_at
+            c.execute("alter table session_report drop column report")
+            c.execute("alter table session_report add column report jsonb not null")
+        assert await asyncio.to_thread(restore_main, [key, "--db", dst]) == 0
+        assert table_rows(dst, "session_report") == table_rows(src, "session_report") != []

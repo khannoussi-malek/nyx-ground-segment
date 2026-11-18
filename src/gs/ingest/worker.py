@@ -309,6 +309,9 @@ async def _process(
             late = dlq  # counted once the DLQ write is done (a redelivery would count twice)
             if nvs.seq != vs.seq:  # a new frame ends the earlier rejections: only the entries
                 ctx.rejected.pop(vehicle, None)  # after the batch's last stored frame still count
+                # FRAMES REJECTED approximation: "last stored" = the last non-DLQ entry of this
+                # batch, not the last frame the DB really inserted (a duplicate also counts).
+                # DLQ entries after it are shown as rejected since the last stored frame.
                 dlq_ids = {r.entry_id for r in dlq}
                 last = max((_eid(i[0]) for i in items if i[0] not in dlq_ids), default=None)
                 late = [r for r in dlq if last is None or _eid(r.entry_id) > last]

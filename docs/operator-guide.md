@@ -56,7 +56,7 @@ If an archived hour's object fails its hash check while its rows are still in th
 What you do: find the `ARCHIVE_CORRUPT` event for the vehicle and hour (its `expected` and `found` hashes), check the object in the archive bucket, and decide with the test conductor: fix the cause (storage, permissions, a wrong object) and let the next pass rebuild it, or accept that the hour is lost for replay. A replay across the hour stays refused (409) until it is resolved. Once the object verifies again, the count drops and `/healthz` returns to `ok` after the next pass. If the hot rows are already deleted, no copy is left to rebuild from: the event stays open and the hour cannot be replayed.
 
 ## Restore the state
-The archiver writes a snapshot of every table except telemetry to the archive bucket every `SNAPSHOT_EVERY_H` hours (default 24) as `state/YYYY/MM/DD/HHMM.tar.gz` with a `.sha256` sidecar. The archiver `/healthz` shows `last_state_snapshot` and turns `degraded` when it is older than twice that. A snapshot without a sidecar is incomplete: do not use it.
+The archiver writes a snapshot of every table except telemetry to the archive bucket every `SNAPSHOT_EVERY_H` hours (default 24) as `state/YYYY/MM/DD/HHMM.tar.gz` with a `.sha256` sidecar. The archiver `/healthz` shows `last_state_snapshot` and turns `degraded` when it is older than twice that. `state_snapshot_orphans` counts the tarballs under `state/` that have no `.sha256` sidecar (a failed snapshot leaves one; it is listed from the bucket on every health probe). The archiver has no delete right, so `/healthz` stays `degraded` until a person removes the object as root. A snapshot without a sidecar is incomplete: do not use it.
 
 To restore after losing the database volume, start only the database and MinIO. `make up` would start ingest, which writes to the database at once, and the restore refuses a database that already has rows (exit 2).
 
@@ -69,4 +69,4 @@ make up
 
 The first command creates the schema on the empty volume. The second lists the snapshots (or use the MinIO console); pick the newest key that has its `.sha256` sidecar. The third restores it (`--db` names another database, default `gs`). Then `make up` starts the rest of the stack. History since that snapshot is lost.
 
-`make reset` refuses while the archive holds archived hours, because it also deletes the MinIO archive; `FORCE=1 make reset` confirms.
+`make reset` also deletes the MinIO archive, so it first counts the archived hours through the db container (the stack must be up). It refuses when the count is above 0 and when it cannot count; only `FORCE=1 make reset` overrides.

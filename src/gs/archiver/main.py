@@ -38,7 +38,7 @@ from gs.archiver.plan import (
 )
 from gs.archiver.s3 import S3_ERRORS, S3Settings, client
 from gs.archiver.scrub import scrub_pass, unresolved_corrupt, unresolved_corrupt_keys
-from gs.archiver.snapshot import take_snapshot
+from gs.archiver.snapshot import count_orphans, take_snapshot
 from gs.archiver.status import archiver_status
 from gs.common.config import ConfigError, require, require_int
 from gs.common.health import State, serve_health
@@ -203,6 +203,7 @@ class Snapshot:
     oldest_unarchived: datetime | None = None
     last_pass: datetime | None = None
     last_snapshot: datetime | None = None
+    orphans: int | None = 0  # state tarballs without a sidecar; None: the listing failed
 
 
 @dataclass
@@ -230,13 +231,40 @@ async def _db_facts(s: ArchiverSettings) -> int | None:
         return await unresolved_corrupt(conn)
 
 
+_orphans_unknown = False  # the last listing failed: the log carries the change, not each probe
+
+
+async def _orphan_count(ctx: ArchiverCtx) -> int | None:
+    """The state/ orphan count, or None when the listing fails or hangs: unknown, never zero.
+    Logs the change to unknown (WARNING) and back (INFO), not every 5 s probe of an outage."""
+    global _orphans_unknown
+    try:
+        n = await asyncio.wait_for(count_orphans(ctx), PROBE_TIMEOUT_S)
+    except TimeoutError:
+        failure = "state/ listing failed or timed out"
+    except Exception as e:  # noqa: BLE001  any listing failure is reported as unknown, not zero
+        failure = f"state/ listing failed: {type(e).__name__}: {e}"
+    else:
+        if _orphans_unknown:
+            log.info("state/ listing answers again")
+        _orphans_unknown = False
+        return n
+    if not _orphans_unknown:
+        log.warning(failure)
+    _orphans_unknown = True
+    return None
+
+
 async def _probe(s: ArchiverSettings, ctx: ArchiverCtx, r: redis.asyncio.Redis) -> Snapshot:
-    """Cheap health facts only (the backlog and last_pass come from the pass); the three probes
+    """Cheap health facts only (the backlog and last_pass come from the pass); the probes
     run concurrently, each bounded."""
-    pinged, listed, corrupt = await asyncio.gather(
-        _bounded(r.ping()), _bounded(bucket_answers(ctx)), _bounded(_db_facts(s))
+    pinged, listed, corrupt, orphans = await asyncio.gather(
+        _bounded(r.ping()),
+        _bounded(bucket_answers(ctx)),
+        _bounded(_db_facts(s)),
+        _orphan_count(ctx),
     )
-    return Snapshot(corrupt is not None, bool(pinged), bool(listed), corrupt or 0)
+    return Snapshot(corrupt is not None, bool(pinged), bool(listed), corrupt or 0, orphans=orphans)
 
 
 async def _sleep(stop: asyncio.Event, seconds: float) -> None:
@@ -260,7 +288,12 @@ async def _refresh(
             log.exception("health probe failed")
             continue
         box.snap = replace(
-            box.snap, db_ok=p.db_ok, redis_ok=p.redis_ok, s3_ok=p.s3_ok, corrupt=p.corrupt
+            box.snap,
+            db_ok=p.db_ok,
+            redis_ok=p.redis_ok,
+            s3_ok=p.s3_ok,
+            corrupt=p.corrupt,
+            orphans=p.orphans,
         )  # the pass's backlog and last_pass stay
 
 
@@ -291,6 +324,7 @@ async def run(s: ArchiverSettings, stop: asyncio.Event) -> None:
             datetime.now(UTC), snap.db_ok, snap.redis_ok, snap.s3_ok, snap.oldest_unarchived,
             snap.corrupt, ctx.degraded_hours(), snap.last_pass,
             last_snapshot=snap.last_snapshot, snapshot_every_h=s.snapshot_every_h,
+            orphans=snap.orphans,
         )  # fmt: skip
 
     server = await serve_health(s.bind_host, s.health_port, status)

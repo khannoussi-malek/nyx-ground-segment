@@ -10,6 +10,7 @@ test.afterEach(async () => {
 
 test("api restart: NO LIVE CONNECTION from the first error, data flowing again in < 5 s", async ({ page }) => {
   await login(page, "fc1");
+  await page.evaluate(() => ((window as unknown as { __uiTimes: unknown[] }).__uiTimes = []));
   const t0 = Date.now();
   const restart = composeAsync("restart", "api");
   for (const v of VEHICLES) await expect(summary(page, v)).toContainText("NO LIVE CONNECTION", { timeout: 5_000 });
@@ -19,6 +20,9 @@ test("api restart: NO LIVE CONNECTION from the first error, data flowing again i
   await expect.poll(seqOf(page, "NYX-TA1"), { timeout: 5_000, intervals: [100] }).toBeGreaterThan(s1);
   const ms = Date.now() - t0;
   for (const v of VEHICLES) await expect(summary(page, v)).not.toContainText("NO LIVE CONNECTION");
+  const marks = await page.evaluate(() => (window as unknown as { __uiTimes: [string, number][] }).__uiTimes);
+  const phases = marks.map(([n, t]) => `${n} +${t - t0}`).join(", ");
+  console.log(`phases (ms after the restart began): restart returned +${restarted}, ${phases}`);
   console.log(`data flowing ${ms} ms after the restart began (compose restart returned at ${restarted} ms)`);
   expect(ms).toBeLessThan(5000); // UI-07 counts from the restart command, not from when it returned
 });

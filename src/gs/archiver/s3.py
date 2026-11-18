@@ -4,13 +4,12 @@ import asyncio
 import base64
 import hashlib
 import io
-from dataclasses import dataclass
 
 import urllib3
 from minio import Minio
 from minio.error import MinioException
 
-from gs.common.config import require
+from gs.common.s3_settings import S3Settings as S3Settings  # re-export: imported from here
 
 # refused / reset / timeout / any S3 answer: the pass treats all of them as "MinIO trouble"
 S3_ERRORS: tuple[type[BaseException], ...] = (MinioException, urllib3.exceptions.HTTPError, OSError)
@@ -18,21 +17,6 @@ REGION = "us-east-1"  # the archiver policy has no GetBucketLocation: never let 
 CONNECT_TIMEOUT_S = 3.0
 READ_TIMEOUT_S = 10.0
 _MIN_PART = 5 * 1024 * 1024  # above this a client would switch to multipart; one PUT stays one PUT
-
-
-@dataclass(frozen=True)
-class S3Settings:
-    endpoint: str
-    access_key: str
-    secret_key: str
-    bucket: str
-
-    @classmethod
-    def from_env(cls) -> S3Settings:
-        return cls(
-            require("S3_ENDPOINT"), require("S3_ACCESS_KEY"), require("S3_SECRET_KEY"),
-            require("S3_BUCKET"),
-        )  # fmt: skip
 
 
 def client(s: S3Settings) -> Minio:

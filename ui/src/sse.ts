@@ -4,6 +4,12 @@ export const RETRY_MS = 250;
 export const KINDS = ["hello", "snapshot", "tm", "alarm", "cmd", "link", "ground", "hb"] as const;
 export type Kind = (typeof KINDS)[number];
 
+/** Test-only timing marks (e2e reconnect.spec.ts reads window.__uiTimes): [name, epoch ms]; invisible to operators. */
+const mark = (name: string): void => {
+  const w = globalThis as unknown as { __uiTimes?: [string, number][] };
+  (w.__uiTimes ??= []).push([name, Date.now()]);
+};
+
 /**
  * EventSource with a client watchdog (D-UI-03): on error close and reopen after 1 s, one pending at a time.
  * A source that never opened retries after RETRY_MS: waiting a full second per refused attempt put up
@@ -32,6 +38,7 @@ export function connectEvents(
     let opened = false;
     src.addEventListener("open", () => {
       opened = true;
+      mark("open");
     });
     for (const kind of KINDS) {
       src.addEventListener(kind, (e) => {
@@ -42,6 +49,7 @@ export function connectEvents(
           console.warn(`dropping malformed ${kind} event`, err);
           return;
         }
+        if (kind === "snapshot") mark("snapshot");
         onEvent(kind, data); // outside the try: handler bugs must surface
       });
     }

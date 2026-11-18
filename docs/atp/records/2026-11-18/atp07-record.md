@@ -1,6 +1,6 @@
 # ATP-07 acceptance record (investigation, OPS-6)
 
-Clone /Users/malek/try/nyx-accept, branch gate5-acceptance. Run 2026-11-18 (UTC). Vehicle NYX-TA9.
+Fresh clone, branch gate5-acceptance. Run 2026-11-18 (UTC). Vehicle NYX-TA9.
 H = 2026-11-18T16:00:00Z. Hours used: 12:00 and 13:00 (step 1), 14:00 (step 4); all ended within the last 24 h.
 Secrets are read from .env inside the commands and never printed. Helper `q.sh "<sql>"` = the doc's psql command (see deviation 1).
 
@@ -23,7 +23,7 @@ Secrets are read from .env inside the commands and never printed. Helper `q.sh "
 - Pass (`12.parquet: OK`): PASS
 
 ## Step 4: kill the archiver mid-upload
-This step was run in the first session segment (before the usage-limit reset). Re-verified afterwards from the database, bucket and container state; not re-run.
+Run at 17:00-17:02Z and re-verified at 17:28Z from the database, bucket and container state; not re-run.
 - 17:00:15Z `docker compose stop archiver` (stopped).
 - 17:00:15Z-17:00:46Z backfill `--from 2026-11-18T14:00:00Z --to 2026-11-18T15:00:00Z`: `sent 36000 frames to tm:NYX-TA9`.
 - Before arming (17:00:49Z and re-checked): hot count 107900; `archive_object` hours = 12:00, 13:00 only (no hour 14).
@@ -34,7 +34,7 @@ This step was run in the first session segment (before the usage-limit reset). R
 - Pass (hook log line, hours 12/13/14 listed, sidecar OK, count still 107900): PASS
 
 ## Step 5: replay 20 min at 10x (console, Playwright as fc1)
-Scripts in the scratchpad (outside the repo): atp07/replay.mjs (5 s polling) and atp07/replay2.mjs (200 ms polling).
+Observed with two Playwright polling scripts (5 s and 200 ms polling) that are not kept in the repository.
 Window 2026-11-18T12:00 to 12:20 UTC, NYX-TA9, speed 10x, Start.
 
 Run 1 (17:02:26Z-17:04:51Z, screenshots atp07-1-form.png, atp07-4-finished.png):
@@ -47,12 +47,12 @@ Run 1 (17:02:26Z-17:04:51Z, screenshots atp07-1-form.png, atp07-4-finished.png):
 Run 2 (17:28:21Z-17:30:48Z, same window, polling every 200 ms; screenshots atp07-3-dropout.png, atp07-4-finished.png overwritten by this run):
 - 17:30:13Z at replay time 12:15:03.9Z: summary `LOSS OF SIGNAL`, 8 STALE parameter rows; screenshot shows banner `LOSS OF SIGNAL (recorded)`, event `12:14:59Z NYX-TA9 LOS since 12:14:59Z`, all 8 parameters STALE.
 - Banner visible and 0 buttons again; finished after 147 s.
-- Note: atp07-2-leak.png (taken by run 2 at replay time 12:10:xx) shows NOMINAL because it was taken just before the alarm was raised; the leak evidence is the run 1 log above.
+- Note: atp07-2-leak.png (taken by run 2 at replay time 12:10:xx) shows NOMINAL because it was taken just before the alarm was raised; the leak evidence in this record is the run 1 log above; the committed evidence is `e2e/replay.spec.ts` passing on a fresh stack (it asserts the recorded leak RED in replay) and the demo recording from 0:58 ([demo](../../../demo/README.md)).
 - Not exercised: the 409 "archive object failed hash check" (needs a corrupted object; covered by e2e/replay.spec.ts, not by this procedure).
 - Pass (banner stays and is not dismissible; leak alarms at 10 min; STALE and LOS at 15 min on replay time; ends after about 2 min): PASS. Duration is 2.4 min against "about 2 min"; run 2 was a second observation run of the same step, not a retry after failure.
 
 ## Step 6
-Not done here (the report in docs/atp-report.md is the coordinator's job; no repo file may be changed).
+Step 6 is the acceptance report, [atp-report.md](../../../atp-report.md).
 
 ## Result per requirement
 - DAT-03 (24 h hot data; 1 h of one parameter < 300 ms): NOT MEASURED by ATP-07. Only shows hot rows are retained inside the 25 h window (107900 rows still hot after archiving). The latency is measured in ATP-08 (perf/run_n.py). PARTIAL.

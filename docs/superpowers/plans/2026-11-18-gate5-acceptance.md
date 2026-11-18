@@ -4,7 +4,7 @@
 
 **Spec:** spec §5 (acceptance rule, ATP table), §6 (deliverables), §7 (review questions, answered in `docs/design.md` §8), §8 Gate 5; `docs/design.md` §5.3 Gate 5 row; `docs/requirements.md` (each requirement's ATP and evidence).
 
-**Where:** fresh clone `/Users/malek/try/nyx-accept` of `main` at `7e696b3`, branch `gate5-acceptance`, stack ports +1400 (API 9400, DB 6832, Redis 7879, MinIO 10400, sim 9481) because another project's stack holds 5432.
+**Where:** fresh clone of `main` at `7e696b3`, branch `gate5-acceptance`, stack ports +1400 (API 9400, DB 6832, Redis 7879, MinIO 10400, sim 9481) because another project's stack holds 5432.
 
 ## Acceptance rule (spec §5, verbatim intent)
 
@@ -15,7 +15,7 @@
 ## Order (measurements on a quiet machine first, destructive suites last)
 
 1. **INSP-01 setup evidence:** the clone, `make up` time and service health (done at start).
-2. **ATP-07** on the fresh stack, following `docs/atp/ATP-07.md` step by step (a runner agent records each command's output). Before any e2e run: the replay e2e leaves an open ARCHIVE_CORRUPT on NYX-TA9.
+2. **ATP-07** on the fresh stack, following `docs/atp/ATP-07.md` step by step (the operator records each command's output). Before any e2e run: the replay e2e leaves an open ARCHIVE_CORRUPT on NYX-TA9.
 3. **ATP-08** (`make perf`, `make perf-p`, `perf.scaling`) with nothing else running on the machine but the user's own idle stacks (recorded).
 4. **ATP-01** (`make soak`, 2 h) under the same rule.
 5. **Automated suites** (CI-equivalent): lint, unit + coverage, `after_coverage`, integration, system, e2e. They cover ATP-02 to ATP-06 and the automated inspection checks.

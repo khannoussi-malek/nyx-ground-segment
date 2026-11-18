@@ -9,4 +9,4 @@
 | 0:47 | `e2e/atp04-los.spec.ts` (D-UI-25) | Rejected frames before a silence: FRAMES REJECTED instead of LOSS OF SIGNAL, cleared by the AOS |
 | 0:58 | `e2e/replay.spec.ts` (ATP-07) | Replay of archived NYX-TA9 hours at 10x: purple REPLAY banner, the recorded leak alarm and dropout on replay time, a live RED counted in the banner, and a 409 on a corrupt hour |
 
-Reproduce on a stack with unused NYX-TA9 history: `make up`, then `cd e2e && DEMO_VIDEO=1 npx playwright test atp02-leak atp04-los replay`; the videos land in `e2e/test-results/*/video.webm`.
+Reproduce on a stack with unused NYX-TA9 history: `make up`, then `make e2e/node_modules && cd e2e && DEMO_VIDEO=1 npx playwright test atp02-leak atp04-los replay`; the videos land in `e2e/test-results/*/video.webm`.

@@ -10,8 +10,8 @@ Status: Gate 4, test readiness. In: the archiver, replay, session re-freeze, ala
 ## Run
 Needs only Docker and make.
 ```
-git clone https://github.com/khannoussi-malek/nyx
-cd nyx
+git clone https://github.com/khannoussi-malek/nyx-ground-segment
+cd nyx-ground-segment
 make up
 ```
 `make up` creates `.env`, `users.yaml` and the Redis ACL on the first run and prints the three demo users (`conductor`, `fc1`, `fc2`) and their passwords once; they stay in `.env` as `DEMO_PW_<USER>`. Open http://127.0.0.1:8000 and log in. `make down` stops the stack and keeps the data; `make reset` deletes everything (database, archive, secrets).

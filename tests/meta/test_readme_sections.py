@@ -49,7 +49,15 @@ def test_readme_run_block_is_the_three_commands() -> None:
     assert len(blocks) == 1
     cmds = blocks[0].strip().splitlines()
     assert len(cmds) == 3
-    assert cmds[0].startswith("git clone ") and cmds[1] == "cd nyx" and cmds[2] == "make up"
+    assert cmds[0].startswith("git clone ")
+    assert cmds[1] == "cd nyx-ground-segment" and cmds[2] == "make up"
+
+
+def test_readme_clone_url_matches_the_repository() -> None:
+    lines = (REPO / "README.md").read_text().splitlines()
+    clone = [ln for ln in lines if ln.startswith("git clone ")]
+    assert len(clone) == 1
+    assert clone[0].endswith("/nyx-ground-segment"), clone[0]
 
 
 def test_readme_screenshot_is_a_real_png() -> None:

@@ -1,7 +1,7 @@
 // ATP-04: a 10 s dropout → every NYX-TA1 row STALE at 2 s ± 0.5 s, LOSS OF SIGNAL, one tone;
 // the AOS strip line counts 100 frames lost (±1); the vehicle recovers on its own.
 import { expect, test } from "@playwright/test";
-import { clearFault, fault, lastTone, login, row, summary } from "./helpers";
+import { clearFault, fault, lastTone, login, row, summary, dropoutWithBadFrames } from "./helpers";
 
 const V = "NYX-TA1";
 const DROPOUT_S = 10;
@@ -42,4 +42,13 @@ test("dropout 10 s: STALE at 2 s, LOSS OF SIGNAL, one tone, AOS with 100 frames 
   await expect(aosLines.first()).toHaveText(/AOS – (99|100|101) frames lost/);
   await expect(summary(page, V)).not.toContainText("LOSS OF SIGNAL");
   await expect(pressure).toHaveAttribute("data-acq", "OK");
+});
+
+test("rejected frames before a LOS: FRAMES REJECTED instead of LOSS OF SIGNAL, cleared by the AOS (D-UI-25)", async ({ page }) => {
+  test.setTimeout(60_000);
+  await login(page, "fc1");
+  await expect(row(page, V, "cabin_pressure_kpa")).toHaveAttribute("data-acq", "OK");
+  dropoutWithBadFrames(V, 3, 8);
+  await expect(summary(page, V)).toContainText("FRAMES REJECTED – 3 frames, t_onboard_range – check tm:dlq", { timeout: 7_000 });
+  await expect(summary(page, V)).not.toContainText("FRAMES REJECTED", { timeout: 15_000 });
 });

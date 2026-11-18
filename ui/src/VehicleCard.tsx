@@ -12,6 +12,8 @@ export type VehicleCardProps = {
   ageMs: number | null; // ageAt(...) from the parent's clock tick
   params: readonly ParamView[];
   banner?: Banner;
+  /** replaces the banner's text only (D-UI-25: FRAMES REJECTED on a LOSS OF SIGNAL) */
+  bannerText?: string;
   /** true once every row's state comes from the engine (day 3); until then no summary is shown,
    *  because "NOMINAL" without alarm data could hide an open RED */
   statesWired?: boolean;
@@ -25,8 +27,9 @@ export function VehicleCard(c: VehicleCardProps) {
   const { onCommit, seq } = c;
   // eslint-disable-next-line react-hooks/exhaustive-deps -- once per frame, not per new callback identity
   useEffect(() => onCommit?.(), [seq]);
-  const summary =
+  const base =
     c.statesWired || c.banner ? vehicleSummary(c.params.map((p) => p.state ?? NOMINAL_OK), c.banner) : null;
+  const summary = base && c.banner && c.bannerText ? { ...base, text: c.bannerText } : base;
   return (
     <table>
       <caption>

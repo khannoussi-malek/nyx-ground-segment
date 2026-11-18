@@ -1,7 +1,7 @@
 import asyncio
 import dataclasses
 import signal
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -16,6 +16,15 @@ from gs.api.auth import hash_password
 from gs.api.server import GracefulServer, build_server
 from tests.support.env import vid
 from tests.support.http import FC1_PW, FC2_PW, api_settings, login
+from tests.support.keys import purge_quietly
+
+
+@pytest.fixture(scope="session", autouse=True)
+def purge_test_vehicle_keys() -> Iterator[None]:
+    """Clear throwaway-vehicle keys left by earlier runs, and again at the end."""
+    purge_quietly()
+    yield
+    purge_quietly()
 
 
 @pytest.fixture(scope="session")

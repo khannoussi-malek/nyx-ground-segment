@@ -853,7 +853,9 @@ async def test_one_broken_object_fails_its_hour_and_later_hours_still_archive(
 
     def state(ctx: Any) -> str:
         now = datetime.now(UTC)
-        return archiver_status(now, True, True, True, None, 0, ctx.degraded_hours(), now)[0]
+        return archiver_status(
+            now, True, True, True, None, 0, ctx.degraded_hours(), now, last_snapshot=now
+        )[0]
 
     v = vid()
     c_, a, b = H - 2 * HOUR, H - HOUR, H
@@ -887,7 +889,9 @@ def _state(ctx: Any) -> str:
     from gs.archiver.status import archiver_status
 
     now = datetime.now(UTC)
-    return archiver_status(now, True, True, True, None, 0, ctx.degraded_hours(), now)[0]
+    return archiver_status(
+        now, True, True, True, None, 0, ctx.degraded_hours(), now, last_snapshot=now
+    )[0]
 
 
 async def test_an_anomaly_does_not_clear_an_unreadable_mark(
@@ -1183,6 +1187,45 @@ async def test_run_survives_failures_and_backs_off(
     monkeypatch.setattr(main, "_probe", bad_probe)  # even the first probe may fail
     await asyncio.wait_for(main.run(_settings(5.0), asyncio.Event()), 20)
     assert waits == ([1, 2, 4, 5] if outcome == "raises" else [5, 5, 5, 5])
+
+
+@pytest.mark.parametrize(("every_h", "due"), [(24.0, [True, False, False]), (1e-9, [True] * 3)])
+async def test_run_takes_a_snapshot_only_when_one_is_due(
+    monkeypatch: pytest.MonkeyPatch, every_h: float, due: list[bool]
+) -> None:
+    import asyncio
+    from dataclasses import replace
+    from datetime import UTC, datetime
+
+    from gs.archiver import main
+
+    flags: list[bool] = []
+    waits = 0
+
+    async def fake_sleep(stop: asyncio.Event, seconds: float) -> None:
+        nonlocal waits
+        if seconds == 777:
+            await stop.wait()
+            return
+        waits += 1
+        if waits >= 3:
+            stop.set()
+
+    async def recording_pass(*a: Any, snapshot: bool = False, **k: Any) -> Any:
+        flags.append(snapshot)  # only the first pass reports a snapshot; the box must remember it
+        return main.PassResult(snapshot_at=datetime.now(UTC) if len(flags) == 1 else None)
+
+    async def ok_probe(*a: Any, **k: Any) -> Any:
+        return main.Snapshot(True, True, True, 0)
+
+    monkeypatch.setattr(main, "HEALTH_REFRESH_S", 777.0)
+    monkeypatch.setattr(main, "_sleep", fake_sleep)
+    monkeypatch.setattr(main, "run_pass", recording_pass)
+    monkeypatch.setattr(main, "_probe", ok_probe)
+    await asyncio.wait_for(
+        main.run(replace(_settings(5.0), snapshot_every_h=every_h), asyncio.Event()), 20
+    )
+    assert flags == due
 
 
 async def test_refresher_outlives_a_failing_probe(monkeypatch: pytest.MonkeyPatch) -> None:

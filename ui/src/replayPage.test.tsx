@@ -199,3 +199,22 @@ test("Start works again after a replay has ended", async () => {
   await flush();
   expect(calls.filter((c) => c.startsWith("POST /api/replays"))).toHaveLength(2);
 });
+
+test("Start works again after the stream errors (G4 6a)", async () => {
+  const calls = mount((u, i) => (i?.method === "POST" ? Promise.resolve(json(201, { replay_id: "r1" })) : vehicles(u)));
+  await fillAndStart();
+  FakeES.last!.emit("open");
+  FakeES.last!.emit("error");
+  act(() => button("Start").click());
+  await flush();
+  expect(calls.filter((c) => c.startsWith("POST /api/replays"))).toHaveLength(2);
+});
+
+test("a create that fails at the network leaves Start usable (G4 6a)", async () => {
+  const calls = mount((u, i) => (i?.method === "POST" ? Promise.reject(new TypeError("down")) : vehicles(u)));
+  await fillAndStart();
+  expect((button("Start") as HTMLButtonElement).disabled).toBe(false);
+  act(() => button("Start").click());
+  await flush();
+  expect(calls.filter((c) => c.startsWith("POST /api/replays"))).toHaveLength(2);
+});

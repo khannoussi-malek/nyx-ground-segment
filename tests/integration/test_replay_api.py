@@ -158,6 +158,22 @@ async def test_other_user_404_and_second_get_404(live_api: LiveApi) -> None:
             await o.aclose()
 
 
+async def test_third_open_replay_is_refused(live_api: LiveApi) -> None:  # Task 13 M4
+    v = vehicle()
+    hot_hour(v, H, n=30, rate_hz=1.0)
+    async with client(live_api) as c:
+        first, second = await create(c, body(v)), await create(c, body(v))
+        r = await c.post("/api/replays", json=body(v))
+        assert r.status_code == 429
+        assert r.json() == {
+            "error": "TOO_MANY_REPLAYS",
+            "message": "at most 2 replays at once; stop one first",
+        }
+        assert (await c.delete(f"/api/replays/{first}")).status_code == 204
+        await create(c, body(v))  # stopping one frees a slot
+        assert (await c.delete(f"/api/replays/{second}")).status_code == 204
+
+
 def uuid_zero() -> str:
     return "00000000-0000-0000-0000-000000000000"
 
@@ -213,6 +229,19 @@ async def test_idle_replay_expires(live_api: LiveApi, monkeypatch: pytest.Monkey
         assert len(registry(live_api)) == 1
         await until(lambda: registry(live_api) == {}, 2)
         assert (await c.get(f"/api/replays/{rid}/events")).status_code == 404
+
+
+async def test_taken_replay_whose_stream_never_starts_frees_its_slot(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # an accepted GET whose client vanished before the first byte must not hold a slot
+    v = vehicle()
+    hot_hour(v, H, n=30, rate_hz=1.0)
+    monkeypatch.setattr(replays, "REPLAY_IDLE_S", 0.3)
+    async with client(live_api) as c:
+        await create(c, body(v))
+        (r,) = registry(live_api).values()
+        r.taken = True  # the GET was accepted, but _stream never ran
+        await until(lambda: registry(live_api) == {}, 2)
 
 
 def _live_msg(kind: str, v: str | None) -> dict[str, Any]:

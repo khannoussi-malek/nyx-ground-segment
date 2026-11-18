@@ -158,7 +158,7 @@ def _ms(t: datetime) -> int:
 def sent_frames(r: redis.Redis, v: str, start: datetime, end: datetime) -> list[Frame]:
     """Frames the simulator XADDed to tm:<v> with t_onboard in [start, end), read back from the
     stream (the broker record of what was sent, read as admin, ingest has no XRANGE;
-    360k entries are kept, 10 h at 10 Hz), in stream order: entry IDs only rise, so it is the send
+    108k entries are kept, 3 h at 10 Hz), in stream order: entry IDs only rise, so it is the send
     order even when t_onboard steps back."""
     key = f"tm:{v}"
     info = r.xinfo_stream(key)
@@ -192,6 +192,10 @@ def _count(
 ) -> VehicleCount:
     stored = stored_frames(db, v, start, end)
     sent = sent_frames(r, v, start, end)
+    if n := len(stored - set(sent)):  # G4-21: the stream is the record of what was sent
+        raise RuntimeError(
+            f"soak: {n} stored frames are missing from tm:{v} (deleted from the stream?)"
+        )
     lost = lost_by_epoch(epochs := epoch_rows(sent, stored))
     gaps, resets = (db.execute(sql, (v, start, end)).fetchone() for sql in (GAP_SQL, RESET_SQL))
     assert gaps is not None and resets is not None

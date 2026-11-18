@@ -4,6 +4,7 @@ the HTTP and the simulator edges are fakes."""
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, cast
 
 import psycopg
 import pytest
@@ -65,6 +66,19 @@ def _run(v: str, b1: datetime, end: datetime, out: Path, overflow: list[int] | N
     api = SoakApi(((b1 - timedelta(seconds=5)).isoformat(), end.isoformat()))
     counter = iter(overflow or [0, 0])  # read at session start and at stop
     main(0, api=api, vehicles=(v,), out=out, wait=lambda: None, overflow=lambda: next(counter))
+
+
+async def test_an_xdeleted_stream_entry_fails_the_count(tmp_path: Path) -> None:  # G4-21
+    v = vid()
+    r = _ingest_redis()
+    old_ms = int((time_base() - timedelta(minutes=10)).timestamp() * 1000)
+    # an older head: the stream is not "trimmed"
+    r.xadd(f"tm:{v}", {"data": "old"}, id=f"{old_ms}-0")
+    b1, _, end = await _seed(v)
+    second = cast(list[Any], r.xrange(f"tm:{v}", count=3))[1]
+    r.xdel(f"tm:{v}", second[0])
+    with pytest.raises(RuntimeError, match=r"1 stored frames are missing from tm:"):
+        _run(v, b1, end, tmp_path)
 
 
 async def test_main_passes_on_a_complete_run(tmp_path: Path) -> None:

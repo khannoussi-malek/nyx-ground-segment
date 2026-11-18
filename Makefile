@@ -13,6 +13,7 @@ down:
 	docker compose down
 
 reset:
+	uv run python scripts/reset_guard.py
 	docker compose down -v && rm -f .env users.yaml redis/users.acl
 
 migrate:

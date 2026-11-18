@@ -49,8 +49,8 @@ ENV = {
     },
     "archiver": {
         "DATABASE_URL", "REDIS_URL", "S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET",
-        "HOT_RETENTION_H", "ARCHIVE_LOOP_S", "BIND_HOST", "HEALTH_PORT", "GS_TEST_HOOKS",
-        "CRASH_AT", "STOP_AT",
+        "HOT_RETENTION_H", "ARCHIVE_LOOP_S", "SNAPSHOT_EVERY_H", "BIND_HOST", "HEALTH_PORT",
+        "GS_TEST_HOOKS", "CRASH_AT", "STOP_AT",
     },
     "ingest-1": INGEST_ENV,
     "ingest-2": INGEST_ENV,

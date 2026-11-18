@@ -85,3 +85,12 @@ def test_fast_enough_boundary() -> None:
     # capacity 1500 vs load 1000 is exactly the 60 s boundary
     assert scaling.catch_up_s(30000, 1500, 1000) == 60.0
     assert scaling.extrapolate({**TOTALS, "cpu_fraction": 0.2 * 1000 / 1001}).catch_up > 60
+
+
+def test_redis_growth_not_measurable_when_capped_and_per_worker_share() -> None:
+    for mb in (-0.8e6 / 10, 0.0):
+        text = scaling.render(scaling.extrapolate({**TOTALS, "redis_bytes_per_vehicle_hour": mb}))
+        assert "| Redis growth | not measurable (streams capped at MAXLEN) |\n" in text
+    ok = scaling.render(scaling.extrapolate(TOTALS))
+    assert "| Redis growth | 20.0 MB/hour |\n" in ok
+    assert "5 vehicles per worker = 500 frames/s of the fleet's 1000 frames/s" in ok

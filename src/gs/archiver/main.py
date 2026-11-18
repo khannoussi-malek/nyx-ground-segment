@@ -7,7 +7,7 @@ import os
 import signal
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import psycopg
@@ -38,6 +38,7 @@ from gs.archiver.plan import (
 )
 from gs.archiver.s3 import S3_ERRORS, S3Settings, client
 from gs.archiver.scrub import scrub_pass, unresolved_corrupt, unresolved_corrupt_keys
+from gs.archiver.snapshot import take_snapshot
 from gs.archiver.status import archiver_status
 from gs.common.config import ConfigError, require, require_int
 from gs.common.health import State, serve_health
@@ -83,6 +84,7 @@ class ArchiverSettings:
     health_port: int
     retention_h: float = 25.0
     loop_s: float = 300.0
+    snapshot_every_h: float = 24.0
 
     @classmethod
     def from_env(cls) -> ArchiverSettings:
@@ -94,6 +96,7 @@ class ArchiverSettings:
             health_port=require_int("HEALTH_PORT"),
             retention_h=_float("HOT_RETENTION_H", 25.0, minimum=0.0),
             loop_s=_float("ARCHIVE_LOOP_S", 300.0, minimum=0.0, strict=True),
+            snapshot_every_h=_float("SNAPSHOT_EVERY_H", 24.0, minimum=0.0, strict=True),
         )
 
 
@@ -104,6 +107,7 @@ class PassResult:
     deleted: int = 0
     anomalies: int = 0
     scrubbed: int = 0
+    snapshot_at: datetime | None = None  # set when this pass stored a state snapshot
     failed: bool = False  # S3 trouble: the pass stopped, nothing was deleted after it
     oldest_unarchived: datetime | None = None
 
@@ -139,7 +143,9 @@ async def _act(
         raise
 
 
-async def run_pass(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any]) -> PassResult:
+async def run_pass(
+    ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], snapshot: bool = False
+) -> PassResult:
     """One loop: scrub first, then plan from hot counts, archive rows and the unresolved corrupt
     hours, then act: builds oldest first, deletes after them. S3 trouble local to one hour's
     object (job.object_local) fails that hour only, other verified hours may still be deleted
@@ -178,6 +184,12 @@ async def run_pass(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any]) -> Pass
     except S3_ERRORS as e:
         log.warning("archiver pass stopped, MinIO trouble: %s", e)
         res = replace(res, failed=True)
+    if snapshot and not res.failed:  # after the deletes; whatever happens here never fails the pass
+        try:
+            await take_snapshot(ctx, conn, now)
+            res = replace(res, snapshot_at=now)
+        except Exception:
+            log.exception("state snapshot failed")
     pending = {k: n for k, n in counts.items() if k not in done}
     return replace(res, oldest_unarchived=oldest_unarchived(now, pending, rows))
 
@@ -190,6 +202,7 @@ class Snapshot:
     corrupt: int = 0
     oldest_unarchived: datetime | None = None
     last_pass: datetime | None = None
+    last_snapshot: datetime | None = None
 
 
 @dataclass
@@ -277,6 +290,7 @@ async def run(s: ArchiverSettings, stop: asyncio.Event) -> None:
         return archiver_status(
             datetime.now(UTC), snap.db_ok, snap.redis_ok, snap.s3_ok, snap.oldest_unarchived,
             snap.corrupt, ctx.degraded_hours(), snap.last_pass,
+            last_snapshot=snap.last_snapshot, snapshot_every_h=s.snapshot_every_h,
         )  # fmt: skip
 
     server = await serve_health(s.bind_host, s.health_port, status)
@@ -286,10 +300,17 @@ async def run(s: ArchiverSettings, stop: asyncio.Event) -> None:
         while not stop.is_set():
             try:
                 async with await _connect(s.database_url) as conn:
-                    res = await run_pass(ctx, conn)
+                    last = box.snap.last_snapshot
+                    due = last is None or datetime.now(UTC) - last >= timedelta(
+                        hours=s.snapshot_every_h
+                    )
+                    res = await run_pass(ctx, conn, snapshot=due)
                 failed = res.failed
                 box.snap = replace(
-                    box.snap, oldest_unarchived=res.oldest_unarchived, last_pass=datetime.now(UTC)
+                    box.snap,
+                    oldest_unarchived=res.oldest_unarchived,
+                    last_pass=datetime.now(UTC),
+                    last_snapshot=res.snapshot_at or box.snap.last_snapshot,
                 )
             except Exception:  # a bug or a database error: this pass failed, the next one retries
                 log.exception("archiver pass failed")

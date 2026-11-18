@@ -11,7 +11,9 @@ from datetime import datetime, timedelta
 from gs.archiver.hours import object_key
 from tests.support.archive import TA9, archive_rows, backfill_ta9, next_ta9_window
 from tests.support.env import wait_until
+from tests.support.keys import trim_if_drained
 from tests.support.pg import rows
+from tests.support.redisx import client
 from tests.support.s3 import s3_client
 
 FRAMES_A = 36_000 - 100  # the 10 s dropout never sends 100 frames
@@ -44,6 +46,7 @@ def main() -> None:
         return {r["hour"]: r["rows"] for r in archive_rows(TA9)}
 
     wait_until(lambda: archived().get(a) == FRAMES_A and archived().get(b) == FRAMES_B, 1200)
+    trim_if_drained(client("admin"), f"tm:{TA9}")  # the replay only needs the archive now
     root = s3_client("root")
     data = bytearray(root.get_object("archive", object_key(TA9, b)).read())
     data[len(data) // 2] ^= 0xFF

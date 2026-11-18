@@ -4,7 +4,7 @@
 
 | From | Spec | What it shows |
 |---|---|---|
-| 0:00 | `e2e/atp02-leak.spec.ts` (ATP-02) | Login, then a cabin leak on NYX-TA1: YELLOW, then RED LOW with a tone, ACK, the hazardous isolate command with its confirmation, VERIFIED, the alarm clears |
+| 0:00 | `e2e/atp02-leak.spec.ts` (ATP-02) | Login, then a cabin leak on NYX-TA1: YELLOW, then RED LOW with a tone, ACK, the isolate_valve command (not hazardous, so no confirmation dialog), VERIFIED, the alarm clears |
 | 0:35 | `e2e/atp04-los.spec.ts` (ATP-04) | A 10 s dropout: every value STALE after 2 s, LOSS OF SIGNAL with one tone, AOS reporting 100 frames lost, recovery |
 | 0:47 | `e2e/atp04-los.spec.ts` (D-UI-25) | Rejected frames before a silence: FRAMES REJECTED instead of LOSS OF SIGNAL, cleared by the AOS |
 | 0:58 | `e2e/replay.spec.ts` (ATP-07) | Replay of archived NYX-TA9 hours at 10x: purple REPLAY banner, the recorded leak alarm and dropout on replay time, a live RED counted in the banner, and a 409 on a corrupt hour |

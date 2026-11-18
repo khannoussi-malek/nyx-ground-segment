@@ -182,3 +182,26 @@ async def test_snapshot_refuses_existing_key(caplog: pytest.LogCaptureFixture) -
                     await take_snapshot(archiver_ctx(), c, now)
     assert members(key) == first
     assert any(r.levelno == logging.ERROR and key in r.message for r in caplog.records)
+
+
+async def test_failed_sidecar_leaves_no_orphan_tarball(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The archiver policy has no delete (D-ARC-09), so the orphan is remembered and reported."""
+    real = s3_mod.put
+
+    async def sidecar_dies(c: Any, bucket: str, key: str, data: bytes) -> str:
+        if key.endswith(".sha256"):
+            raise OSError("minio died")
+        return await real(c, bucket, key, data)
+
+    monkeypatch.setattr(s3_mod, "put", sidecar_dies)
+    ctx = archiver_ctx()
+    now = NOW + timedelta(minutes=4)
+    with throwaway_db() as db:
+        async with app_conn(db) as c:
+            with pytest.raises(OSError):
+                await take_snapshot(ctx, c, now)
+    key = snapshot_key(now)
+    assert ctx.snapshot_orphans == {key}
+    assert [o.object_name for o in s3_client("archiver").list_objects("archive", prefix=key)] == [
+        key
+    ]  # the tarball is there, the sidecar is not: not a snapshot

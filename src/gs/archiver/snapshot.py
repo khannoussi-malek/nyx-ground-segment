@@ -84,7 +84,13 @@ async def take_snapshot(ctx: ArchiverCtx, conn: psycopg.AsyncConnection[Any], no
         raise FileExistsError(key)
     data = await _tarball(conn)
     sent = await s3.put(ctx.s3, ctx.bucket, key, data)
-    if hashlib.sha256(await s3.get(ctx.s3, ctx.bucket, key)).hexdigest() != sent:
-        raise OSError(f"snapshot {key} differs from what was sent")
-    await s3.put(ctx.s3, ctx.bucket, f"{key}.sha256", sent.encode())
+    try:
+        if hashlib.sha256(await s3.get(ctx.s3, ctx.bucket, key)).hexdigest() != sent:
+            raise OSError(f"snapshot {key} differs from what was sent")
+        await s3.put(ctx.s3, ctx.bucket, f"{key}.sha256", sent.encode())
+    except BaseException:
+        # no delete in the archiver policy (D-ARC-09): remember the orphan for /healthz
+        ctx.snapshot_orphans.add(key)
+        log.error("state snapshot %s has no sidecar and cannot be deleted", key)
+        raise
     return key

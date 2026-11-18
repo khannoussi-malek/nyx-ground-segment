@@ -291,6 +291,7 @@ async def run(s: ArchiverSettings, stop: asyncio.Event) -> None:
             datetime.now(UTC), snap.db_ok, snap.redis_ok, snap.s3_ok, snap.oldest_unarchived,
             snap.corrupt, ctx.degraded_hours(), snap.last_pass,
             last_snapshot=snap.last_snapshot, snapshot_every_h=s.snapshot_every_h,
+            orphans=len(ctx.snapshot_orphans),
         )  # fmt: skip
 
     server = await serve_health(s.bind_host, s.health_port, status)

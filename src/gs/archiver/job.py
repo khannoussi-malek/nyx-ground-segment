@@ -74,6 +74,10 @@ class ArchiverCtx:
         default_factory=set
     )  # hours whose object failed on its own last pass (object_local); cleared when it works
 
+    snapshot_orphans: set[str] = field(
+        default_factory=set
+    )  # snapshot tarballs without a sidecar; the archiver policy cannot delete them (D-ARC-09)
+
     def degraded_hours(self) -> int:
         """/healthz `delete_refused` (T4-c): refused deletes and hours with an unreadable object."""
         return len(self.refused | self.unreadable)

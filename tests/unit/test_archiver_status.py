@@ -24,6 +24,7 @@ def test_ok() -> None:
         "oldest_unarchived_hour": None, "scrub": "ok", "delete_refused": 0, "db": "ok",
         "redis": "ok", "minio": "ok", "last_pass": "2026-11-15T12:00:00.000000Z",
         "last_state_snapshot": "2026-11-15T12:00:00.000000Z",
+        "state_snapshot_orphans": 0,
     }  # fmt: skip
 
 
@@ -113,3 +114,9 @@ def test_archiver_status_snapshot_age() -> None:
     assert st(last_snapshot=None, last_pass=None)[0] == "ok"  # before the first pass
     state, checks = st(last_snapshot=None)  # a pass completed and took none
     assert (state, checks["last_state_snapshot"]) == ("degraded", None)
+
+
+def test_orphan_snapshot_tarballs_degrade() -> None:
+    assert st()[1]["state_snapshot_orphans"] == 0
+    state, checks = st(orphans=2)
+    assert (state, checks["state_snapshot_orphans"]) == ("degraded", 2)

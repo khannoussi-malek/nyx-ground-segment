@@ -27,6 +27,7 @@ from gs.common.interfaces.replay import ReplayEnd
 from gs.replay.run import replay_messages
 
 MAX_WINDOW = timedelta(hours=24)
+MAX_OPEN_PER_USER = 2  # each replay holds a Postgres connection for up to hours
 REPLAY_IDLE_S = 60  # a created replay nobody GETs within this long is dropped
 DB_CONNECT_S = 5
 SSE_RETRY_MS = 1000  # as the live /api/events
@@ -62,7 +63,11 @@ def _unavailable(what: str, e: BaseException) -> ApiError:
     return ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", f"{what} unreachable")
 
 
-@router.post("/api/replays", status_code=201, responses=errors(400, 401, 403, 404, 409, 422, 503))
+@router.post(
+    "/api/replays",
+    status_code=201,
+    responses=errors(400, 401, 403, 404, 409, 422, 429, 503),
+)
 async def create_replay(body: ReplayRequest, request: Request, user: User) -> ReplayCreated:
     if body.t_from >= body.t_to:
         raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_WINDOW", "from must be before to")
@@ -78,6 +83,12 @@ async def create_replay(body: ReplayRequest, request: Request, user: User) -> Re
         raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", str(e)) from e
     except S3_ERRORS as e:
         raise _unavailable("archive store", e) from e
+    if sum(o.user == user for o in st.replays.values()) >= MAX_OPEN_PER_USER:  # no await to insert
+        raise ApiError(
+            HTTPStatus.TOO_MANY_REQUESTS,
+            "TOO_MANY_REPLAYS",
+            f"at most {MAX_OPEN_PER_USER} replays at once; stop one first",
+        )
     r = Replay(uuid4(), user, body, time.monotonic(), asyncio.Event())
     st.replays[r.id] = r
 

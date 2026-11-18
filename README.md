@@ -5,7 +5,7 @@
 ## What it is
 A ground segment for a test campaign: it ingests telemetry from two simulated test articles (NYX-TA1 and NYX-TA2, 10 Hz each, with fault injection), stores every frame once, classifies each value against limits with hysteresis and persistence, raises and tracks alarms with acknowledgement, sends commands with a confirmation and a 2 s interlock, runs test sessions with a frozen report, archives finished hours to verified Parquet files and replays them. Python backend, React + TypeScript console, everything in Docker Compose. Requirements are in [docs/requirements.md](docs/requirements.md), the design in [docs/design.md](docs/design.md).
 
-Status: Gate 4, test readiness. In: the archiver, replay, session re-freeze, alarm-quality metrics and test hooks. Run P and the scaling analysis are in; their commands are documented in the ATP procedures. [CHANGELOG.md](CHANGELOG.md) says what is in per gate.
+Status: v1.0, accepted at Gate 5 from a fresh clone: the [acceptance report](docs/atp-report.md) gives each ATP's result, evidence and numbers; the non-conformances are in [docs/ncr/](docs/ncr/); a 3.5-minute [demo](docs/demo/README.md) shows ATP-02, ATP-04 and ATP-07 in the console. [CHANGELOG.md](CHANGELOG.md) says what is in per gate.
 
 ## Run
 Needs only Docker and make.

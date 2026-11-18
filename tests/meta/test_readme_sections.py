@@ -232,3 +232,11 @@ def test_atp07_step2_waits_for_both_hours_to_be_recorded() -> None:
     step2 = _atp("ATP-07").split("\n2. **", 1)[1].split("\n3. **", 1)[0]
     assert "from archive_object where vehicle='NYX-TA9'" in step2
     assert "2026-11-16 08:00:00+00" in step2 and "2026-11-16 09:00:00+00" in step2
+
+
+def test_readme_links_the_gate5_report_and_demo() -> None:
+    text = (REPO / "README.md").read_text()
+    for target in ("docs/atp-report.md", "docs/demo/README.md"):
+        assert f"]({target})" in text and (REPO / target).exists(), target
+    assert "](gate5-demo.mp4)" in (REPO / "docs/demo/README.md").read_text()
+    assert (REPO / "docs/demo/gate5-demo.mp4").stat().st_size > 0

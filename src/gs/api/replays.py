@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import timedelta
 from http import HTTPStatus
+from typing import Any
 from uuid import UUID, uuid4
 
 import psycopg
@@ -21,17 +22,13 @@ from gs.api.alarms import _db
 from gs.api.bodies import ReplayCreated, ReplayRequest
 from gs.api.deps import ApiError, User, errors
 from gs.api.hub import format_sse
-from gs.archiver.s3 import S3_ERRORS
-from gs.archiver.window import ArchiveCorrupt, has_data, verify_window
 from gs.common.interfaces.replay import ReplayEnd
-from gs.replay.run import replay_messages
 
 MAX_WINDOW = timedelta(hours=24)
 MAX_OPEN_PER_USER = 2  # each replay holds a Postgres connection for up to hours
 REPLAY_IDLE_S = 60  # a created replay nobody GETs within this long is dropped
 DB_CONNECT_S = 5
 SSE_RETRY_MS = 1000  # as the live /api/events
-STREAM_ERRORS: tuple[type[BaseException], ...] = (psycopg.Error, PoolTimeout, *S3_ERRORS)
 log = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -45,6 +42,16 @@ class Replay:
     stop: asyncio.Event
     taken: bool = field(default=False)  # the first GET owns the stream
     started: bool = field(default=False)  # _stream ran; a taken replay that never starts expires
+
+
+def _s3(st: Any) -> Any:
+    """The MinIO client, built on first use: minio and pyarrow cost ~150 ms to import, which the
+    api would otherwise pay on every start, inside the UI-07 restart budget."""
+    if st.s3 is None:
+        from gs.archiver.s3 import client
+
+        st.s3 = client(st.s3_settings)
+    return st.s3
 
 
 def _registry(request: Request) -> dict[UUID, Replay]:
@@ -74,12 +81,16 @@ async def create_replay(body: ReplayRequest, request: Request, user: User) -> Re
         raise ApiError(HTTPStatus.BAD_REQUEST, "INVALID_WINDOW", "from must be before to")
     if body.t_to - body.t_from > MAX_WINDOW:
         raise ApiError(HTTPStatus.BAD_REQUEST, "WINDOW_TOO_LARGE", "window is longer than 24 h")
+    from gs.archiver.s3 import S3_ERRORS  # lazy: see _s3
+    from gs.archiver.window import ArchiveCorrupt, has_data, verify_window
+
     st = request.app.state
     try:
         async with _db(request) as conn:
             if not await has_data(conn, body.vehicle, body.t_from, body.t_to):
                 raise ApiError(HTTPStatus.NOT_FOUND, "NO_DATA", "no data in window")
-            await verify_window(conn, st.s3, st.s3_bucket, body.vehicle, body.t_from, body.t_to)
+            bucket = st.s3_settings.bucket
+            await verify_window(conn, _s3(st), bucket, body.vehicle, body.t_from, body.t_to)
     except ArchiveCorrupt as e:
         raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", str(e)) from e
     except S3_ERRORS as e:
@@ -115,6 +126,10 @@ async def delete_replay(replay_id: UUID, request: Request, user: User) -> Respon
 
 
 async def _stream(request: Request, r: Replay) -> AsyncIterator[bytes]:
+    from gs.archiver.s3 import S3_ERRORS  # lazy: see _s3
+    from gs.replay.run import replay_messages
+
+    stream_errors: tuple[type[BaseException], ...] = (psycopg.Error, PoolTimeout, *S3_ERRORS)
     r.started = True
     st = request.app.state
 
@@ -132,7 +147,7 @@ async def _stream(request: Request, r: Replay) -> AsyncIterator[bytes]:
             options="-c default_transaction_read_only=on",  # D-REP-04: replay never writes
         ) as conn:
             msgs = replay_messages(
-                conn, st.s3, st.s3_bucket, deps.mission(request), r.id, r.req.vehicle,
+                conn, _s3(st), st.s3_settings.bucket, deps.mission(request), r.id, r.req.vehicle,
                 r.req.t_from, r.req.t_to, r.req.speed, sleep,
             )  # fmt: skip
             async with contextlib.aclosing(msgs):
@@ -141,7 +156,7 @@ async def _stream(request: Request, r: Replay) -> AsyncIterator[bytes]:
                         yield format_sse("replay_end", ReplayEnd(reason="stopped"))
                         return
                     yield format_sse(m.kind, m)
-    except STREAM_ERRORS as e:  # the stream ends; the console reconnects
+    except stream_errors as e:  # the stream ends; the console reconnects
         log.warning("replay %s failed: %s: %s", r.id, type(e).__name__, e)
     finally:  # also on client disconnect (the response task is cancelled)
         st.replays.pop(r.id, None)

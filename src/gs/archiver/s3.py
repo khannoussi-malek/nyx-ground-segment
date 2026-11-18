@@ -21,8 +21,8 @@ _MIN_PART = 5 * 1024 * 1024  # above this a client would switch to multipart; on
 
 def client(s: S3Settings) -> Minio:
     """Short timeouts and one retry: a black-holed MinIO must fail a pass, not freeze it."""
-    # maxsize: the pass and up to 3 concurrent health probes share this client; the default of 1
-    # discards connections under that load ("Connection pool is full" every pass).
+    # maxsize: the pass and the 2 S3 health probes (bucket answers, orphan count) share this
+    # client; the default of 1 discards connections under that load ("Connection pool is full").
     http = urllib3.PoolManager(
         maxsize=4,
         timeout=urllib3.Timeout(connect=CONNECT_TIMEOUT_S, read=READ_TIMEOUT_S),

@@ -78,6 +78,9 @@ async def record(users_file: Path, db: str, v: str, m: Path) -> str:
     acked: list[str] = []
 
     async def resume(n: int) -> None:
+        # backfill's drain only empties its own buffer into the stream; on a slow runner ingest may
+        # not have raised the alarm yet, so wait for ingest too (CI flake, PR #4)
+        await until(lambda: drained(v), 120)
         if n == ACK_AT:
             acked.append(await post_ack(users_file, db, v))
             q = "select status from alarm_ack_request where request_id=%s"

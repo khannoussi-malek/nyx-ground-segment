@@ -49,7 +49,7 @@ Status: v1.0.1. v1.0 was accepted at Gate 5 from a fresh clone: the [acceptance 
 
 The test articles are simulated and the project is not affiliated with any company. Every assumption about how a real team works is written down in [docs/assumptions.md](docs/assumptions.md).
 
-![The Nyx console](docs/img/console.png)
+![The Nyx console: no open alarms, both test articles NOMINAL with every value against its limit band, and the live chart of cabin pressure](docs/img/console.png)
 
 ## Run
 Needs only Docker and make.

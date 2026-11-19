@@ -106,7 +106,8 @@ async def test_hang_in_loop_stops_the_loop() -> None:
     produce(v, N)
     with pytest.raises(asyncio.CancelledError):  # a hung loop ignores stop; cancel it
         async with worker([v], hooks=Hooks(hang_at="in_loop"), timing=Timing()) as w:
-            await until(lambda: lock_holder(v) == "ingest-test", 5)
+            # the lock is visible a moment before the loop records its first pass (worker.py:521)
+            await until(lambda: lock_holder(v) == "ingest-test" and v in w.ctx.loop_seen, 5)
             seen = w.ctx.loop_seen[v]
             await asyncio.sleep(1.0)
             assert w.ctx.loop_seen[v] == seen and stored(v) == 0 and not w.done()

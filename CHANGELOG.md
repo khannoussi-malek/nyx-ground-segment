@@ -1,5 +1,9 @@
 # Changelog
 
+## [1.0.1] - 2026-11-19
+### Fixed
+- A Redis broker outage could be followed by a false LOSS OF SIGNAL: ingest reconnected before the simulator resumed sending and counted that silence as loss. The LOS clock now holds for 5 s after ingest reconnects; a source that stays silent still gets its LOS about 7 s after the reconnect (up to 8 s with one blocked read), in that post-outage window only; values still turn STALE at 2 s ([NCR-04](docs/ncr/NCR-04.md), D-ING-08, D-UI-15).
+
 ## [1.0.0] - 2026-11-18
 Accepted at Gate 5 from a fresh clone: [ATP report](docs/atp-report.md), [NCR-01](docs/ncr/NCR-01.md), [NCR-03](docs/ncr/NCR-03.md), [demo](docs/demo/README.md).
 

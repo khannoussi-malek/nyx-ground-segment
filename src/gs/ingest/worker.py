@@ -51,6 +51,10 @@ BLOCK_MS = 1000
 DLQ = "tm:dlq"
 BACKOFF_START_S = 0.5
 BACKOFF_MAX_S = 5.0
+# After a broker outage the frame source resumes late: ponytail: coupled to the simulator's
+# send_loop backoff cap (1 s) + client socket_timeout (2 s) = 3 s worst, plus 2 s margin; a real
+# silent vehicle still gets its LOS RESUME_GRACE_S + los_s after the reconnect.
+RESUME_GRACE_S = 5.0
 SOCKET_TIMEOUT_S = 5  # Redis client socket timeout; must exceed the 1 s XREADGROUP block
 Entry = tuple[str, dict[bytes, bytes]]
 Item = tuple[str, dict[bytes, bytes], int, FrameHeader]  # entry id, fields, deliveries, frame
@@ -323,6 +327,12 @@ async def _process(
     return nvs, len(inserted)
 
 
+def los_due(now: float, last_new: float, grace_until: float, los_s: float) -> bool:
+    """D-ING-21/D-UI-15: the LOS clock starts at the last new frame, or at the end of the
+    post-outage resume grace if that is later."""
+    return now - max(last_new, grace_until) > los_s
+
+
 def _eid(entry_id: str) -> tuple[int, int]:
     ms, _, n = entry_id.partition("-")
     return int(ms), int(n or 0)
@@ -530,6 +540,7 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
     claim_idle: int | None = 0  # XAUTOCLAIM min-idle while draining; None = read new entries
     cursor = "0-0"
     last_new = next_handback = time.monotonic()
+    grace_until = 0.0  # the LOS clock holds until here after a broker outage
     next_reclaim = last_new + ctx.timing.reclaim_s
     while not stop.is_set():
         await ctx.hooks.hang("in_loop")
@@ -573,14 +584,15 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
             if nvs.seq != vs.seq:  # a new frame advanced the tracker
                 last_new = time.monotonic()
             vs = nvs
-            if time.monotonic() - last_new > ctx.timing.los_s:
+            if was_down:  # R2-23: start the steal hold-off
+                ctx.reconnected_at[0], was_down = (t := time.monotonic()), False
+                grace_until = t + RESUME_GRACE_S
+            if los_due(time.monotonic(), last_new, grace_until, ctx.timing.los_s):
                 vs, links = await _silence(conn, vehicle, vs, ctx.rejected.get(vehicle))
                 unsent = [*links]
                 await publish_ui(ctx.redis, unsent)
                 unsent = []
             backoff = BACKOFF_START_S
-            if was_down:  # R2-23: start the steal hold-off
-                ctx.reconnected_at[0], was_down = time.monotonic(), False
         except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
             log.warning("redis unavailable for %s (%s); retry in %.1fs", stream, e, backoff)
             if isinstance(e, Unpublished):  # committed: keep that state, publish next pass

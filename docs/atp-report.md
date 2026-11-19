@@ -73,6 +73,7 @@ Verdict: the S rule holds (6 of 7), and it holds without ING-10 as well (5 of 7)
 | [NCR-01](ncr/NCR-01.md) | ING-10 lag over 1 s when the host is oversubscribed | minor | accepted by the owner after an investigation ([stall trials](perf/stall-2026-11-18/summary.md): back under 1 s 2.5–3.5 s after a 10 s whole-stack freeze; no ingest defect); ATP-08 step 0 gates the start on a quiet machine |
 | [NCR-02](ncr/NCR-02.md) | ENG-06 timed run by a newcomer not done | minor | accept with a known limitation (accepted by the owner, 2026-11-18) |
 | [NCR-03](ncr/NCR-03.md) | Fresh-clone defects in the procedures and setup (ENG-01, ENG-08, ATP-08) | minor | fix now (done on this branch) |
+| [NCR-04](ncr/NCR-04.md) | ENG-02 false LOSS OF SIGNAL after a broker outage (found by CI on `main` after the v1.0 tag) | minor | fixed in v1.0.1 by the owner's choice |
 
 ## Automated suites (CI-equivalent, same day, in the clone)
 

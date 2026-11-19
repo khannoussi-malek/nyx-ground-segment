@@ -1,4 +1,4 @@
-"""Test controls (D-SIM-10): the API forwards fault requests to the simulator, only when
+"""Test controls (D-SIM-12): the API forwards fault requests to the simulator, only when
 GS_TEST_CONTROLS is on. API in-process, a fake simulator on a local port, real Redis and
 Postgres."""
 
@@ -26,13 +26,14 @@ class FakeSim:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, object]] = []
         self.status = 204
+        self.body_422 = b'{"error":"INVALID_FAULT","message":"nope"}'
         me = self
 
         class Handler(BaseHTTPRequestHandler):
             def _do(self) -> None:
                 n = int(self.headers.get("Content-Length", 0))
                 me.calls.append((self.command, self.path, json.loads(self.rfile.read(n))))
-                body = b'{"error":"INVALID_FAULT","message":"nope"}' if me.status == 422 else b""
+                body = me.body_422 if me.status == 422 else b""
                 self.send_response(me.status)
                 self.send_header("Content-Length", str(len(body)))
                 self.end_headers()
@@ -151,6 +152,15 @@ async def test_bad_delete_is_422_and_not_forwarded(on: httpx.AsyncClient, sim: F
 
 async def test_simulator_422_is_passed_through(on: httpx.AsyncClient, sim: FakeSim) -> None:
     sim.status = 422
+    r = await on.post(FAULT, json={"vehicle": "NYX-TA1", "fault": "leak"})
+    assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR")
+
+
+@pytest.mark.parametrize("body", [b"<html>nope</html>", b"[1]"])
+async def test_simulator_422_without_json_message_is_still_422(
+    on: httpx.AsyncClient, sim: FakeSim, body: bytes
+) -> None:
+    sim.status, sim.body_422 = 422, body
     r = await on.post(FAULT, json={"vehicle": "NYX-TA1", "fault": "leak"})
     assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR")
 

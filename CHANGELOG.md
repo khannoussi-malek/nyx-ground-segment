@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 ### Added
-- Test controls (D-SIM-10): `GET /api/test-controls` and `POST`/`DELETE /api/test-controls/fault` start and clear simulator faults from the console API (audited, session and `X-GS-Client` required). On by default in the local compose stack; `GS_TEST_CONTROLS=0` turns them off (the routes answer 404).
+- Test controls (D-SIM-12): `GET /api/test-controls` and `POST`/`DELETE /api/test-controls/fault` start and clear simulator faults from the console API (audited, session and `X-GS-Client` required). On by default in the local compose stack; `GS_TEST_CONTROLS=0` turns them off (the routes answer 404).
 
 ### Fixed
 - A bad `ui:events` entry met during a Redis connection failure or timeout was skipped with no DLQ record; the API reader now re-reads it once Redis is back (D-ING-27). Any other Redis error on that write (OOM, NOPERM) skips the entry, so it cannot hold the reader.

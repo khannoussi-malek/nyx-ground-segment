@@ -1,4 +1,4 @@
-"""D-SIM-10 on the running stack: a leak started and cleared through the API (not the simulator's
+"""D-SIM-12 on the running stack: a leak started and cleared through the API (not the simulator's
 own port) reaches the RED LOW alarm row."""
 
 import httpx

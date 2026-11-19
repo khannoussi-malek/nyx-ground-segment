@@ -1,4 +1,4 @@
-"""Test controls (D-SIM-10): start and clear simulator faults from the console. The browser never
+"""Test controls (D-SIM-12): start and clear simulator faults from the console. The browser never
 calls the simulator; the API forwards to its fault endpoint (D-SIM-09), audited, and only when
 GS_TEST_CONTROLS=1 (every route answers 404 otherwise)."""
 
@@ -50,7 +50,11 @@ async def _forward(request: Request, method: str, body: FaultRequest | FaultClea
             HTTPStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", "simulator unreachable"
         ) from e
     if r.status_code == HTTPStatus.UNPROCESSABLE_ENTITY:
-        msg = str(r.json().get("message", "the simulator refused the fault"))
+        msg = "the simulator refused the fault"
+        try:
+            msg = str(r.json()["message"])
+        except ValueError, TypeError, KeyError:  # not JSON, not an object, no message
+            pass
         raise ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", msg)
     if not r.is_success:
         log.warning("simulator %s answered %s", method, r.status_code)

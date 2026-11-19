@@ -4,7 +4,6 @@ speed is not a security boundary. Replays live in this process: `app.state.repla
 import asyncio
 import contextlib
 import logging
-import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -21,14 +20,13 @@ from gs.api import deps
 from gs.api.bodies import ReplayCreated, ReplayRequest
 from gs.api.dbguard import connect, db_503
 from gs.api.deps import ApiError, User, errors
-from gs.api.hub import format_sse
+from gs.api.hub import SSE_RETRY_FRAME, format_sse
 from gs.common.interfaces.replay import ReplayEnd
 
 MAX_WINDOW = timedelta(hours=24)
 MAX_OPEN_PER_USER = 2  # each replay holds a Postgres connection for up to hours
 REPLAY_IDLE_S = 60  # a created replay nobody GETs within this long is dropped
 DB_CONNECT_S = 5
-SSE_RETRY_MS = 1000  # as the live /api/events
 log = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -38,7 +36,6 @@ class Replay:
     id: UUID
     user: str
     req: ReplayRequest
-    created: float
     stop: asyncio.Event
     taken: bool = field(default=False)  # the first GET owns the stream
     started: bool = field(default=False)  # _stream ran; a taken replay that never starts expires
@@ -102,7 +99,7 @@ async def create_replay(body: ReplayRequest, request: Request, user: User) -> Re
             "TOO_MANY_REPLAYS",
             f"at most {MAX_OPEN_PER_USER} replays at once; stop one first",
         )
-    r = Replay(uuid4(), user, body, time.monotonic(), asyncio.Event())
+    r = Replay(uuid4(), user, body, asyncio.Event())
     st.replays[r.id] = r
 
     def expire(rearm: bool) -> None:
@@ -144,7 +141,7 @@ async def _stream(request: Request, r: Replay) -> AsyncIterator[bytes]:
             await asyncio.wait_for(r.stop.wait(), s)
 
     try:
-        yield f"retry: {SSE_RETRY_MS}\n\n".encode()
+        yield SSE_RETRY_FRAME
         # its own connection: a replay lasts up to hours and must not starve the pool
         async with await psycopg.AsyncConnection.connect(
             st.database_url,

@@ -16,11 +16,9 @@ from fastapi.responses import StreamingResponse
 
 from gs.api import deps
 from gs.api.deps import User
-from gs.api.hub import HB_S, Hub, format_sse, ms
+from gs.api.hub import HB_S, SSE_RETRY_FRAME, Hub, format_sse, ms
 from gs.api.hub import build_snapshot as build_snapshot  # re-exported: tests patch it here
 from gs.common.interfaces import Ground, Hb, Hello
-
-SSE_RETRY_MS = 1000
 
 
 def _ground(hub: Hub) -> Literal["up", "down"]:
@@ -33,7 +31,7 @@ async def _stream(request: Request) -> AsyncIterator[bytes]:
     st.sse_open += 1
     client, waits = None, list[asyncio.Future[Any]]()
     try:
-        yield f"retry: {SSE_RETRY_MS}\n\n".encode()
+        yield SSE_RETRY_FRAME
         yield format_sse("hello", Hello(server_ms=ms(datetime.now(UTC))))
         client = hub.subscribe()  # before the snapshot (R2-08)
         async with st.pool.connection() as conn:

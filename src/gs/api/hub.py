@@ -52,6 +52,9 @@ def ms(t: datetime) -> int:
     return int(t.timestamp() * 1000)
 
 
+SSE_RETRY_FRAME = b"retry: 1000\n\n"  # D-UI-02/03: client reconnect delay, 1000 ms
+
+
 def format_sse(event: str, model: StrictModel) -> bytes:
     return f"event: {event}\ndata: {model.model_dump_json()}\n\n".encode()
 

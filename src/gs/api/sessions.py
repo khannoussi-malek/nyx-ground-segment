@@ -1,4 +1,4 @@
-"""Test sessions and their frozen report (route stubs; Track D Tasks 21-22)."""
+"""Test sessions and their frozen report."""
 
 from datetime import UTC, datetime
 from http import HTTPStatus

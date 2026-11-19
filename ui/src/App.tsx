@@ -1,21 +1,21 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
-import { logout, me, missionDb, type MissionDb } from "./api";
-import { armAudio, beep, beepsFor, tone, toneActive, toneKeys, type ToneState } from "./audio";
-import { sessionKeySet } from "./keySet";
-import { AlarmList, AlarmSummary } from "./AlarmList";
-import { Board, useLayout } from "./Board";
-import { PANE_HELP } from "./paneHelp";
-import { ChartPanel, type PlotPick } from "./Chart";
-import { CommandPanel } from "./CommandPanel";
-import { EventStrip } from "./EventStrip";
-import { SessionPanel } from "./SessionPanel";
-import { LiveTable } from "./LiveTable";
-import { ReplayPage } from "./ReplayPage";
-import { Login } from "./Login";
-import { bootUser, checkSession, loadMission, safeLogout } from "./session";
-import { connectEvents } from "./sse";
-import { createProbe } from "./probe";
-import { createStore, ingest, type Store } from "./store";
+import { logout, me, missionDb, type MissionDb } from "./server/api";
+import { armAudio, beep, beepsFor, tone, toneActive, toneKeys, type ToneState } from "./tools/audio";
+import { sessionKeySet } from "./state/keySet";
+import { AlarmList, AlarmSummary } from "./components/AlarmList";
+import { Board, useLayout } from "./components/Board";
+import { PANE_HELP } from "./config/paneHelp";
+import { ChartPanel, type PlotPick } from "./components/Chart";
+import { CommandPanel } from "./components/CommandPanel";
+import { EventStrip } from "./components/EventStrip";
+import { SessionPanel } from "./components/SessionPanel";
+import { LiveTable } from "./components/LiveTable";
+import { ReplayPage } from "./components/ReplayPage";
+import { Login } from "./components/Login";
+import { bootUser, checkSession, loadMission, safeLogout } from "./server/session";
+import { connectEvents } from "./server/sse";
+import { createProbe } from "./state/probe";
+import { createStore, ingest, type Store } from "./state/store";
 
 /** Beeps once per new RED alert key and sounds one tone at each loss-of-monitoring onset (D-UI-08, D-UI-21).
  *  Runs on every store update, never on the 100 ms tick, and once more when a hidden tab is shown (P-pf18). */

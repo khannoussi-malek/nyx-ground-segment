@@ -13,7 +13,7 @@ One new module in `src/gs/alarms/checks/`: a pydantic config with `type: Literal
 Add an entry to `mission/commands.yaml`: `description`, `hazardous`, `hazard` (required when hazardous), typed `args` with bounds, optional `receive_timeout_s` / `verify_timeout_s` no longer than the defaults (5 s and 15 s). The API and the simulator read the same file and enforce the same bounds. The simulator reads it at start, so **restart the simulator after a bound change** (ruling R-o). Ingest follows a reload; the API refuses a reload that turns a command from hazardous to not hazardous (G31).
 
 ## Change a stream interface
-Stream entries outlive the code that wrote them, and every stream model except the frame header forbids extra fields, so even an optional new field makes the other version reject the entry (D-ING-27). **Rule: restart all services together** (`make up`) after any change to `frame`, `tc`, `tcack`, `dlq` or `ui-event`. The CI lint job prints "stream interface changed: restart all services together" when an exported stream schema differs from `main` (`scripts/stream_schema_notice.py`; information only). Regenerate with `make gen` and commit `interfaces/` and `ui/src/api`.
+Stream entries outlive the code that wrote them, and every stream model except the frame header forbids extra fields, so even an optional new field makes the other version reject the entry (D-ING-27). **Rule: restart all services together** (`make up`) after any change to `frame`, `tc`, `tcack`, `dlq` or `ui-event`. The CI lint job prints "stream interface changed: restart all services together" when an exported stream schema differs from `main` (`scripts/stream_schema_notice.py`; information only). Regenerate with `make gen` and commit `interfaces/` and `ui/src/server/schema.d.ts`.
 
 ## API request bodies
 Request models are strict. A UUID or datetime field that arrives as a JSON string must be declared `Annotated[UUID, Field(strict=False)]` (FastAPI validates the decoded JSON in Python mode, where a strict UUID rejects the string); see `AckRequest.request_id`. Database errors on a route are returned as 503 `UNAVAILABLE` ("database unreachable") through `gs.api.dbguard.db_503`, never as a 500.
@@ -26,9 +26,19 @@ NYX-TA9 is the backfill vehicle: it has no live frames. `docker compose run --rm
 ## Performance and soak runs
 `make perf` is run N (10 min at 10 Hz, `docs/perf/run-n-<UTC date>/`). `make perf-p` is run P (2 vehicles at 100 Hz for 5 min; it sets `SIM_RATE_HZ=100` itself and restores 10). `make soak` is the 2 h ATP-01 count: it starts and stops the sessions itself, so run it on an idle stack. Procedures and pass lines: `docs/atp/ATP-08.md` and `docs/atp/ATP-01.md`.
 
+## Console source layout (`ui/src`)
+- `main.tsx` and `App.tsx` start the console; `gallery.tsx` is the dev-only state gallery (`/gallery.html`).
+- `components/`: React components (panes, cards, dialogs, the board).
+- `server/`: everything that talks to the ground API: the client (`api.ts`), the generated types (`schema.d.ts`, from `make gen`; never edit it), the event stream, login and session calls, replay.
+- `state/`: the browser's copy of what the server sent: the store, value freshness, banners, the latency probe.
+- `config/`: the pane list and default layout, the pane help notes.
+- `tools/`: pure helpers with no React: formatting, UTC time, gauge and chart maths, alarm, command and event wording, audio.
+- `styles/`: `style.css` and its contrast test. `test/`: shared fixtures.
+- A test sits next to the file it tests.
+
 ## Run the tests
 - Unit, integration and meta: `make up`, then `uv run pytest` (80 % coverage gate; `-m spike` runs the Schemathesis spike).
-- Static: `uv run ruff check`, `uv run ruff format --check`, `uv run mypy --strict src tests scripts perf`, `make gen && git diff --exit-code -- interfaces ui/src/api`.
+- Static: `uv run ruff check`, `uv run ruff format --check`, `uv run mypy --strict src tests scripts perf`, `make gen && git diff --exit-code -- interfaces ui/src/server/schema.d.ts`.
 - System (Docker; stops and starts containers, one run at a time): `uv run pytest tests/system`.
 - End to end: `make e2e` (Playwright, browser). UI unit tests: `cd ui && npx vitest run`.
 - Performance: `make perf`, `make perf-p`, `make soak` (see above).

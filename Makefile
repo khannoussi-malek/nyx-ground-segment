@@ -21,7 +21,7 @@ migrate:
 
 gen:
 	uv run python -m gs.common.interfaces.export
-	cd ui && npx openapi-typescript ../interfaces/openapi.json -o src/api/schema.d.ts
+	cd ui && npx openapi-typescript ../interfaces/openapi.json -o src/server/schema.d.ts
 
 e2e: e2e/node_modules
 	cd e2e && npx playwright test

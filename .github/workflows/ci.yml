@@ -36,7 +36,7 @@ jobs:
       - run: uv run ruff format --check
       - run: uv run mypy --strict src tests scripts perf
       - run: |
-          make gen && git diff --exit-code -- interfaces ui/src/api || (echo "generated code is stale, run make gen"; exit 1)
+          make gen && git diff --exit-code -- interfaces ui/src/server/schema.d.ts || (echo "generated code is stale, run make gen"; exit 1)
 
   test:
     runs-on: ubuntu-latest

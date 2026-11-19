@@ -2,13 +2,9 @@
 
 Ground software for a spacecraft test campaign. It takes live telemetry from two simulated test articles, raises and tracks limit alarms, sends commands with a safety interlock, runs test sessions with a frozen report, and archives every finished hour to verified files you can replay later. It was written test-first against 47 requirements and accepted from a fresh clone.
 
-[![Nyx ground segment: the 29-minute walkthrough on YouTube](docs/img/video-thumbnail.jpg)](https://youtu.be/SmON-rX1CMs)
+![The Nyx console during a cabin leak on NYX-TA1: cabin pressure at 95.07 kPa is YELLOW and falling, the alarm list shows the rate alarm with its limits-file hash, and the chart shows the drop toward the 95 kPa limit](docs/img/console-alarm.png)
 
-**[Watch the walkthrough on YouTube](https://youtu.be/SmON-rX1CMs)** (29 min). It covers the problem, the design, a live demo, the tests, the measurements and the known gaps. Chapter links are in the [guided tour](#video-chapters).
-
-![A cabin leak on NYX-TA1: the falling pressure raises a YELLOW rate alarm, then RED LOW, and the alarm list fills with the reason and the limits-file hash](docs/img/leak-alarm.gif)
-
-*A cabin leak injected on NYX-TA1, 1.5x speed. The longer scenario runs at [11:29 in the video](https://youtu.be/SmON-rX1CMs?t=689).*
+**[Watch the walkthrough on YouTube](https://youtu.be/SmON-rX1CMs)** (29 min): the problem, the design, a live demo, the tests, the measurements and the known gaps. The screenshot above is from the live demo at [12:06](https://youtu.be/SmON-rX1CMs?t=726); chapter links are in the [guided tour](#video-chapters).
 
 **Contents:** [Guided tour](#guided-tour) · [What it is](#what-it-is) · [Run](#run) · [What to try first](#what-to-try-first) · [Architecture](#architecture) · [Where things are](#where-things-are) · [Decisions and why](#decisions-and-why) · [Results](#results) · [Limitations](#limitations) · [Next steps](#next-steps)
 
@@ -66,7 +62,11 @@ To run the tests or work on the code you also need [uv](https://docs.astral.sh/u
 1. Log in as `conductor`. Two vehicle tables update ten times a second; every time is UTC and ends in `Z`.
 2. Inject a cabin leak on NYX-TA1 (the simulator listens on port 8081):
    `curl -X POST http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA1","fault":"leak"}'`.
-   The pressure falls at 0.4 kPa/s: a YELLOW rate alarm first, then RED LOW, with the reason in words and the limits-file hash. Press **ACK**, type a note, confirm. Clear the fault with `curl -X DELETE http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA1","fault":"leak"}'`.
+   The pressure falls at 0.4 kPa/s: a YELLOW rate alarm first, then RED LOW, with the reason in words and the limits-file hash. Press **ACK**, type a note, confirm.
+
+   ![The leak at 1.5x speed: the pressure turns YELLOW on its falling rate, then RED LOW, and the alarm list fills](docs/img/leak-alarm.gif)
+
+   Clear the fault with `curl -X DELETE http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA1","fault":"leak"}'`.
 3. Cut NYX-TA2 for 10 s: `curl -X POST http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA2","fault":"dropout","params":{"duration_s":10}}'`. The console shows **LOSS OF SIGNAL**, then one gap event with about 100 lost frames when it returns. A dropout ends by itself; no DELETE is needed.
 4. Send a hazardous command and read the confirmation dialog; start and stop a test session and download its report (the [operator guide](docs/operator-guide.md) walks through each).
 5. Archive and replay: a backfilled NYX-TA9 history is archived within one loop and can be replayed from the Replay toggle in the top bar; the manual steps are in [docs/atp/ATP-07.md](docs/atp/ATP-07.md) and the replay screen is described in the [operator guide](docs/operator-guide.md#run-a-replay).

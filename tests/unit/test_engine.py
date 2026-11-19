@@ -244,3 +244,19 @@ def test_transition_value_from_trigger_reading() -> None:  # Task 8, ruling R-b
 def test_roc_transition_value_is_the_slope() -> None:
     (tr, *_) = [t for t in run_engine(CSET, leak_frames(3.0, seed=1)) if t.check_kind == "roc"]
     assert tr.kind == "RAISE" and tr.value == pytest.approx(-0.4, abs=0.1)  # P-pf25
+
+
+@pytest.mark.parametrize("period", [0.1, 1.0, 3.0])
+def test_slow_source_still_alarms(period: float) -> None:  # R22 F2: 20 RED frames, real pipeline
+    from gs.ingest.link import LinkState, on_frame
+    from gs.ingest.seq import step as seq_step
+
+    es, ss, ls, level = initial_state(CSET), None, LinkState(), Level.NOMINAL
+    for i in range(20):
+        t = at(i * period)
+        prev = ss
+        ss, _, _ = seq_step(ss, V, i, t)
+        ls, _, stale = on_frame(ls, V, prev, t, 0)
+        es, trs = step(es, CSET, V, EPOCH, i, t, ss.period_s, {TEMP: 35.0}, stale)
+        level = trs[-1].severity if trs else level
+    assert level == Level.RED

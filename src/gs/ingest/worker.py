@@ -31,7 +31,7 @@ from gs.ingest.acks import AckReq, apply_acks, db_now, pending_acks
 from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
 from gs.ingest.events import GroundEvent, poison_key, reset_key, to_link
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
-from gs.ingest.link import STALE_S, on_silence
+from gs.ingest.link import STALE_S, on_silence, stale_s
 from gs.ingest.owner import acquire, fence, release, waiting
 from gs.ingest.store import (
     insert_frames,
@@ -586,7 +586,10 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
             if was_down:  # R2-23: start the steal hold-off
                 ctx.reconnected_at[0], was_down = (t := time.monotonic()), False
                 grace_until = t + RESUME_GRACE_S
-            if los_due(time.monotonic(), last_new, grace_until, ctx.timing.los_s):
+            los_s = (
+                ctx.timing.los_s if vs.seq is None else stale_s(vs.seq.period_s, ctx.timing.los_s)
+            )
+            if los_due(time.monotonic(), last_new, grace_until, los_s):
                 vs, links = await _silence(conn, vehicle, vs, ctx.rejected.get(vehicle))
                 unsent = [*links]
                 await publish_ui(ctx.redis, unsent)

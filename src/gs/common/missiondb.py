@@ -279,6 +279,15 @@ def _check_floor(limits: dict[str, LimitEntry]) -> None:
                 raise MissionDbError(_LIMITS, f"{name}: deadband {d:g} below floor {f:g}")
 
 
+Hashes = tuple[str, str, str]  # sha256 hex of limits, commands, parameters
+
+
+def set_hashes(limits: bytes, commands: bytes, parameters: bytes) -> tuple[Hashes, str]:
+    """sha256 of each file and of the set ('<h>\\n' of limits, commands, parameters, in order)."""
+    lim, cmd, par = (hashlib.sha256(b).hexdigest() for b in (limits, commands, parameters))
+    return (lim, cmd, par), hashlib.sha256(f"{lim}\n{cmd}\n{par}\n".encode()).hexdigest()
+
+
 def load(limits: bytes, commands: bytes, parameters: bytes) -> MissionDb:
     p = _validate(
         ParametersFile, _read(parameters, _PARAMETERS, "parameters"), _PARAMETERS, "parameters"
@@ -294,8 +303,7 @@ def load(limits: bytes, commands: bytes, parameters: bytes) -> MissionDb:
         raise MissionDbError(_LIMITS, f"limits for unknown parameter(s): {', '.join(unknown)}")
     resolved = _resolve(lim)
     _check_floor(resolved)
-    hashes = [hashlib.sha256(b).hexdigest() for b in (limits, commands, parameters)]
-    set_sha = hashlib.sha256("".join(f"{h}\n" for h in hashes).encode()).hexdigest()
+    hashes, set_sha = set_hashes(limits, commands, parameters)
     return MissionDb(
         parameters=dict(p.parameters),
         limits=resolved,

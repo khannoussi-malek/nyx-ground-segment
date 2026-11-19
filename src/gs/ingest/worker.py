@@ -584,15 +584,15 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
             if nvs.seq != vs.seq:  # a new frame advanced the tracker
                 last_new = time.monotonic()
             vs = nvs
+            if was_down:  # R2-23: start the steal hold-off
+                ctx.reconnected_at[0], was_down = (t := time.monotonic()), False
+                grace_until = t + RESUME_GRACE_S
             if los_due(time.monotonic(), last_new, grace_until, ctx.timing.los_s):
                 vs, links = await _silence(conn, vehicle, vs, ctx.rejected.get(vehicle))
                 unsent = [*links]
                 await publish_ui(ctx.redis, unsent)
                 unsent = []
             backoff = BACKOFF_START_S
-            if was_down:  # R2-23: start the steal hold-off
-                ctx.reconnected_at[0], was_down = (t := time.monotonic()), False
-                grace_until = t + RESUME_GRACE_S
         except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError) as e:
             log.warning("redis unavailable for %s (%s); retry in %.1fs", stream, e, backoff)
             if isinstance(e, Unpublished):  # committed: keep that state, publish next pass

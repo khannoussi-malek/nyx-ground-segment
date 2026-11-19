@@ -67,3 +67,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | Scrubbing / latent-fault detection recommended | VERIFIED (in part) | Baker p. 12; Schroeder p. 10 | F2 (scrub) |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

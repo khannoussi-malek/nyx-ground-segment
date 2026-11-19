@@ -192,3 +192,5 @@ CONTRADICTED: none.
 | Deadband trade-off, optimum = weighted balance | VERIFIED | Wang 2019 p. 1, 5 (OCR'd re-upload, 2026-11-15) | D-ALM-16 (bench re-run) |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

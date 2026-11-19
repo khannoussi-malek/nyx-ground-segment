@@ -234,3 +234,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | Docker default stop timeout 10 s | VERIFIED | Docker docs, Compose spec | D-ENG-03 |
 
 CONTRADICTED: Kafka 4.x has no retry limit / DLQ.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

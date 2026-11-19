@@ -104,3 +104,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | (same, risk list) | STILL UNVERIFIED | as above | none |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

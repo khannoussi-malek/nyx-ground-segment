@@ -132,3 +132,5 @@ CONTRADICTED: none.
 | Leveson & Turner 1993 (Therac-25): software-related overdoses; lessons for safety-critical software | VERIFIED (general) | p. 3 (software turns the beam on from an operator command), p. 7 (the one-key "P" proceed after a pause), p. 19 ("interlocks to back up software control"); OCR of a 3-column scan, quotes approximate | D-CMD-06 |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

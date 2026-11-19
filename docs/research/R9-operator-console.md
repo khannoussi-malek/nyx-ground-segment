@@ -153,3 +153,5 @@ Claims that were marked UNVERIFIED, checked against primary sources or package s
 | rAF ≈ paint (double rAF) | STILL UNVERIFIED as a guarantee | WHATWG runs rAF callbacks before the rendering update, but does not define paint and lets the UA skip rendering opportunities | D-UI-14, D-PERF-02: report should call double rAF a heuristic |
 
 CONTRADICTED: none (one wording correction, no decision affected).
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

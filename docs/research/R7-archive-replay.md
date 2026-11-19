@@ -202,3 +202,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | MinIO stale multipart cleanup | VERIFIED | minio source | D-ARC-03 (multipart unused) |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

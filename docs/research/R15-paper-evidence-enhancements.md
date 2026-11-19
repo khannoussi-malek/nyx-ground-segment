@@ -77,3 +77,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | Atomic state + output commit (Flink, Kafka Streams) | VERIFIED (Flink) / STILL UNVERIFIED (Kafka) | Carbone 2017 p. 8–9 | D-ALM-11 |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

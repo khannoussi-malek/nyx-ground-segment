@@ -125,3 +125,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | Photons after second rAF ≈ 1 refresh | STILL UNVERIFIED | 1–2 frames in one measurement | D-PERF-02, D-UI-14 |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

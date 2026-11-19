@@ -1,0 +1,9 @@
+# NCR-04: false LOSS OF SIGNAL after a broker outage, found by CI after the v1.0 tag
+
+- **Requirement:** ENG-02 (system tests pass), UI-02 and D-UI-15 (a broker outage shows GROUND PROCESSING DOWN – BROKER, not LOS).
+- **What failed:** CI run [44423135993](https://github.com/khannoussi-malek/nyx-ground-segment/actions/runs/44423135993), a push to `main` on 2026-11-19. `tests/system/test_broker_banner.py::test_redis_stop_ground_down_no_los_event` failed: during its 10 s `compose stop redis`, ingest wrote a LOS event for NYX-TA1 (`LOS/NYX-TA1/2026-11-19T00:08:12.849184Z/3889`, last frame at 00:14:41.72Z, event created 00:14:56.92Z). The same commit passed in the tag run and in every earlier run (about 1 failure in 6). The compose logs of that window are lost.
+- **Cause:** ingest's LOS rule is `now - last_new > los_s` (2 s). After Redis returns, ingest reconnects at once, but the simulator resumes sending later (its send backoff is capped at 1 s, its Redis client timeout is 2 s: up to about 3 s). More than 2 s of silence after the reconnect read as LOS. This is the code-reading explanation; the lost logs mean it was not observed directly, but the new deterministic test reproduces the condition.
+- **Impact on the user:** a false LOS tone and event after a broker outage. No frame was lost; ENG-02 is still met by the suite once the test passes.
+- **Severity:** minor.
+- **Decision:** fixed in v1.0.1 by the owner's choice (the v1.0 tag does not move). After the first successful pass following an outage, the LOS clock holds for `RESUME_GRACE_S` = 5 s (D-ING-08, D-UI-15). A source silent after the broker is back still gets its LOS at most 7 s later.
+- **Pinned by:** `tests/unit/test_los_clock.py` (the rule), `tests/system/test_broker_banner.py::test_source_resumes_late_after_broker_no_los` (simulator paused 3 s after Redis is back: no LOS) and `::test_source_silent_after_broker_still_los` (paused 20 s: LOS still raised).

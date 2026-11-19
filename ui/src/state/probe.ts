@@ -1,4 +1,4 @@
-export type LatencySample = { vehicle: string; seq: number; age_ms: number | null; paint_ms: number };
+type LatencySample = { vehicle: string; seq: number; age_ms: number | null; paint_ms: number };
 declare global {
   interface Window {
     __nyxLatency?: LatencySample[];

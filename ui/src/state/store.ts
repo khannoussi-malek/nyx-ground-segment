@@ -1,9 +1,9 @@
+import type { CommandView } from "../server/api";
 import type { components } from "../server/schema";
 
 export type Tm = components["schemas"]["Tm"];
 export type Snapshot = components["schemas"]["Snapshot"];
 export type AlarmView = components["schemas"]["AlarmView"];
-export type CommandView = components["schemas"]["CommandView"];
 export type EventView = components["schemas"]["EventView"];
 export type Link = { connected: boolean; broker: "up" | "down"; processing: Record<string, boolean> };
 
@@ -15,8 +15,8 @@ const alarmOrder = (a: AlarmView): number => ms(a.last.t) * 2 + (a.last.kind ===
 const cmdTime = (c: CommandView): number =>
   Math.max(...[c.queued_at, c.sent_at, c.received_at, c.verified_at, c.failed_at, c.late_ack_at, c.late_verified_at].map(ms));
 
-export const SILENCE_MS = 3000;
-export const EVENTS_KEPT = 200;
+const SILENCE_MS = 3000;
+const EVENTS_KEPT = 200;
 
 export function createStore(
   clock: () => number = () => performance.now(),

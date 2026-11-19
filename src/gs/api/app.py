@@ -63,7 +63,7 @@ async def mission_db(request: Request, _user: User) -> MissionDbView:
 
 
 @ROUTER.get("/api/mission-db/frame-schema", responses=errors(401, 503))
-async def frame_schema(request: Request, user: User) -> dict[str, Any]:  # D-EXT-19
+async def frame_schema(request: Request, _user: User) -> dict[str, Any]:  # D-EXT-19
     schema = build_frame_model(deps.mission(request).param_names).model_json_schema()
     return {"$schema": JSON_SCHEMA_DIALECT, **schema}
 

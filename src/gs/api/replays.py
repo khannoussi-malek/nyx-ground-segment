@@ -4,7 +4,6 @@ speed is not a security boundary. Replays live in this process: `app.state.repla
 import asyncio
 import contextlib
 import logging
-import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -18,17 +17,16 @@ from fastapi.responses import StreamingResponse
 from psycopg_pool import PoolTimeout
 
 from gs.api import deps
-from gs.api.alarms import _db
 from gs.api.bodies import ReplayCreated, ReplayRequest
+from gs.api.dbguard import connect, db_503
 from gs.api.deps import ApiError, User, errors
-from gs.api.hub import format_sse
+from gs.api.hub import SSE_RETRY_FRAME, format_sse
 from gs.common.interfaces.replay import ReplayEnd
 
 MAX_WINDOW = timedelta(hours=24)
 MAX_OPEN_PER_USER = 2  # each replay holds a Postgres connection for up to hours
 REPLAY_IDLE_S = 60  # a created replay nobody GETs within this long is dropped
 DB_CONNECT_S = 5
-SSE_RETRY_MS = 1000  # as the live /api/events
 log = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -38,7 +36,6 @@ class Replay:
     id: UUID
     user: str
     req: ReplayRequest
-    created: float
     stop: asyncio.Event
     taken: bool = field(default=False)  # the first GET owns the stream
     started: bool = field(default=False)  # _stream ran; a taken replay that never starts expires
@@ -82,15 +79,16 @@ async def create_replay(body: ReplayRequest, request: Request, user: User) -> Re
     if body.t_to - body.t_from > MAX_WINDOW:
         raise ApiError(HTTPStatus.BAD_REQUEST, "WINDOW_TOO_LARGE", "window is longer than 24 h")
     from gs.archiver.s3 import S3_ERRORS  # lazy: see _s3
-    from gs.archiver.window import ArchiveCorrupt, has_data, verify_window
+    from gs.archiver.window import ArchiveCorrupt, archive_rows, check_rows, has_data
 
     st = request.app.state
     try:
-        async with _db(request) as conn:
-            if not await has_data(conn, body.vehicle, body.t_from, body.t_to):
-                raise ApiError(HTTPStatus.NOT_FOUND, "NO_DATA", "no data in window")
-            bucket = st.s3_settings.bucket
-            await verify_window(conn, _s3(st), bucket, body.vehicle, body.t_from, body.t_to)
+        with db_503(request):
+            async with connect(request) as conn:
+                if not await has_data(conn, body.vehicle, body.t_from, body.t_to):
+                    raise ApiError(HTTPStatus.NOT_FOUND, "NO_DATA", "no data in window")
+                rows = await archive_rows(conn, body.vehicle, body.t_from, body.t_to)
+        await check_rows(_s3(st), st.s3_settings.bucket, rows)  # no connection held: MinIO reads
     except ArchiveCorrupt as e:
         raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", str(e)) from e
     except S3_ERRORS as e:
@@ -101,7 +99,7 @@ async def create_replay(body: ReplayRequest, request: Request, user: User) -> Re
             "TOO_MANY_REPLAYS",
             f"at most {MAX_OPEN_PER_USER} replays at once; stop one first",
         )
-    r = Replay(uuid4(), user, body, time.monotonic(), asyncio.Event())
+    r = Replay(uuid4(), user, body, asyncio.Event())
     st.replays[r.id] = r
 
     def expire(rearm: bool) -> None:
@@ -143,7 +141,7 @@ async def _stream(request: Request, r: Replay) -> AsyncIterator[bytes]:
             await asyncio.wait_for(r.stop.wait(), s)
 
     try:
-        yield f"retry: {SSE_RETRY_MS}\n\n".encode()
+        yield SSE_RETRY_FRAME
         # its own connection: a replay lasts up to hours and must not starve the pool
         async with await psycopg.AsyncConnection.connect(
             st.database_url,

@@ -1,5 +1,6 @@
 import { afterEach, expect, test, vi } from "vitest";
-import type { AlarmView, CommandView } from "./store";
+import type { CommandView } from "../server/api";
+import type { AlarmView } from "./store";
 import { alarmView, commandView, eventView } from "../test/fixtures";
 import { createStore, ingest, type Snapshot, type Tm } from "./store";
 

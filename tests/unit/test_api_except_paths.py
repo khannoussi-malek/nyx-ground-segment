@@ -14,7 +14,7 @@ import pytest
 import redis.exceptions
 from psycopg_pool import PoolTimeout
 
-from gs.api import auth, commands
+from gs.api import auth, commands, dbguard
 from gs.api.bodies import CommandRequest
 from gs.api.deps import ApiError
 from gs.api.hub import Hub
@@ -32,7 +32,10 @@ class _DeadPool:
 
 
 def _req(pool: Any = None, r: Any = None) -> Any:
-    return SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(pool=pool, redis=r)))
+    return SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(pool=pool, redis=r)),
+        url=SimpleNamespace(path="/api/x"),
+    )
 
 
 def _body(**kw: Any) -> CommandRequest:
@@ -132,3 +135,28 @@ async def test_hub_reject_still_dead_letters_when_the_database_is_down() -> None
 
 async def test_archiver_sleep_returns_on_timeout() -> None:
     await _sleep(asyncio.Event(), 0.01)
+
+
+@pytest.mark.parametrize(
+    ("exc", "status", "error"),
+    [
+        (psycopg.DataError("string contains NUL"), 422, "VALIDATION_ERROR"),
+        (psycopg.OperationalError("down"), 503, "UNAVAILABLE"),
+        (psycopg.errors.UndefinedTable("x"), 503, "UNAVAILABLE"),
+        (PoolTimeout("t"), 503, "UNAVAILABLE"),
+    ],
+)
+def test_db_503_maps_bad_value_to_422_and_the_rest_to_503(
+    exc: Exception, status: int, error: str
+) -> None:
+    req = SimpleNamespace(url=SimpleNamespace(path="/api/x"))
+    with pytest.raises(ApiError) as e, dbguard.db_503(req):  # type: ignore[arg-type]
+        raise exc
+    assert (e.value.status, e.value.error) == (status, error)
+    assert "NUL" not in e.value.message  # no echo of the raw value
+
+
+def test_db_503_lets_other_errors_through() -> None:
+    req = SimpleNamespace(url=SimpleNamespace(path="/api/x"))
+    with pytest.raises(ValueError), dbguard.db_503(req):  # type: ignore[arg-type]
+        raise ValueError("not a database error")

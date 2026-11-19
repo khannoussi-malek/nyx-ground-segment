@@ -1,7 +1,7 @@
-export const REOPEN_MS = 1000;
+const REOPEN_MS = 1000;
 /** A reopen that failed before it opened (the api is still down) retries this soon (UI-07). */
-export const RETRY_MS = 250;
-export const KINDS = ["hello", "snapshot", "tm", "alarm", "cmd", "link", "ground", "hb"] as const;
+const RETRY_MS = 250;
+const KINDS = ["hello", "snapshot", "tm", "alarm", "cmd", "link", "ground", "hb"] as const;
 export type Kind = (typeof KINDS)[number];
 
 /** Test-only timing marks (e2e reconnect.spec.ts reads window.__uiTimes): [name, epoch ms]; invisible to operators. */

@@ -1,5 +1,6 @@
 import { expect, test } from "vitest";
-import { paramState, type AlarmView } from "./states";
+import { paramState } from "./states";
+import type { AlarmView } from "./store";
 
 const alarm = (level: string, state: AlarmView["state"] = "UNACK", trigger_check = "limit"): AlarmView =>
   ({ level, state, trigger_check, severity: level.startsWith("RED") ? "RED" : "YELLOW" }) as AlarmView;

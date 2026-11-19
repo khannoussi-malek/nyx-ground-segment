@@ -52,6 +52,9 @@ def ms(t: datetime) -> int:
     return int(t.timestamp() * 1000)
 
 
+SSE_RETRY_FRAME = b"retry: 1000\n\n"  # D-UI-02/03: client reconnect delay, 1000 ms
+
+
 def format_sse(event: str, model: StrictModel) -> bytes:
     return f"event: {event}\ndata: {model.model_dump_json()}\n\n".encode()
 
@@ -185,7 +188,9 @@ class Hub:
             return None
 
     async def _broadcast_snapshot(self) -> None:
-        if (frame := await self._snapshot_frame()) is not None:
+        if (frame := await self._snapshot_frame()) is None:
+            self._resnap = True  # the reload is not lost: run() retries it every HB_S
+        else:
             self.broadcast(frame)
 
     def _down(self, e: Exception) -> None:
@@ -221,8 +226,14 @@ class Hub:
                     await self._recovered()
                 for _, entries in read:
                     for entry_id, fields in entries:
+                        try:
+                            await self._handle(entry_id, fields.get("data", ""))
+                        except redis.exceptions.ConnectionError, redis.exceptions.TimeoutError:
+                            raise  # transient: last_id stays, a failed DLQ XADD re-reads the entry
+                        except Exception:  # noqa: BLE001  a bad entry never pins the stream
+                            log.exception("ui:events entry %s skipped: handler failed", entry_id)
+                            self._resnap = True  # what it may have dropped comes back by snapshot
                         last_id = entry_id
-                        await self._handle(entry_id, fields.get("data", ""))
             except Exception as e:  # noqa: BLE001  never a silent reader (Task 11 review)
                 self._down(e)
                 with contextlib.suppress(TimeoutError):
@@ -274,7 +285,9 @@ class Hub:
 
     async def _reject(self, entry_id: str, raw: str, detail: str) -> None:
         """D-ING-27 for ui:events: DLQ record, one INTERFACE_MISMATCH event per schema version,
-        /healthz degraded; the stream carries on. XREAD has no ack: the entry is skipped."""
+        /healthz degraded; the stream carries on. If the DLQ XADD fails, `run` re-reads the entry
+        (the event insert is idempotent per schema version). A DLQ XADD that timed out client-side
+        but landed gives a second DLQ record on the retry (at-least-once)."""
         log.warning("ui:events entry %s fails the ui-event model; to %s: %s", entry_id, DLQ, detail)
         self.degraded = True  # first: a DLQ failure below still leaves health and the event
         key = mismatch_key("ui-event", schema_sha12(UiEvent))

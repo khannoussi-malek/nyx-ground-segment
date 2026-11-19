@@ -5,7 +5,8 @@ import asyncio
 import dataclasses
 import errno
 import json
-from collections.abc import AsyncIterator
+import time
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -19,9 +20,11 @@ import redis.asyncio.client
 import redis.exceptions
 from fastapi import FastAPI
 from jsonschema import Draft202012Validator
+from psycopg_pool import AsyncConnectionPool
 from redis._parsers.base import BaseParser
 
 import gs.api.commands as commands_mod
+from gs.api import dbguard
 from gs.api.app import create_app
 from gs.api.commands import PreSendError, args_hash, lock_key, mark_sent, not_sent, release_lock
 from gs.ingest.events import late_key
@@ -527,6 +530,50 @@ async def test_db_down_before_send_503(api: Api, monkeypatch: pytest.MonkeyPatch
     assert api.tc() == [] and lock_value(api) is None  # nothing sent, lock given back
     g = await api.fc1.get("/api/commands")
     assert g.status_code == 503 and g.json()["error"] == "UNAVAILABLE"
+
+
+@pytest.mark.parametrize("route", ["send", "list", "logout", "replay", "login"])
+async def test_shared_db_guard_timeout_reaches_the_routes(
+    api: Api, monkeypatch: pytest.MonkeyPatch, route: str
+) -> None:
+    """Task 1: an unreachable pool answers 503 within dbguard's timeout, not 30 s."""
+    monkeypatch.setattr(dbguard, "DB_TIMEOUT_S", 0.3)
+    bad = AsyncConnectionPool("postgresql://x@127.0.0.1:1/x", min_size=1, open=False)
+    await bad.open(wait=False)
+    monkeypatch.setattr(
+        api.app.state, "pool", bad
+    )  # restored on teardown; logged in first: only the route's own database call fails
+    t = httpx.ASGITransport(app=api.app)
+    try:
+        async with httpx.AsyncClient(
+            transport=t, base_url="http://api", headers=CLIENT_HEADERS
+        ) as anon:
+            t0 = time.monotonic()
+            calls: dict[str, Callable[[], Awaitable[httpx.Response]]] = {
+                "send": lambda: api.fc1.post("/api/commands", json=api.iso()),
+                "list": lambda: api.fc1.get("/api/commands"),
+                "logout": lambda: api.fc1.post("/api/logout"),
+                "replay": lambda: api.fc1.post(
+                    "/api/replays",
+                    json={
+                        "vehicle": api.v,
+                        "from": "2020-01-01T00:00:00Z",
+                        "to": "2020-01-01T00:00:30Z",
+                        "speed": 10,
+                    },
+                ),
+                "login": lambda: login(anon, "fc2", FC2_PW),
+            }
+            resp = await calls[route]()
+            elapsed = time.monotonic() - t0
+    finally:
+        await bad.close()
+    assert (resp.status_code, resp.json()["error"]) == (503, "UNAVAILABLE"), resp.text
+    assert elapsed < 2, elapsed
+    if route == "send":
+        assert api.tc() == [] and lock_value(api) is None  # nothing sent, lock given back
+    if route == "logout":  # the session went before the audit: a 503 still logs the user out
+        assert (await api.fc1.get("/api/me")).status_code == 401
 
 
 async def test_row_moved_before_sent_is_not_sent(api: Api, monkeypatch: pytest.MonkeyPatch) -> None:

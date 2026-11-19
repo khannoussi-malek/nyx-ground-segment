@@ -1,5 +1,5 @@
 import { afterEach, expect, test, vi } from "vitest";
-import { ackAlarm, fetchBuckets, getReport, listCommands, listSessions, login, logout, me, missionDb, reportCsvUrl, sendCommand, startSession, stopSession } from "./api";
+import { ackAlarm, createReplay, fetchBuckets, getReport, listCommands, listSessions, login, logout, me, missionDb, reportCsvUrl, sendCommand, startSession, stopSession } from "./api";
 
 const stub = (status: number, body?: unknown) => {
   const f = vi.fn(async () => new Response(body === undefined ? null : JSON.stringify(body), { status }));
@@ -81,6 +81,19 @@ test("ackAlarm hands the server's error and message back, never throws", async (
   expect(await ackAlarm("a", RID, "n", "k")).toEqual({ ok: false, error: "HTTP_502", message: "ACK failed (502)" });
   vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
   expect(await ackAlarm("a", RID, "n", "k")).toMatchObject({ ok: false, error: "NETWORK" });
+});
+
+test("createReplay: 201 gives the id; refusals keep the server's words; no body and no network are named", async () => {
+  const req = { vehicle: "NYX-TA1", from: "2026-11-10T14:00:00Z", to: "2026-11-10T14:01:00Z", speed: 1 } as const;
+  const f = stub(201, { replay_id: "r1" });
+  expect(await createReplay(req)).toEqual({ ok: true, replayId: "r1" });
+  expect(f).toHaveBeenCalledWith("/api/replays", expect.objectContaining({ method: "POST", body: JSON.stringify(req) }));
+  stub(409, { error: "REPLAY_BUSY", message: "a replay is already running" });
+  expect(await createReplay(req)).toEqual({ ok: false, error: "REPLAY_BUSY", message: "a replay is already running" });
+  stub(502);
+  expect(await createReplay(req)).toEqual({ ok: false, error: "HTTP_502", message: "Replay failed (502)" });
+  vi.stubGlobal("fetch", vi.fn(async () => { throw new TypeError("offline"); }));
+  expect(await createReplay(req)).toEqual({ ok: false, error: "NETWORK", message: "Could not reach the ground segment" });
 });
 
 const REQ = { vehicle: "NYX-TA2", name: "vent_cabin", args: { duration_s: 3 } };

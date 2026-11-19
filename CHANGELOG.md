@@ -1,5 +1,13 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- A bad `ui:events` entry met during a Redis connection failure or timeout was skipped with no DLQ record; the API reader now re-reads it once Redis is back (D-ING-27). Any other Redis error on that write (OOM, NOPERM) skips the entry, so it cannot hold the reader.
+- A handler error on one `ui:events` entry no longer flashes GROUND PROCESSING DOWN – BROKER on the consoles: the entry is skipped, logged with its id, and the consoles are re-snapshotted.
+- A snapshot that failed after a worker restart (Resync) is retried every second instead of lost.
+- A database failure on the command, alarm and replay-create routes is now the same 503 `UNAVAILABLE` within 3 s as on the other routes (it waited up to 5 s there; alarms answered 500 for some database errors); a bad query or path value that the database rejects is 422 `VALIDATION_ERROR`, not a 503 (A-G3b-P27).
+- Creating a replay no longer holds a database connection while it hash-checks the archived hours against MinIO; a few parallel creates of 24 h windows could take most of the pool and make every other route answer 503.
+
 ## [1.0.1] - 2026-11-19
 ### Fixed
 - A Redis broker outage could be followed by a false LOSS OF SIGNAL: ingest reconnected before the simulator resumed sending and counted that silence as loss. The LOS clock now holds for 5 s after ingest reconnects; a source that stays silent still gets its LOS about 7 s after the reconnect (up to 8 s with one blocked read), in that post-outage window only; values still turn STALE at 2 s ([NCR-04](docs/ncr/NCR-04.md), D-ING-08, D-UI-15).

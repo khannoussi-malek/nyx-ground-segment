@@ -1,0 +1,4 @@
+{
+  "$schema": "https://raw.githubusercontent.com/fallow-rs/fallow/main/schema.json",
+  "entry": ["ui/src/gallery.tsx", "perf/ui_latency.spec.ts"]
+}

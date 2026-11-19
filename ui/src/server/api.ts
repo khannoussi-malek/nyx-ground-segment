@@ -43,7 +43,15 @@ export async function missionDb(): Promise<MissionDb | null> {
 type AckAccepted = components["schemas"]["AckAccepted"];
 type AckRequest = components["schemas"]["AckRequest"];
 type ErrorBody = components["schemas"]["ErrorBody"];
-export type AckResult = { ok: true; status: AckAccepted["status"] } | { ok: false; error: string; message: string };
+type Failure = { ok: false; error: string; message: string };
+export type AckResult = { ok: true; status: AckAccepted["status"] } | Failure;
+
+/** The server's error + message for a refused POST; `HTTP_<status>` and "<what> failed" when the body is not JSON. */
+async function failure(r: Response, what: string): Promise<Failure> {
+  const body = (await r.json().catch(() => null)) as Partial<ErrorBody> | null;
+  return { ok: false, error: body?.error ?? `HTTP_${r.status}`, message: body?.message ?? `${what} failed (${r.status})` };
+}
+const NETWORK: Failure = { ok: false, error: "NETWORK", message: "Could not reach the ground segment" };
 
 /** Ask for an ACK. 202 = the request is accepted (it may still be pending); anything else comes back as the server's
  *  error + message for the dialog, a network failure as NETWORK. The same request id may be sent again: the server
@@ -59,10 +67,9 @@ export async function ackAlarm(alarmId: string, requestId: string, note: string,
       body: JSON.stringify(req),
     });
     if (r.status === 202) return { ok: true, status: ((await r.json()) as AckAccepted).status };
-    const body = (await r.json().catch(() => null)) as Partial<ErrorBody> | null;
-    return { ok: false, error: body?.error ?? `HTTP_${r.status}`, message: body?.message ?? `ACK failed (${r.status})` };
+    return await failure(r, "ACK");
   } catch {
-    return { ok: false, error: "NETWORK", message: "Could not reach the ground segment" };
+    return NETWORK;
   }
 }
 
@@ -81,7 +88,7 @@ const rejected = (error: string, message: string, ambiguous = false): SendResult
 
 /** Send a command. A hazardous one answers 409 HAZARDOUS_CONFIRMATION_REQUIRED with a token: that is `confirm`, not an
  *  error; resend the same request with `confirm_token` and `reason`. Every other refusal keeps the server's words. */
-export const SEND_TIMEOUT_MS = 10_000;
+const SEND_TIMEOUT_MS = 10_000;
 
 export async function sendCommand(req: CommandRequest): Promise<SendResult> {
   // a hung request must not leave the operator waiting: the abort is an ambiguous failure like any network error
@@ -182,7 +189,7 @@ export async function getReport(id: number): Promise<ReportResult> {
 export const reportCsvUrl = (id: number): string => `/api/sessions/${id}/report.csv`;
 
 export type ReplayRequest = components["schemas"]["ReplayRequest"];
-export type ReplayResult = { ok: true; replayId: string } | { ok: false; error: string; message: string };
+export type ReplayResult = { ok: true; replayId: string } | Failure;
 
 /** The list of vehicles the console can replay; [] if the request fails. */
 export async function vehicles(): Promise<string[]> {
@@ -204,10 +211,9 @@ export async function createReplay(req: ReplayRequest): Promise<ReplayResult> {
       body: JSON.stringify(req),
     });
     if (r.status === 201) return { ok: true, replayId: ((await r.json()) as components["schemas"]["ReplayCreated"]).replay_id };
-    const body = (await r.json().catch(() => null)) as Partial<ErrorBody> | null;
-    return { ok: false, error: body?.error ?? `HTTP_${r.status}`, message: body?.message ?? `Replay failed (${r.status})` };
+    return await failure(r, "Replay");
   } catch {
-    return { ok: false, error: "NETWORK", message: "Could not reach the ground segment" };
+    return NETWORK;
   }
 }
 

@@ -32,6 +32,15 @@ async def tm_of(s: Stream, v: str) -> dict[str, Any]:
     return d
 
 
+async def frames_until_tm(s: Stream, v: str) -> list[tuple[str, dict[str, Any]]]:
+    """Every frame up to and including the next tm of `v`."""
+    got: list[tuple[str, dict[str, Any]]] = []
+    async with asyncio.timeout(4):
+        while not ((f := await s._next())[0] == "tm" and f[1]["vehicle"] == v):  # noqa: SLF001
+            got.append(f)
+    return [*got, f]
+
+
 def hub(live: LiveApi) -> Hub:
     h: Hub = live.app.state.hub
     return h
@@ -68,6 +77,98 @@ async def test_invalid_ui_event_dlq(live_api: LiveApi) -> None:  # D-ING-27, req
     async with httpx.AsyncClient(base_url=live_api.url) as c:
         health = (await c.get("/healthz")).json()
     assert health["status"] == "degraded" and health["checks"]["ui_events"] == "degraded"
+
+
+@pytest.mark.usefixtures("compose_api_stopped")
+async def test_rejected_entry_gets_its_dlq_record_after_a_redis_failure(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # assumptions.md Known minors, API (b): the entry is re-read, not skipped
+    r = live_api.app.state.redis
+    real, left = r.xadd, [1]
+
+    async def flaky(name: str, *a: Any, **k: Any) -> Any:
+        if name == "tm:dlq" and left[0]:
+            left[0] -= 1
+            raise redis.exceptions.ConnectionError("test: injected")
+        return await real(name, *a, **k)
+
+    monkeypatch.setattr(r, "xadd", flaky)
+    t0 = now()
+    async with sse(live_api) as s:
+        await s.next_of("snapshot")
+        bad = xadd_data("ui:events", '{"kind":"no-such-kind","marker":"dlq-retry"}')
+        await until(lambda: left == [0], 4)
+        publish_tm(live_api.vehicle, 1)
+        assert (await tm_of(s, live_api.vehicle))["seq"] == 1  # the next entry still arrives
+    recs = [x for x in dlq_since("ui:events", t0) if f'"entry_id":"{bad}"' in x]
+    assert len(recs) == 1
+
+
+async def test_non_redis_error_in_handle_does_not_pin_the_stream(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # D-ING-27: the stream carries on; only a Redis failure holds the reader
+    h = hub(live_api)
+    real, left = h._handle, [0]  # noqa: SLF001
+
+    async def flaky(entry_id: str, data: str) -> None:
+        if "poison" in data:  # deterministic: a retry would raise again
+            left[0] += 1
+            raise RuntimeError("test: handler bug")
+        await real(entry_id, data)
+
+    monkeypatch.setattr(h, "_handle", flaky)
+    async with sse(live_api) as s:
+        await s.next_of("snapshot")
+        xadd_data("ui:events", '{"kind":"poison"}')
+        await until(lambda: left[0] >= 1, 4)
+        publish_tm(live_api.vehicle, 1)
+        frames = await frames_until_tm(s, live_api.vehicle)
+    assert frames[-1][1]["seq"] == 1
+    assert not [f for f in frames if f[0] == "ground" and f[1]["broker"] == "down"]  # no flash
+
+
+@pytest.mark.usefixtures("compose_api_stopped")
+async def test_non_transient_redis_error_on_the_dlq_write_does_not_pin_the_stream(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # only a connection error or timeout holds the reader; OOM / NOPERM skip the entry
+    r = live_api.app.state.redis
+    real, hits = r.xadd, [0]
+
+    async def oom(name: str, *a: Any, **k: Any) -> Any:
+        if name == "tm:dlq":
+            hits[0] += 1
+            raise redis.exceptions.ResponseError("OOM command not allowed (test)")
+        return await real(name, *a, **k)
+
+    monkeypatch.setattr(r, "xadd", oom)
+    async with sse(live_api) as s:
+        await s.next_of("snapshot")
+        xadd_data("ui:events", '{"kind":"no-such-kind","marker":"oom"}')
+        await until(lambda: hits[0] >= 1, 4)
+        publish_tm(live_api.vehicle, 1)
+        frames = await frames_until_tm(s, live_api.vehicle)
+    assert frames[-1][1]["seq"] == 1 and hits[0] == 1  # skipped once, not re-read
+    assert not [f for f in frames if f[0] == "ground" and f[1]["broker"] == "down"]
+
+
+async def test_resync_with_a_failed_snapshot_build_is_retried(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # the reload is not lost: the HB-paced _resnap retry delivers it
+    h = hub(live_api)
+    real, left = h.snapshot, [1]
+
+    async def flaky() -> Any:
+        if left[0]:
+            left[0] -= 1
+            raise psycopg.OperationalError("test: database down")
+        return await real()
+
+    async with sse(live_api) as s:
+        await s.next_of("ground")
+        monkeypatch.setattr(h, "snapshot", flaky)
+        xadd_data("ui:events", f'{{"kind":"resync","vehicle":"{live_api.vehicle}"}}')
+        await s.next_of("snapshot", timeout=4)
+    assert left == [0]
 
 
 async def test_slow_client_overflow_closes_then_snapshot(live_api: LiveApi) -> None:

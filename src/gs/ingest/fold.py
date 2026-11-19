@@ -42,12 +42,6 @@ def state_version() -> int:
     return shape_version(LinkState, FrozenState)
 
 
-def empty_state(cset: CompiledSet) -> VehicleState:
-    return VehicleState(
-        None, LinkState(), FrozenState(), cset.set_sha256, engine.initial_state(cset)
-    )
-
-
 def _open(param: str, a: Alarm) -> OpenAlarm:
     return OpenAlarm(a.alarm_id, param, a.state, a.severity, a.acked_sev, a.trigger_check,
                      a.opened_at)  # fmt: skip
@@ -87,7 +81,7 @@ def fold(
     for f in frames:  # stream order
         prev = s
         s, k, ev = seq.step(prev, vehicle, f.seq, f.t_onboard)
-        if not seq.is_new(k):
+        if k == "DUP_OR_LATE":
             dup += 1
             continue
         events += ev

@@ -12,7 +12,6 @@ from gs.ingest.events import applied_key, details_json, transition_key
 from gs.ingest.fold import (
     VehicleState,
     dump_vehicle,
-    empty_state,
     fold,
     load_vehicle,
     state_version,
@@ -21,6 +20,7 @@ from gs.ingest.link import FrozenState, LinkState
 from gs.ingest.seq import SeqState
 from gs.simulator.nominals import NOMINALS
 from tests.support.mission import MISSION_DIR
+from tests.support.recompute import empty_state
 
 V = "NYX-TA1"
 T0 = datetime(2026, 11, 14, 10, tzinfo=UTC)
@@ -29,6 +29,8 @@ CSET = compile_set(MDB)
 SHA = CSET.set_sha256
 ES = initial_state(CSET)
 PARAMS = MDB.param_names
+
+
 MODEL = build_frame_model(PARAMS)
 
 

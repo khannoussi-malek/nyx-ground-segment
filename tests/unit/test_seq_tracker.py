@@ -2,7 +2,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime, timedelta
 
 from gs.ingest.events import GroundEvent, seq_key
-from gs.ingest.seq import HALF, MOD, NOMINAL_PERIOD_S, SeqState, is_new, step
+from gs.ingest.seq import HALF, MOD, NOMINAL_PERIOD_S, SeqState, step
 
 V = "NYX-TA1"
 T0 = datetime(2026, 11, 14, 10, tzinfo=UTC)
@@ -143,13 +143,6 @@ def test_period_ignores_gaps_and_dups() -> None:
     assert s is not None
     s2, _ = run([(20, s.last_t + timedelta(seconds=1.0))], s)
     assert s2 is not None and s2.period_s == s.period_s
-
-
-def test_is_new() -> None:
-    assert not is_new("DUP_OR_LATE")
-    assert all(
-        is_new(k) for k in ("FIRST", "IN_ORDER", "GAP", "SEQ_JUMP", "SEQ_RESET", "SEQ_ANOMALY")
-    )
 
 
 S0 = SeqState(epoch=T0, last_seq=0, last_t=T0, period_s=0.1)

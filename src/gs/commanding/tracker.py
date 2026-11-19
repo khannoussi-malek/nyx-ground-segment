@@ -7,7 +7,6 @@ decides every open row with decide(); then publish cmd/link messages; then MULTI
 Must not import gs.ingest.worker at runtime (it imports this module).
 """
 
-import json
 import logging
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -26,15 +25,16 @@ from gs.commanding.decide import AckSeen, Change, CmdRow, decide
 from gs.common.audit import audit
 from gs.common.interfaces.dlq import DlqRecord, schema_reject
 from gs.common.interfaces.render import schema_sha12
-from gs.common.interfaces.sse import Cmd, EventView, Link
+from gs.common.interfaces.sse import Cmd
 from gs.common.interfaces.streams import ACK_SCHEMA, Tc, TcAck
 from gs.common.interfaces.ui_event import UiMessage
 from gs.common.missiondb import RECEIVE_TIMEOUT_MAX_S, VERIFY_TIMEOUT_MAX_S
 from gs.common.uievents import publish_ui
 from gs.common.views import command_views
 from gs.ingest.errors import OperationalDbError
-from gs.ingest.events import GroundEvent, details_json, insert_events, late_key, mismatch_key
+from gs.ingest.events import GroundEvent, insert_events, late_key, mismatch_key, to_link
 from gs.ingest.owner import fence
+from gs.ingest.validate import entry_time
 
 if TYPE_CHECKING:
     from gs.ingest.worker import Ctx
@@ -90,10 +90,6 @@ def _mismatch(
     return GroundEvent(key, None, "INTERFACE_MISMATCH", None, details)
 
 
-def _entry_time(entry_id: str) -> datetime:
-    return datetime.fromtimestamp(int(entry_id.split("-")[0]) / 1000, UTC)
-
-
 def _validate(ctx: Ctx, vehicle: str, stream: str, entries: Sequence[Any], into: _Read) -> None:
     now = datetime.now(UTC)
     for eid_raw, fields in entries:
@@ -111,7 +107,7 @@ def _validate(ctx: Ctx, vehicle: str, stream: str, entries: Sequence[Any], into:
             cid = readable_cmd_id(raw)
             into.entries.append((eid, cid))
             if cid is not None:
-                into.acks.setdefault(cid, AckSeen(False, "INVALID", _entry_time(eid), True))
+                into.acks.setdefault(cid, AckSeen(False, "INVALID", entry_time(eid), True))
             continue
         into.entries.append((eid, ack.cmd_id))
         if ack.code == ACK_SCHEMA:  # the simulator rejected our tc entry (A-R17-4)
@@ -282,18 +278,7 @@ async def track_pass(
         return []
     done = [eid for eid, cid in read.entries if cid not in held]
     rejected = [read.dlq[eid] for eid in done if eid in read.dlq]
-    links: list[UiMessage] = [
-        Link(
-            event=EventView(
-                key=e.key,
-                vehicle=e.vehicle,
-                kind=e.kind,
-                t_onboard=e.t_onboard,
-                details=json.loads(details_json(e.details)),  # UUIDs and times as JSON
-            )
-        )
-        for e in inserted
-    ]
+    links: list[UiMessage] = [to_link(e) for e in inserted]
     unsent = links  # ponytail: a failed view read drops its Cmd messages until a snapshot
     try:  # publish, then DLQ + ack in one MULTI: the frame path's order (D-ING-05)
         views = await command_views(conn, cmd_ids=changed, limit=None) if changed else []

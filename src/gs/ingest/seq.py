@@ -22,10 +22,6 @@ class SeqState:
     period_s: float
 
 
-def is_new(k: Klass) -> bool:
-    return k != "DUP_OR_LATE"
-
-
 def _gap(
     kind: Literal["GAP", "SEQ_JUMP"],
     v: str,

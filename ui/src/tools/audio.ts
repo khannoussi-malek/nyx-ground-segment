@@ -38,7 +38,7 @@ export function beepsFor(alarms: readonly AlarmView[], seen: KeySet): string[] {
   return alarms.filter((a) => a.last.alert && seen.add(a.last.key)).map((a) => a.last.key);
 }
 
-export const TONE_COALESCE_MS = 1000;
+const TONE_COALESCE_MS = 1000;
 /** active: onset key -> state kind. lastPlayAt: when the last tone sounded. */
 export type ToneState = { active: Readonly<Record<string, string>>; lastPlayAt: number | null };
 

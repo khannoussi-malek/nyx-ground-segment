@@ -1,7 +1,6 @@
-import type { components } from "../server/schema";
+import type { AlarmView } from "./store";
 import type { Level, ParamState, Side } from "../tools/status";
 
-export type AlarmView = components["schemas"]["AlarmView"];
 export const STALE_MS = 2000;
 
 const SIDES: readonly string[] = ["LOW", "HIGH", "RISING", "FALLING"];

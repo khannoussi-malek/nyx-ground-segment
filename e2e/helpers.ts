@@ -12,7 +12,7 @@ export const API = `http://127.0.0.1:${process.env.API_HOST_PORT ?? "8000"}`;
 const SIM = `http://127.0.0.1:${process.env.SIM_HOST_PORT ?? "8081"}`;
 export const CLIENT = { "X-GS-Client": "console" };
 
-export function password(user: string): string {
+function password(user: string): string {
   const pw = process.env[`DEMO_PW_${user.toUpperCase()}`];
   if (!pw) throw new Error(`no demo password for ${user} in .env`);
   return pw;
@@ -32,7 +32,7 @@ export const cell = (page: Page, vehicle: string, param: string) =>
 /** The <tbody> of one parameter row: data-level / data-acq carry its state. */
 export const row = (page: Page, vehicle: string, param: string) =>
   page.locator("tbody").filter({ has: cell(page, vehicle, param) });
-export const card = (page: Page, vehicle: string) =>
+const card = (page: Page, vehicle: string) =>
   page.locator("table").filter({ has: page.locator(`caption .vehicle`, { hasText: vehicle }) });
 export const summary = (page: Page, vehicle: string) => card(page, vehicle).locator("caption .summary");
 

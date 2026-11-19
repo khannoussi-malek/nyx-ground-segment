@@ -1,5 +1,6 @@
 // Fully typed test fixtures built on the generated API types (no hand-written shapes, no casts).
-import type { AlarmView, CommandView, EventView } from "../state/store";
+import type { CommandView } from "../server/api";
+import type { AlarmView, EventView } from "../state/store";
 
 export const alarmView = (over: Partial<AlarmView> = {}): AlarmView => ({
   ack_request: null,

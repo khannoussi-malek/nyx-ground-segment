@@ -3,10 +3,10 @@ import type { Limits } from "./gauge";
 
 export const WINDOWS = { "2 min": 120_000, "1 h": 3_600_000, "24 h": 86_400_000 } as const;
 export type WindowKey = keyof typeof WINDOWS;
-export const MIN_WIDTH = 100; // the server accepts 100..4000 (D-DB-04)
-export const MAX_WIDTH = 4000;
-export const MIN_BUCKET_MS = 100;
-export const LABEL_GAP_PX = 14;
+const MIN_WIDTH = 100; // the server accepts 100..4000 (D-DB-04)
+const MAX_WIDTH = 4000;
+const MIN_BUCKET_MS = 100;
+const LABEL_GAP_PX = 14;
 
 export const refreshMs = (windowMs: number): number => Math.max(1000, windowMs / 120);
 export const clampWidth = (px: number): number => Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(px)));

@@ -185,7 +185,9 @@ class Hub:
             return None
 
     async def _broadcast_snapshot(self) -> None:
-        if (frame := await self._snapshot_frame()) is not None:
+        if (frame := await self._snapshot_frame()) is None:
+            self._resnap = True  # the reload is not lost: run() retries it every HB_S
+        else:
             self.broadcast(frame)
 
     def _down(self, e: Exception) -> None:
@@ -227,6 +229,7 @@ class Hub:
                             raise  # last_id stays: a failed DLQ XADD re-reads the entry
                         except Exception:  # noqa: BLE001  a bad entry never pins the stream
                             log.exception("ui:events entry %s skipped: handler failed", entry_id)
+                            self._resnap = True  # what it may have dropped comes back by snapshot
                         last_id = entry_id
             except Exception as e:  # noqa: BLE001  never a silent reader (Task 11 review)
                 self._down(e)

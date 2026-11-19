@@ -116,6 +116,26 @@ async def test_non_redis_error_in_handle_does_not_pin_the_stream(
         assert (await tm_of(s, live_api.vehicle))["seq"] == 1
 
 
+async def test_resync_with_a_failed_snapshot_build_is_retried(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # the reload is not lost: the HB-paced _resnap retry delivers it
+    h = hub(live_api)
+    real, left = h.snapshot, [1]
+
+    async def flaky() -> Any:
+        if left[0]:
+            left[0] -= 1
+            raise psycopg.OperationalError("test: database down")
+        return await real()
+
+    async with sse(live_api) as s:
+        await s.next_of("ground")
+        monkeypatch.setattr(h, "snapshot", flaky)
+        xadd_data("ui:events", f'{{"kind":"resync","vehicle":"{live_api.vehicle}"}}')
+        await s.next_of("snapshot", timeout=4)
+    assert left == [0]
+
+
 async def test_slow_client_overflow_closes_then_snapshot(live_api: LiveApi) -> None:
     v, base = live_api.vehicle, now() - timedelta(minutes=1)  # Review Focus 5
     produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5}, base=base)

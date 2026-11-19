@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -15,6 +16,8 @@ class Settings:
     vehicles: tuple[str, ...]
     ui_dist: Path
     s3: S3Settings  # the get-only `replay` MinIO user (T4-l, R2-19)
+    test_controls: bool = False  # GS_TEST_CONTROLS=1: /api/test-controls forwards to the simulator
+    sim_url: str = "http://simulator:8081"
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -27,4 +30,6 @@ class Settings:
             vehicles=vehicle_list(require("VEHICLES")),
             ui_dist=Path(require("UI_DIST")),
             s3=S3Settings.from_env(),
+            test_controls=os.environ.get("GS_TEST_CONTROLS") == "1",
+            sim_url=os.environ.get("SIM_URL", "http://simulator:8081"),
         )

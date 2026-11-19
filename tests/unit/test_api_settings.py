@@ -44,3 +44,16 @@ def test_missing_ui_dist_fails_fast(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("UI_DIST")
     with pytest.raises(ConfigError, match="UI_DIST"):
         Settings.from_env()
+
+
+def test_test_controls_default_off_and_sim_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    for k, v in ENV.items():
+        monkeypatch.setenv(k, v)
+    monkeypatch.delenv("GS_TEST_CONTROLS", raising=False)
+    assert Settings.from_env().test_controls is False
+    monkeypatch.setenv("GS_TEST_CONTROLS", "1")
+    monkeypatch.setenv("SIM_URL", "http://simulator:8081")
+    s = Settings.from_env()
+    assert (s.test_controls, s.sim_url) == (True, "http://simulator:8081")
+    monkeypatch.setenv("GS_TEST_CONTROLS", "0")
+    assert Settings.from_env().test_controls is False

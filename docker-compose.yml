@@ -115,7 +115,8 @@ services:
                   DATABASE_URL: "postgresql://gs_app:${GS_APP_PASSWORD}@db:5432/gs", SESSION_SECRET: "${SESSION_SECRET}",
                   USERS_FILE: /run/users.yaml, MISSION_DB: /mission, VEHICLES: "NYX-TA1,NYX-TA2", BIND_HOST: "0.0.0.0", API_PORT: "8000",
                   UI_DIST: /app/ui/dist, S3_ENDPOINT: "minio:9000", S3_ACCESS_KEY: replay,
-                  S3_SECRET_KEY: "${S3_REPLAY_SECRET}", S3_BUCKET: archive}
+                  S3_SECRET_KEY: "${S3_REPLAY_SECRET}", S3_BUCKET: archive,
+                  GS_TEST_CONTROLS: "${GS_TEST_CONTROLS:-1}", SIM_URL: "http://simulator:8081"}
     volumes:
       - ./mission:/mission:ro
       - {type: bind, source: ./users.yaml, target: /run/users.yaml, read_only: true, bind: {create_host_path: false}}

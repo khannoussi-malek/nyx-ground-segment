@@ -540,7 +540,9 @@ async def test_shared_db_guard_timeout_reaches_the_routes(
     monkeypatch.setattr(dbguard, "DB_TIMEOUT_S", 0.3)
     bad = AsyncConnectionPool("postgresql://x@127.0.0.1:1/x", min_size=1, open=False)
     await bad.open(wait=False)
-    api.app.state.pool = bad  # logged in first: only the route's own database call fails
+    monkeypatch.setattr(
+        api.app.state, "pool", bad
+    )  # restored on teardown; logged in first: only the route's own database call fails
     t = httpx.ASGITransport(app=api.app)
     try:
         async with httpx.AsyncClient(

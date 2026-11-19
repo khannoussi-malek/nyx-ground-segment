@@ -61,6 +61,19 @@ def outage_source_paused(then: Callable[[], None]) -> None:
         compose("unpause", "simulator", check=False)
 
 
+def assert_no_los(t0: datetime) -> None:
+    """No LOS since t0. On a failure, print the ingest and simulator logs of the window first:
+    later system tests recreate the containers, so CI's compose.log never holds them (NCR-04)."""
+    found = {v: events_for(v, "LOS", since=t0) for v in LIVE}
+    if any(found.values()):
+        since = t0.isoformat()
+        logs = compose("logs", "--no-color", "--timestamps", "--since", since,
+                       "ingest-1", "ingest-2", "simulator", check=False)  # fmt: skip
+        print(logs.stdout[-300_000:])
+    for v in LIVE:
+        assert found[v] == [], v
+
+
 def los_for_all(t0: datetime) -> bool:
     return all(events_for(v, "LOS", since=t0) for v in LIVE)
 
@@ -70,8 +83,7 @@ async def test_source_resumes_late_after_broker_no_los() -> None:
     await asyncio.to_thread(outage_source_paused, lambda: time.sleep(LATE_S))
     await asyncio.to_thread(wait_until, api_ok, 60)
     await asyncio.to_thread(wait_drained, LIVE, 30)
-    for v in LIVE:
-        assert events_for(v, "LOS", since=t0) == [], v
+    assert_no_los(t0)
 
 
 async def test_source_silent_after_broker_still_los() -> None:
@@ -97,5 +109,4 @@ async def test_redis_stop_ground_down_no_los_event() -> None:
         await wait_seen(s, lambda k, d: k == "snapshot", 10, s.seen.index(up))
     await asyncio.to_thread(wait_until, api_ok, 60)
     await asyncio.to_thread(wait_drained, LIVE, 30)
-    for v in LIVE:
-        assert events_for(v, "LOS", since=t0) == [], v
+    assert_no_los(t0)

@@ -1,5 +1,9 @@
 # Changelog
 
+## [Unreleased]
+### Fixed
+- A bad `ui:events` entry met during a Redis failure was skipped with no DLQ record; the API reader now re-reads it once Redis is back (D-ING-27).
+
 ## [1.0.1] - 2026-11-19
 ### Fixed
 - A Redis broker outage could be followed by a false LOSS OF SIGNAL: ingest reconnected before the simulator resumed sending and counted that silence as loss. The LOS clock now holds for 5 s after ingest reconnects; a source that stays silent still gets its LOS about 7 s after the reconnect (up to 8 s with one blocked read), in that post-outage window only; values still turn STALE at 2 s ([NCR-04](docs/ncr/NCR-04.md), D-ING-08, D-UI-15).

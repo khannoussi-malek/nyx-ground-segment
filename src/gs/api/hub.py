@@ -221,8 +221,8 @@ class Hub:
                     await self._recovered()
                 for _, entries in read:
                     for entry_id, fields in entries:
-                        last_id = entry_id
                         await self._handle(entry_id, fields.get("data", ""))
+                        last_id = entry_id  # after: a failed DLQ XADD re-reads the entry
             except Exception as e:  # noqa: BLE001  never a silent reader (Task 11 review)
                 self._down(e)
                 with contextlib.suppress(TimeoutError):
@@ -274,7 +274,8 @@ class Hub:
 
     async def _reject(self, entry_id: str, raw: str, detail: str) -> None:
         """D-ING-27 for ui:events: DLQ record, one INTERFACE_MISMATCH event per schema version,
-        /healthz degraded; the stream carries on. XREAD has no ack: the entry is skipped."""
+        /healthz degraded; the stream carries on. If the DLQ XADD fails, `run` re-reads the entry
+        (the event insert is idempotent per schema version)."""
         log.warning("ui:events entry %s fails the ui-event model; to %s: %s", entry_id, DLQ, detail)
         self.degraded = True  # first: a DLQ failure below still leaves health and the event
         key = mismatch_key("ui-event", schema_sha12(UiEvent))

@@ -70,6 +70,31 @@ async def test_invalid_ui_event_dlq(live_api: LiveApi) -> None:  # D-ING-27, req
     assert health["status"] == "degraded" and health["checks"]["ui_events"] == "degraded"
 
 
+@pytest.mark.usefixtures("compose_api_stopped")
+async def test_rejected_entry_gets_its_dlq_record_after_a_redis_failure(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # assumptions.md Known minors, API (b): the entry is re-read, not skipped
+    r = live_api.app.state.redis
+    real, left = r.xadd, [1]
+
+    async def flaky(name: str, *a: Any, **k: Any) -> Any:
+        if name == "tm:dlq" and left[0]:
+            left[0] -= 1
+            raise redis.exceptions.ConnectionError("test: injected")
+        return await real(name, *a, **k)
+
+    monkeypatch.setattr(r, "xadd", flaky)
+    t0 = now()
+    async with sse(live_api) as s:
+        await s.next_of("snapshot")
+        bad = xadd_data("ui:events", '{"kind":"no-such-kind","marker":"dlq-retry"}')
+        await until(lambda: left == [0], 4)
+        publish_tm(live_api.vehicle, 1)
+        assert (await tm_of(s, live_api.vehicle))["seq"] == 1  # the next entry still arrives
+    recs = [x for x in dlq_since("ui:events", t0) if f'"entry_id":"{bad}"' in x]
+    assert len(recs) == 1
+
+
 async def test_slow_client_overflow_closes_then_snapshot(live_api: LiveApi) -> None:
     v, base = live_api.vehicle, now() - timedelta(minutes=1)  # Review Focus 5
     produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5}, base=base)

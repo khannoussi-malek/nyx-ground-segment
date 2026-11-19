@@ -67,7 +67,7 @@ To run the tests or work on the code you also need [uv](https://docs.astral.sh/u
    ![The leak at 1.5x speed: the pressure turns YELLOW on its falling rate, then RED LOW, and the alarm list fills](docs/img/leak-alarm.gif)
 
    Clear the fault with `curl -X DELETE http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA1","fault":"leak"}'`.
-   No curl needed: the **Scenarios** button in the top bar starts and clears any test scenario (leak, overheat, signal loss, bad frames, ignored commands) on the vehicle you pick, with a hint of what to watch.
+   No curl needed: the **Scenarios** button in the top bar starts any test scenario (leak, overheat, signal loss, bad frames, ignored commands) on the vehicle you pick, with a hint of what to watch. Clear exists for leak, overheat and freeze; the others end by themselves or are one-shot.
 3. Cut NYX-TA2 for 10 s: `curl -X POST http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA2","fault":"dropout","params":{"duration_s":10}}'`. The console shows **LOSS OF SIGNAL**, then one gap event with about 100 lost frames when it returns. A dropout ends by itself; no DELETE is needed.
 4. Send a hazardous command and read the confirmation dialog; start and stop a test session and download its report (the [operator guide](docs/operator-guide.md) walks through each).
 5. Archive and replay: a backfilled NYX-TA9 history is archived within one loop and can be replayed from the Replay toggle in the top bar; the manual steps are in [docs/atp/ATP-07.md](docs/atp/ATP-07.md) and the replay screen is described in the [operator guide](docs/operator-guide.md#run-a-replay).
@@ -148,6 +148,7 @@ Acceptance: 40 of 40 musts and 6 of 7 shoulds pass; the one partial and every ot
 From [design §4](docs/design.md#4-deliberately-not-built):
 - **A single copy of the archive.** After `HOT_RETENTION_H` the one MinIO object is the only copy. A rolling scrub finds corruption (an `ARCHIVE_CORRUPT` event, `degraded` health, replay of that hour refused with 409); nothing repairs it. The MinIO image is a frozen `bitnamilegacy` build.
 - **Non-telemetry history is lost back to the last snapshot** (≤ `SNAPSHOT_EVERY_H`, default 24 h): alarms, events, commands and the audit log are snapshotted daily to the same MinIO as the archive (D-ARC-12), so losing both loses everything.
+- **Test controls are on by default.** The Scenarios panel (simulator fault injection, D-SIM-12) is on in the local stack; set `GS_TEST_CONTROLS=0` in `.env` to remove it. Never in production.
 - Not production-ready: no roles or second-person approval for hazardous commands, no TLS (ports are bound to 127.0.0.1), secrets live in `.env`, Redis and Postgres are single nodes, the audit log is append-only by role and trigger but not tamper-evident.
 - **Command timeouts wait for ground processing.** A command's 5 s / 15 s timeouts start only once ground processing has caught up with its backlog (D-CMD-05). While it is behind, a command can stay SENT or RECEIVED past its limit with no note on screen; the GROUND PROCESSING banner and the `/healthz` backlog say why.
 - No flood control, shelving or suppression; no CCSDS/PUS decoding; no report sign-off in the tool.

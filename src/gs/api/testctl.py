@@ -12,7 +12,7 @@ from pydantic import BaseModel
 
 from gs.api.dbguard import connect, db_503
 from gs.api.deps import ApiError, User, errors, vehicles
-from gs.common.audit import audit
+from gs.common.audit import Action, audit
 from gs.simulator.faults import FaultClear, FaultName, FaultRequest
 
 SIM_TIMEOUT_S = 3
@@ -65,7 +65,7 @@ async def _run(
     request: Request,
     user: str,
     method: str,
-    action: str,
+    action: Action,
     body: FaultRequest | FaultClear,
 ) -> None:
     _on(request)
@@ -73,7 +73,7 @@ async def _run(
     details = body.model_dump(mode="json")
     with db_503(request):  # on record before it is injected
         async with connect(request) as conn:
-            await audit(conn, user, action, None, details)  # type: ignore[arg-type]
+            await audit(conn, user, action, None, details)
     await _forward(request, method, body)
 
 

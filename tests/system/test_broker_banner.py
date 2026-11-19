@@ -14,7 +14,7 @@ from gs.ingest.worker import RESUME_GRACE_S
 from tests.support.compose import api_url, compose
 from tests.support.env import now, wait_until
 from tests.support.ingest import LIVE, wait_drained
-from tests.support.pg import events_for
+from tests.support.pg import events_for, newest_t
 from tests.support.redisx import client
 from tests.support.sse import collecting, live_stack, wait_seen
 
@@ -109,6 +109,23 @@ def assert_no_los(t0: datetime) -> None:
         assert found[v] == [], v
 
 
+def settled_after_pause(t0: datetime) -> None:
+    """A paused simulator catches up with frames stamped `now`: a real vehicle-time gap whose
+    LOS+AOS pair ingest writes when it reads them. Wait for frames past that gap and for every
+    LOS to have its AOS, so the pair never lands in the next test's window."""
+    base = {v: newest_t(v) for v in LIVE}
+
+    def past_gap(v: str) -> bool:
+        t, b = newest_t(v), base[v]
+        return t is not None and b is not None and (t - b).total_seconds() > STALE_S
+
+    def closed(v: str) -> bool:
+        return len(events_for(v, "AOS", since=t0)) >= len(events_for(v, "LOS", since=t0))
+
+    wait_until(lambda: all(past_gap(v) and closed(v) for v in LIVE), 60)
+    wait_drained(LIVE, 30)
+
+
 def los_for_all(t0: datetime) -> bool:
     return all(events_for(v, "LOS", since=t0) for v in LIVE)
 
@@ -133,7 +150,7 @@ async def test_source_silent_after_broker_still_los() -> None:
 
     await asyncio.to_thread(outage_source_paused, los_in_time)
     await asyncio.to_thread(wait_until, api_ok, 60)
-    await asyncio.to_thread(wait_drained, LIVE, 30)
+    await asyncio.to_thread(settled_after_pause, t0)
 
 
 async def test_redis_stop_ground_down_no_los_event() -> None:

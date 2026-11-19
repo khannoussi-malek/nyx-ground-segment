@@ -77,6 +77,15 @@ def seqs_by_t_received(vehicle: str) -> list[int]:
     return [r[0] for r in rows]
 
 
+def newest_t(vehicle: str) -> datetime | None:
+    """t_onboard of the newest stored frame of a vehicle."""
+    with psycopg.connect(app_dsn("gs")) as c:
+        row = c.execute(
+            "select max(t_onboard) from telemetry where vehicle=%s", (vehicle,)
+        ).fetchone()
+    return row[0] if row else None
+
+
 def stored_row(vehicle: str, seq: int) -> dict[str, object]:
     with psycopg.connect(app_dsn("gs"), row_factory=dict_row) as c:
         cur = c.execute("select * from telemetry where vehicle=%s and seq=%s", (vehicle, seq))

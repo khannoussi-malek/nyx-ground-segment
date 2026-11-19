@@ -48,7 +48,10 @@ def test_outage_buffers_then_flushes_in_order() -> None:
     expected = 2 * 10 * outage_s
     assert grown >= expected - SLACK, f"buffered {grown}, expected about {expected:.0f}"
     for v, after in last.items():
-        seqs = _seqs(v, after)
+        raw = _seqs(v, after)
+        # at-least-once (D-SIM-05, G30): a timed-out XADD that landed is re-sent, so the stream
+        # may hold a frame twice in a row; ingest's idempotent key stores it once
+        seqs = [s for i, s in enumerate(raw) if i == 0 or s != raw[i - 1]]
         assert seqs, f"{v}: nothing drained"
         assert seqs[0] == tail_seq[v] + 1, f"{v}: gap at the outage start"
         assert seqs == list(range(seqs[0], seqs[0] + len(seqs))), f"{v}: gap, reorder or duplicate"

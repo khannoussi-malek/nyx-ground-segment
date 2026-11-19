@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Added
+- A **Scenarios** button in the console top bar (shown only when test controls are on) opens a panel that starts and clears the simulator test scenarios on a chosen vehicle, each with a hint of what to watch (D-SIM-12).
 - Test controls (D-SIM-12): `GET /api/test-controls` and `POST`/`DELETE /api/test-controls/fault` start and clear simulator faults from the console API (audited, session and `X-GS-Client` required). On by default in the local compose stack; `GS_TEST_CONTROLS=0` turns them off (the routes answer 404).
 
 ### Fixed

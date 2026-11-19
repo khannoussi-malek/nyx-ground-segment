@@ -220,3 +220,33 @@ export async function createReplay(req: ReplayRequest): Promise<ReplayResult> {
 export async function deleteReplay(id: string): Promise<void> {
   await fetch(`/api/replays/${encodeURIComponent(id)}`, { method: "DELETE", credentials: "same-origin", headers: CLIENT }).catch(() => {});
 }
+
+export type TestControls = components["schemas"]["TestControls"];
+export type FaultRequest = components["schemas"]["FaultRequest"];
+type FaultClear = components["schemas"]["FaultClear"];
+export type FaultResult = { ok: true } | Failure;
+
+/** The test-controls list; null when they are off (404), the session ended or the request failed: no panel then. */
+export async function testControls(): Promise<TestControls | null> {
+  try {
+    const r = await fetch("/api/test-controls", { credentials: "same-origin" });
+    return r.status === 200 ? ((await r.json()) as TestControls) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Start (POST) or clear (DELETE) one simulator fault; a refusal comes back as the server's error + message. */
+export async function sendFault(method: "POST" | "DELETE", body: FaultRequest | FaultClear): Promise<FaultResult> {
+  try {
+    const r = await fetch("/api/test-controls/fault", {
+      method,
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...CLIENT },
+      body: JSON.stringify(body),
+    });
+    return r.status === 204 ? { ok: true } : await failure(r, "Test fault");
+  } catch {
+    return NETWORK;
+  }
+}

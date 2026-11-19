@@ -67,6 +67,7 @@ To run the tests or work on the code you also need [uv](https://docs.astral.sh/u
    ![The leak at 1.5x speed: the pressure turns YELLOW on its falling rate, then RED LOW, and the alarm list fills](docs/img/leak-alarm.gif)
 
    Clear the fault with `curl -X DELETE http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA1","fault":"leak"}'`.
+   No curl needed: the **Scenarios** button in the top bar starts and clears any test scenario (leak, overheat, signal loss, bad frames, ignored commands) on the vehicle you pick, with a hint of what to watch.
 3. Cut NYX-TA2 for 10 s: `curl -X POST http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA2","fault":"dropout","params":{"duration_s":10}}'`. The console shows **LOSS OF SIGNAL**, then one gap event with about 100 lost frames when it returns. A dropout ends by itself; no DELETE is needed.
 4. Send a hazardous command and read the confirmation dialog; start and stop a test session and download its report (the [operator guide](docs/operator-guide.md) walks through each).
 5. Archive and replay: a backfilled NYX-TA9 history is archived within one loop and can be replayed from the Replay toggle in the top bar; the manual steps are in [docs/atp/ATP-07.md](docs/atp/ATP-07.md) and the replay screen is described in the [operator guide](docs/operator-guide.md#run-a-replay).

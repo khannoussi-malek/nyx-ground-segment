@@ -50,6 +50,10 @@ The live console keeps running under the replay. The banner carries a live count
 
 Errors show the API message. 400: the window is empty or longer than 24 h. 404: no data in the window. 409 "archive object failed hash check": one archived hour in the window no longer matches its recorded hash, so the whole replay is refused rather than showing a wrong gap; tell the test conductor, the archive health shows `degraded`. There is only one copy of an archived hour, so nothing repairs it. The replay page also offers NYX-TA9 in its vehicle list; the failed-hash message reads "Replay stopped: an archive object failed its hash check" with the object named. Test data lives on NYX-TA9, which has no live display; see `docs/atp/ATP-07.md` to create some.
 
+## Test scenarios (demos and tests only)
+
+The **Scenarios** button next to Replay appears only when the test controls are on (`GS_TEST_CONTROLS`, on in the local stack). It is not an operator function: it injects simulator faults for testing and demos, and every use is audited (TEST_FAULT, TEST_FAULT_CLEAR, with your user name). Choose the vehicle first (there is no default), then press a scenario; each line says what to watch. The status line reads for example "Cabin leak started on NYX-TA1 at 14:03:17Z", or the API's error message. **Clear** stops a cabin leak, an overheat or a frozen sensor before its time. Scenarios: cabin leak, overheat 30 s, bus voltage spike 5 s, loss of signal 10 s, frozen sensor 15 s, bad frame, duplicate frames, sequence jump, vehicle ignores commands 20 s, late execution 16 s.
+
 ## A corrupt hour that stays hot
 If an archived hour's object fails its hash check while its rows are still in the hot table, the archiver first rebuilds the object from those rows. When that does not clear it (the rebuild is refused or fails again), the hour stays hot. The archiver `/healthz` shows `degraded` with a `delete_refused` count, and its log has an ERROR line naming the vehicle and hour. The archiver never deletes those hot rows on its own: they are the only good copy. Only that hour is held back; other hours keep archiving and deleting.
 

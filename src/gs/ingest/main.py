@@ -18,7 +18,7 @@ from redis.backoff import NoBackoff
 from redis.maint_notifications import MaintNotificationsConfig
 
 from gs.common.config import require, require_int, vehicle_list
-from gs.common.health import serve_health
+from gs.common.health import State, serve_health
 from gs.common.hooks import Hooks
 from gs.common.logs import setup_logging
 from gs.common.uievents import publish_ui
@@ -97,13 +97,12 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
     watcher = MissionWatcher(
         Path(s.mission_db), s.database_url, s.consumer_name, mdb, on_events=publish
     )
-    seen: dict[str, float] = {}  # a standby task (lock not granted) is not a stale loop
     ctx = Ctx(
         s.consumer_name,
         lambda: watcher.current,
         r,
         FieldStats(),
-        seen,
+        {},  # loop_seen: a standby task (lock not granted) is not a stale loop
         Counter(),
         s.homes,
         vehicles=s.vehicles,
@@ -112,13 +111,12 @@ async def run(s: IngestSettings, stop: asyncio.Event) -> None:
         hooks=Hooks.from_env(),
     )
     await refresh_memory(ctx)  # health knows Redis from the first request
-    server = await serve_health(
-        s.bind_host,
-        s.health_port,
-        lambda: ingest_status(
-            seen, ctx.owned, time.monotonic(), ctx.used_memory[0], ctx.counters, ctx.max_memory[0]
-        ),
-    )
+
+    def status() -> tuple[State, dict[str, object]]:
+        used, cap = ctx.memory[0] or (None, None)
+        return ingest_status(ctx.loop_seen, ctx.owned, time.monotonic(), used, ctx.counters, cap)
+
+    server = await serve_health(s.bind_host, s.health_port, status)
     try:
         async with asyncio.TaskGroup() as tg:  # any task error cancels the rest and exits 1
             for v in s.vehicles:

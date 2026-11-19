@@ -22,7 +22,6 @@ from gs.ingest.seq import SeqState
 log = logging.getLogger(__name__)
 # ponytail: never pruned; one id per request that can't even be rejected (none in normal runs)
 _STUCK: set[UUID] = set()
-Result = Literal["applied", "superseded"]
 # P-pf40: 22 data, 23 integrity, P0 PL/pgSQL RAISE (a trigger) reject one request; a request
 # that can never apply must not exit ingest into a restart loop. Every other class propagates.
 REJECT_CLASSES = ("22", "23", "P0")
@@ -87,7 +86,7 @@ async def db_now(conn: psycopg.AsyncConnection) -> datetime:
 
 def apply_ack(
     state: EngineState, req: AckReq, vehicle: str, t: datetime
-) -> tuple[EngineState, Transition | None, Result, str | None]:
+) -> tuple[EngineState, Transition | None, Literal["applied", "superseded"], str | None]:
     """Pure. `t` = the apply time (closed_at when an RTN_UNACK alarm clears)."""
     a = state.alarms.get(req.param)
     if a is None or a.alarm_id != req.alarm_id:
@@ -99,8 +98,7 @@ def apply_ack(
     if a.state == "ACKED":
         return state, None, "superseded", ALREADY_ACKED
     new, tr = engine.ack(state, vehicle, req.param, req.by_user, req.note, str(req.request_id), t)
-    if tr is None:  # ponytail: unreachable (open states are UNACK, ACKED, RTN_UNACK)
-        return state, None, "superseded", NOT_OPEN
+    assert tr is not None  # unreachable: open states are UNACK, ACKED, RTN_UNACK
     return new, tr, "applied", None
 
 

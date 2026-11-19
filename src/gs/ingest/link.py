@@ -22,8 +22,8 @@ class LinkState:
 
 def _los(vehicle: str, prev: SeqState, rejected: Mapping[str, int] | None = None) -> GroundEvent:
     details: dict[str, object] = {"epoch": prev.epoch, "last_seq": prev.last_seq}
-    count = sum((rejected or {}).values())
-    if rejected and count > 0:  # D-UI-25: DLQ reasons since the last new frame
+    # D-UI-25: DLQ reasons since the last new frame
+    if rejected and (count := sum(rejected.values())):
         top = max(get_args(DlqReason), key=lambda r: rejected.get(r, 0))  # ties: DlqReason order
         details["rejected"] = {"count": count, "reason": top}
     key = link_key("LOS", vehicle, prev.epoch, prev.last_seq)

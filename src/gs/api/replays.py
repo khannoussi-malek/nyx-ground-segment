@@ -79,7 +79,7 @@ async def create_replay(body: ReplayRequest, request: Request, user: User) -> Re
     if body.t_to - body.t_from > MAX_WINDOW:
         raise ApiError(HTTPStatus.BAD_REQUEST, "WINDOW_TOO_LARGE", "window is longer than 24 h")
     from gs.archiver.s3 import S3_ERRORS  # lazy: see _s3
-    from gs.archiver.window import ArchiveCorrupt, has_data, verify_window
+    from gs.archiver.window import ArchiveCorrupt, archive_rows, check_rows, has_data
 
     st = request.app.state
     try:
@@ -87,8 +87,8 @@ async def create_replay(body: ReplayRequest, request: Request, user: User) -> Re
             async with connect(request) as conn:
                 if not await has_data(conn, body.vehicle, body.t_from, body.t_to):
                     raise ApiError(HTTPStatus.NOT_FOUND, "NO_DATA", "no data in window")
-                bucket = st.s3_settings.bucket
-                await verify_window(conn, _s3(st), bucket, body.vehicle, body.t_from, body.t_to)
+                rows = await archive_rows(conn, body.vehicle, body.t_from, body.t_to)
+        await check_rows(_s3(st), st.s3_settings.bucket, rows)  # no connection held: MinIO reads
     except ArchiveCorrupt as e:
         raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", str(e)) from e
     except S3_ERRORS as e:

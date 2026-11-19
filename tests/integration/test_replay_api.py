@@ -12,7 +12,7 @@ from uuid import uuid4
 import httpx
 import psycopg
 import pytest
-from psycopg_pool import PoolTimeout
+from psycopg_pool import AsyncConnectionPool, PoolTimeout
 
 from gs.api import replays
 from gs.archiver.hours import HOUR, hour_of, object_key
@@ -436,3 +436,34 @@ async def test_mid_stream_failure_ends_the_stream(
     assert got[0][0] == "replay_start" and "replay_end" not in [k for k, _ in got]
     assert [k for k, _ in got].count("tm") == 20  # the first hour was served
     await until(lambda: registry(live_api) == {}, 1)
+
+
+async def test_create_holds_no_connection_while_it_checks_the_archive(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    v = vehicle()
+    hot_hour(v, H, n=20, rate_hz=1.0)
+    async with app_conn() as conn:
+        await archive_and_delete(conn, v, H)
+    one = AsyncConnectionPool(live_api.app.state.pool.conninfo, min_size=1, max_size=1, open=False)
+    await one.open(wait=True)
+    monkeypatch.setattr(live_api.app.state, "pool", one)  # one connection: a held one starves
+    entered, release = asyncio.Event(), asyncio.Event()
+
+    async def slow_get(*a: Any) -> bytes:
+        entered.set()
+        await release.wait()
+        return await real_get(*a)
+
+    monkeypatch.setattr("gs.archiver.window.get", slow_get)
+    try:
+        async with client(live_api) as c:
+            creating = asyncio.create_task(c.post("/api/replays", json=body(v)))
+            await asyncio.wait_for(entered.wait(), 5)
+            other = await asyncio.wait_for(c.get("/api/alarms"), 5)
+            assert other.status_code == 200, other.text
+            release.set()
+            assert (await creating).status_code == 201
+    finally:
+        release.set()
+        await one.close()

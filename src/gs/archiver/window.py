@@ -22,6 +22,7 @@ ROW_SQL = (
     "select vehicle, hour, sha256, rows, t_min, t_max, version, verified_at, hot_deleted_at,"
     " last_checked_at from archive_object where vehicle = %s and hour = %s"
 )
+ROWS_SQL = ROW_SQL.replace("hour = %s", "hour = any(%s) order by hour")
 
 
 class ArchiveCorrupt(Exception):
@@ -99,16 +100,30 @@ async def window_hours(
             yield _project(sort_rows(t), params)
 
 
+async def archive_rows(
+    conn: psycopg.AsyncConnection[Any], vehicle: str, t_from: datetime, t_to: datetime
+) -> list[ArchiveRow]:
+    """The archive rows of the window's hours, oldest first: one query, so a caller can leave the
+    connection before it reads the objects."""
+    cur = await conn.execute(
+        ROWS_SQL,
+        (vehicle, list(_hours(t_from, t_to))),  # naive datetimes raise
+    )
+    return [ArchiveRow(*r) for r in await cur.fetchall()]
+
+
+async def check_rows(s3: Minio, bucket: str, rows: Sequence[ArchiveRow]) -> None:
+    """Hash-check each row's object, in order; ArchiveCorrupt on the first bad one."""
+    for row in rows:
+        await _archived(s3, bucket, row)
+
+
 async def verify_window(
     conn: psycopg.AsyncConnection[Any], s3: Minio, bucket: str, vehicle: str, t_from: datetime,
     t_to: datetime,
 ) -> None:  # fmt: skip
     """Hash-check every archived hour of the window; ArchiveCorrupt on the first bad one."""
-    for h in _hours(t_from, t_to):
-        cur = await conn.execute(ROW_SQL, (vehicle, h))
-        found = await cur.fetchone()
-        if found is not None:
-            await _archived(s3, bucket, ArchiveRow(*found))
+    await check_rows(s3, bucket, await archive_rows(conn, vehicle, t_from, t_to))
 
 
 async def has_data(

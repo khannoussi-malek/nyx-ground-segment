@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+### Added
+- A **Scenarios** button in the console top bar (shown only when test controls are on) opens a panel that starts and clears the simulator test scenarios on a chosen vehicle, each with a hint of what to watch (D-SIM-12).
+- Test controls (D-SIM-12): `GET /api/test-controls` and `POST`/`DELETE /api/test-controls/fault` start and clear simulator faults from the console API (audited, session and `X-GS-Client` required). On by default in the local compose stack; `GS_TEST_CONTROLS=0` turns them off (the routes answer 404).
+
 ### Fixed
 - A source slower than one frame per 2 s never raised an alarm (every frame reset the persistence rings) and raised a LOS event and a loss tone between frames; the data-STALE and server LOS threshold is now `max(2 s, 5 x frame period)` per vehicle, unchanged at 10 and 100 Hz (R22 F2, D-ALM-04, D-ING-08). The console's LOSS OF SIGNAL banner and STALE marks still use a fixed 2 s, so a slow source shows them between frames, without the tone (follow-up). One in-order frame now moves the smoothed period at most x1.9 (dt capped at 10 x period), so one long silence cannot inflate it (D-ING-14).
 - A bad `ui:events` entry met during a Redis connection failure or timeout was skipped with no DLQ record; the API reader now re-reads it once Redis is back (D-ING-27). Any other Redis error on that write (OOM, NOPERM) skips the entry, so it cannot hold the reader.

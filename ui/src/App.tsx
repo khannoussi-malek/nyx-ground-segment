@@ -10,6 +10,7 @@ import { CommandPanel } from "./components/CommandPanel";
 import { EventStrip } from "./components/EventStrip";
 import { SessionPanel } from "./components/SessionPanel";
 import { LiveTable } from "./components/LiveTable";
+import { Scenarios } from "./components/Scenarios";
 import { ReplayPage } from "./components/ReplayPage";
 import { Login } from "./components/Login";
 import { bootUser, checkSession, loadMission, safeLogout } from "./server/session";
@@ -137,6 +138,7 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
         <AlarmSummary store={store} onClick={toAlarms} />
         <SoundBadge ctx={ctx} running={running} onArm={setCtx} />
         <button onClick={() => setReplay((r) => !r)}>{replay ? "Live" : "Replay"}</button>
+        <Scenarios />
         <span>{user}</span>
         {editing && <button className="quiet" onClick={reset}>Reset layout</button>}
         <button className="quiet" data-on={editing || undefined} onClick={() => setEditing((e) => !e)}>{editing ? "Done" : "Edit layout"}</button>

@@ -57,7 +57,7 @@ ENV = {
     "api": {
         "REDIS_URL", "DATABASE_URL", "SESSION_SECRET", "USERS_FILE", "MISSION_DB", "VEHICLES",
         "UI_DIST", "BIND_HOST", "API_PORT", "S3_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY",
-        "S3_BUCKET",
+        "S3_BUCKET", "GS_TEST_CONTROLS", "SIM_URL",
     },
 }  # fmt: skip
 

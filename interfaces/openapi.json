@@ -1017,6 +1017,75 @@
         "title": "EventView",
         "type": "object"
       },
+      "FaultClear": {
+        "additionalProperties": false,
+        "properties": {
+          "fault": {
+            "enum": [
+              "leak",
+              "overheat",
+              "dropout",
+              "freeze",
+              "seq_jump",
+              "duplicate",
+              "malformed",
+              "step",
+              "pause",
+              "hold_exec"
+            ],
+            "title": "Fault",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle",
+          "fault"
+        ],
+        "title": "FaultClear",
+        "type": "object"
+      },
+      "FaultRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "fault": {
+            "enum": [
+              "leak",
+              "overheat",
+              "dropout",
+              "freeze",
+              "seq_jump",
+              "duplicate",
+              "malformed",
+              "step",
+              "pause",
+              "hold_exec"
+            ],
+            "title": "Fault",
+            "type": "string"
+          },
+          "params": {
+            "additionalProperties": true,
+            "title": "Params",
+            "type": "object"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle",
+          "fault"
+        ],
+        "title": "FaultRequest",
+        "type": "object"
+      },
       "FrameHeader": {
         "additionalProperties": true,
         "properties": {
@@ -2345,6 +2414,42 @@
           "t_onboard"
         ],
         "title": "TcAck",
+        "type": "object"
+      },
+      "TestControls": {
+        "properties": {
+          "faults": {
+            "items": {
+              "enum": [
+                "leak",
+                "overheat",
+                "dropout",
+                "freeze",
+                "seq_jump",
+                "duplicate",
+                "malformed",
+                "step",
+                "pause",
+                "hold_exec"
+              ],
+              "type": "string"
+            },
+            "title": "Faults",
+            "type": "array"
+          },
+          "vehicles": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Vehicles",
+            "type": "array"
+          }
+        },
+        "required": [
+          "vehicles",
+          "faults"
+        ],
+        "title": "TestControls",
         "type": "object"
       },
       "Tm": {
@@ -4091,6 +4196,214 @@
           }
         },
         "summary": "Get Buckets"
+      }
+    },
+    "/api/test-controls": {
+      "get": {
+        "operationId": "get_controls_api_test_controls_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TestControls"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Controls"
+      }
+    },
+    "/api/test-controls/fault": {
+      "delete": {
+        "operationId": "clear_fault_api_test_controls_fault_delete",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaultClear"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Clear Fault"
+      },
+      "post": {
+        "operationId": "start_fault_api_test_controls_fault_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/FaultRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Start Fault"
       }
     },
     "/api/vehicles": {

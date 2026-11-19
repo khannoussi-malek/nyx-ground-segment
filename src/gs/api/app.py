@@ -20,7 +20,7 @@ from redis.maint_notifications import MaintNotificationsConfig
 from starlette.exceptions import HTTPException
 from starlette.middleware.sessions import SessionMiddleware
 
-from gs.api import alarms, auth, commands, deps, events, replays, sessions, telemetry
+from gs.api import alarms, auth, commands, deps, events, replays, sessions, telemetry, testctl
 from gs.api.auth import SESSION_TTL_S, load_users
 from gs.api.bodies import ErrorBody, Health
 from gs.api.deps import ApiError, User, errors
@@ -164,6 +164,7 @@ ROUTER.add_api_route(
 )
 for _r in (
     auth.router, commands.router, alarms.router, sessions.router, telemetry.router, replays.router,
+    testctl.router,
 ):  # fmt: skip
     ROUTER.include_router(_r)
 
@@ -181,6 +182,7 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.users = load_users(settings.users_file)
         mdb = await _start_set(settings)
         app.state.vehicles = settings.vehicles
+        app.state.test_controls, app.state.sim_url = settings.test_controls, settings.sim_url
         app.state.s3_settings = settings.s3
         app.state.s3 = None  # the first replay builds the client (replays._s3)
         app.state.database_url, app.state.replays = settings.database_url, {}

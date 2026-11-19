@@ -482,7 +482,8 @@ async def _silence(
     vs: VehicleState,
     rejected: Mapping[str, int] | None = None,
 ) -> tuple[VehicleState, list[Link]]:
-    """LOS after STALE_S without a new frame: LOS and engine_state in one small transaction.
+    """LOS after stale_s (max(2 s, 5 x period)) without a new frame: LOS and engine_state in one
+    small transaction.
     Returns the committed state (LOS open) and its `link` for the caller to publish; `vs`
     unchanged and no link when no LOS was due."""
     ls, ev = on_silence(vs.link, vehicle, vs.seq, rejected)

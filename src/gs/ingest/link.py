@@ -1,4 +1,7 @@
-"""LOS/AOS and FROZEN detectors over vehicle time (pure; D-ING-21, data-STALE / LOS at > 2 s)."""
+"""LOS/AOS and FROZEN detectors over vehicle time (pure; D-ING-21).
+
+Data-STALE and LOS fire at > stale_s, never under 2 s.
+"""
 
 from collections.abc import Mapping
 from dataclasses import dataclass

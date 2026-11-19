@@ -23,7 +23,6 @@ from gs.alarms.engine import compile_set
 from gs.common.hooks import Hooks
 from gs.common.missiondb import load_dir
 from gs.ingest.events import insert_events, insert_set
-from gs.ingest.fold import empty_state
 from gs.ingest.liveness import run_ticks
 from gs.ingest.mission import MissionWatcher, start_set
 from gs.ingest.owner import MATCH
@@ -33,6 +32,7 @@ from tests.support.compose import compose, compose_ps, recreate, restart_count
 from tests.support.env import REPO, dotenv, until, vid, wait_until
 from tests.support.mission import MISSION_DIR
 from tests.support.pg import admin_dsn, app_dsn, lock_holder
+from tests.support.recompute import empty_state
 from tests.support.redisx import GROUP, aclient, client, drained
 
 DEFAULT_TIMING = Timing()

@@ -130,7 +130,7 @@ async def test_tick_rearms_watchdog_only_for_live_owned_loops(
             await liveness.tick(ctx, c, watchdog=True)
             # G27: armed with the remaining budget, so a hang dies watchdog_s after its last pass
             ((t, kw),) = armed
-            assert 2.0 < t <= 2.5 and kw == {"exit": True} and (ctx.used_memory[0] or 0) > 0
+            assert 2.0 < t <= 2.5 and kw == {"exit": True} and (ctx.memory[0] or (0, 0))[0] > 0
             ctx.loop_seen["NYX-A"] = time.monotonic() - 8  # a hung owned loop
             await liveness.tick(ctx, c, watchdog=True)
             assert len(armed) == 1  # not re-armed: the pending dump fires and exits
@@ -146,11 +146,11 @@ async def test_tick_without_redis_reports_unknown_memory(
 
     monkeypatch.setattr(redis.asyncio.Redis, "info", down)
     ctx = make_ctx("w1", {})
-    ctx.used_memory[0] = 5
+    ctx.memory[0] = (5, 0)
     try:
         async with await psycopg.AsyncConnection.connect(app_dsn("gs"), autocommit=True) as c:
             assert await liveness.tick(ctx, c, watchdog=False) is False
-        assert ctx.used_memory[0] is None
+        assert ctx.memory[0] is None
     finally:
         await ctx.redis.aclose()
 

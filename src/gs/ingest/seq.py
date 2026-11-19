@@ -10,6 +10,7 @@ MOD = 2**32
 HALF = 2**31
 RESET_SEQ_MAX = 50
 NOMINAL_PERIOD_S = 0.1
+MAX_DT_PERIODS = 10  # clamp on one frame's dt in the period estimate
 
 Klass = Literal["FIRST", "IN_ORDER", "GAP", "SEQ_JUMP", "DUP_OR_LATE", "SEQ_RESET", "SEQ_ANOMALY"]
 
@@ -20,10 +21,6 @@ class SeqState:
     last_seq: int
     last_t: datetime
     period_s: float
-
-
-def is_new(k: Klass) -> bool:
-    return k != "DUP_OR_LATE"
 
 
 def _gap(
@@ -57,7 +54,12 @@ def step(
         if kind == "SEQ_RESET" and seq > 0:  # frames 0..seq-1 of the new boot never arrived
             ev.append(_gap("GAP", vehicle, t, t, 0, seq, seq))
         return SeqState(t, seq, t, s.period_s), kind, tuple(ev)
-    period = 0.9 * s.period_s + 0.1 * dt if d == 0 and dt > 0 else s.period_s
+    # R22 F2: dt is clamped, so one long silence moves the estimate by at most 1.9x (stale_s)
+    period = (
+        0.9 * s.period_s + 0.1 * min(dt, MAX_DT_PERIODS * s.period_s)
+        if d == 0 and dt > 0
+        else s.period_s
+    )
     ns = replace(s, last_seq=seq, last_t=t, period_s=period)
     if d == 0:
         return ns, "IN_ORDER", ()

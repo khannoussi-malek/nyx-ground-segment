@@ -61,7 +61,7 @@ async def load_engine_row(
         "SELECT schema_version, set_sha256, state FROM engine_state WHERE vehicle = %s", (vehicle,)
     )
     row = await cur.fetchone()
-    return None if row is None else (row[0], row[1], row[2])
+    return row
 
 
 async def load_open_alarms(conn: psycopg.AsyncConnection, vehicle: str) -> list[OpenAlarm]:

@@ -1,7 +1,6 @@
 """Mission-db hot reload: poll rule, set validation, start-time fallback (EX-09/25)."""
 
 import asyncio
-import hashlib
 import logging
 import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
@@ -11,7 +10,7 @@ from pathlib import Path
 
 import psycopg
 
-from gs.common.missiondb import MissionDb, MissionDbError, load
+from gs.common.missiondb import Hashes, MissionDb, MissionDbError, load, set_hashes
 from gs.ingest.events import GroundEvent, insert_events, insert_set, rejected_key
 
 log = logging.getLogger(__name__)
@@ -19,7 +18,6 @@ log = logging.getLogger(__name__)
 POLL_S = 1.0
 REVALIDATE_S = 10.0
 _FILES = ("limits.yaml", "commands.yaml", "parameters.yaml")
-Hashes = tuple[str, str, str]
 # raises MissionDbError to refuse `new` while `old` is active (the API's G31 rule, P-pf5)
 Check = Callable[[MissionDb, MissionDb], None]
 OnApply = Callable[[psycopg.AsyncConnection, MissionDb, MissionDb], Awaitable[None]]
@@ -57,26 +55,22 @@ async def telemetry_columns(conn: psycopg.AsyncConnection) -> set[str]:
     return {r[0] for r in await cur.fetchall()}
 
 
+def _read(mission_dir: Path, name: str) -> bytes:
+    try:
+        return (mission_dir / name).read_bytes()
+    except OSError as e:
+        raise MissionDbError(name, f"cannot read: {e}") from e
+
+
 def _read_raw(mission_dir: Path) -> tuple[bytes, bytes, bytes]:
-    out: list[bytes] = []
-    for n in _FILES:
-        try:
-            out.append((mission_dir / n).read_bytes())
-        except OSError as e:
-            raise MissionDbError(n, f"cannot read: {e}") from e
-    return out[0], out[1], out[2]
-
-
-def _hashes(raw: tuple[bytes, bytes, bytes]) -> Hashes:
-    h = tuple(hashlib.sha256(b).hexdigest() for b in raw)
-    return h[0], h[1], h[2]
+    lim, cmd, par = (_read(mission_dir, n) for n in _FILES)
+    return lim, cmd, par
 
 
 def _rejected(
     raw: tuple[bytes, bytes, bytes], e: MissionDbError, by: str | None = None
 ) -> GroundEvent:
-    lim, cmd, par = _hashes(raw)
-    set_sha = hashlib.sha256("".join(f"{h}\n" for h in (lim, cmd, par)).encode()).hexdigest()
+    (lim, cmd, par), set_sha = set_hashes(*raw)
     details = {
         "file": e.file,
         "error": e.message,
@@ -192,7 +186,7 @@ class MissionWatcher:
         except MissionDbError as e:  # file mid-replace: try again next poll
             log.warning("mission watcher: %s", e)
             return
-        hashes = _hashes(raw)
+        hashes, _ = set_hashes(*raw)
         active = (
             self._current.limits_sha256,
             self._current.commands_sha256,

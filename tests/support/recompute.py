@@ -12,7 +12,14 @@ from gs.alarms import engine
 from gs.alarms.engine import compile_set
 from gs.common.interfaces import FrameHeader
 from gs.common.missiondb import MissionDb
-from gs.ingest.fold import empty_state, fold
+from gs.ingest.fold import VehicleState, fold
+from gs.ingest.link import FrozenState, LinkState
+
+
+def empty_state(cset: engine.CompiledSet) -> VehicleState:
+    return VehicleState(
+        None, LinkState(), FrozenState(), cset.set_sha256, engine.initial_state(cset)
+    )
 
 
 def _frame(row: dict[str, Any]) -> FrameHeader:

@@ -84,8 +84,7 @@ async def _consumer_idle(ctx: Ctx, vehicle: str, consumer: str) -> int | None:
     except redis.exceptions.ResponseError:  # no stream / no group yet: nothing to judge
         return None
     for r in rows:
-        name = r["name"].decode() if isinstance(r["name"], bytes) else r["name"]
-        if name == consumer:
+        if r["name"].decode() == consumer:
             return int(r["idle"])
     return None  # the holder never read: its own watchdog covers a hang before the first read
 
@@ -120,15 +119,14 @@ async def steal_tick(ctx: Ctx, conn: psycopg.AsyncConnection) -> list[str]:
 
 
 async def refresh_memory(ctx: Ctx) -> bool:
-    """INFO memory → ctx.used_memory[0]; None (health degraded) when Redis does not answer."""
+    """INFO memory → ctx.memory[0] = (used, max); None (health degraded) if Redis is silent."""
     try:
         info: Any = await ctx.redis.info("memory")
     except redis.exceptions.RedisError as e:
         log.warning("redis INFO failed (%s)", e)
-        ctx.used_memory[0] = ctx.max_memory[0] = None
+        ctx.memory[0] = None
         return False
-    ctx.used_memory[0] = int(info["used_memory"])
-    ctx.max_memory[0] = int(info.get("maxmemory", 0))
+    ctx.memory[0] = (int(info["used_memory"]), int(info.get("maxmemory", 0)))
     return True
 
 

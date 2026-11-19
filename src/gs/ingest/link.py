@@ -1,4 +1,7 @@
-"""LOS/AOS and FROZEN detectors over vehicle time (pure; D-ING-21, data-STALE / LOS at > 2 s)."""
+"""LOS/AOS and FROZEN detectors over vehicle time (pure; D-ING-21).
+
+Data-STALE and LOS fire at > stale_s, never under 2 s.
+"""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -10,6 +13,16 @@ from gs.ingest.events import GroundEvent, frozen_key, link_key
 from gs.ingest.seq import SeqState
 
 STALE_S = 2.0
+# R22 F2: a source slower than one frame per STALE_S would reset every persistence ring on each
+# frame and show LOS between frames; silence counts as stale after K missed periods (2 s floor).
+STALE_K = 5
+
+
+def stale_s(period_s: float, floor: float = STALE_S) -> float:
+    """Per-vehicle LOS / data-STALE threshold from the tracker's smoothed frame period."""
+    return max(floor, STALE_K * period_s)
+
+
 FROZEN_S = 2.0
 
 
@@ -22,8 +35,8 @@ class LinkState:
 
 def _los(vehicle: str, prev: SeqState, rejected: Mapping[str, int] | None = None) -> GroundEvent:
     details: dict[str, object] = {"epoch": prev.epoch, "last_seq": prev.last_seq}
-    count = sum((rejected or {}).values())
-    if rejected and count > 0:  # D-UI-25: DLQ reasons since the last new frame
+    # D-UI-25: DLQ reasons since the last new frame
+    if rejected and (count := sum(rejected.values())):
         top = max(get_args(DlqReason), key=lambda r: rejected.get(r, 0))  # ties: DlqReason order
         details["rejected"] = {"count": count, "reason": top}
     key = link_key("LOS", vehicle, prev.epoch, prev.last_seq)
@@ -36,7 +49,7 @@ def on_silence(
     prev: SeqState | None,
     rejected: Mapping[str, int] | None = None,
 ) -> tuple[LinkState, tuple[GroundEvent, ...]]:
-    """Called by the read loop after STALE_S without a new frame."""
+    """Called by the read loop after stale_s without a new frame."""
     if s.los_open or prev is None:
         return s, ()
     return LinkState(True, prev.epoch, prev.last_seq), (_los(vehicle, prev, rejected),)
@@ -45,8 +58,8 @@ def on_silence(
 def on_frame(
     s: LinkState, vehicle: str, prev: SeqState | None, t: datetime, lost: int | None
 ) -> tuple[LinkState, tuple[GroundEvent, ...], bool]:
-    """Returns the data-STALE flag (vehicle-time gap > STALE_S) for the engine reset."""
-    stale = prev is not None and (t - prev.last_t).total_seconds() > STALE_S
+    """Returns the data-STALE flag (vehicle-time gap > stale_s(period)) for the engine reset."""
+    stale = prev is not None and (t - prev.last_t).total_seconds() > stale_s(prev.period_s)
     if not (s.los_open or stale):
         return s, (), False
     s, ev = on_silence(s, vehicle, prev)  # no-op when the LOS is already open

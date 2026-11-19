@@ -1,8 +1,8 @@
 from datetime import UTC, datetime, timedelta
 
 from gs.ingest.events import link_key
-from gs.ingest.link import STALE_S, LinkState, on_frame, on_silence
-from gs.ingest.seq import SeqState
+from gs.ingest.link import STALE_S, LinkState, on_frame, on_silence, stale_s
+from gs.ingest.seq import SeqState, step
 
 V = "NYX-TA1"
 T0 = datetime(2026, 11, 14, 10, tzinfo=UTC)
@@ -80,3 +80,42 @@ def test_los_without_rejected_has_no_key() -> None:
     for rej in (None, {}, {"schema": 0}):
         _, (los,) = on_silence(LinkState(), V, prev_at(seq=9), rej)
         assert "rejected" not in los.details
+
+
+def _walk(period: float, frames: int) -> tuple[list[bool], SeqState]:
+    """The data-STALE flag of each frame after the first, from the real seq tracker."""
+    state: SeqState | None = None
+    flags: list[bool] = []
+    for i in range(frames):
+        t = t_at(i * period)
+        prev = state
+        state, _, _ = step(state, V, i, t)
+        if prev is not None:
+            flags.append(on_frame(LinkState(), V, prev, t, 0)[2])
+    assert state is not None
+    return flags, state
+
+
+def test_slow_source_not_stale() -> None:  # R22 F2: 3 s per frame
+    flags, last = _walk(3.0, 30)
+    assert not any(flags[10:])  # once the period estimate has settled (warm-up may flag)
+    assert last.period_s > 2.8
+    # no LOS between frames; LOS after 5 periods of silence
+    assert stale_s(last.period_s) > 3.0
+    assert 14.0 < stale_s(last.period_s) < 15.5
+    assert on_frame(LinkState(), V, last, last.last_t + timedelta(seconds=3.0), 0)[2] is False
+    assert on_frame(LinkState(), V, last, last.last_t + timedelta(seconds=16.0), 0)[2] is True
+
+
+def test_fast_source_keeps_the_2s_floor() -> None:  # no change at 10 or 100 Hz
+    for period in (0.1, 0.01):
+        _, last = _walk(period, 200)
+        assert stale_s(last.period_s) == STALE_S
+    assert on_frame(LinkState(), V, last, last.last_t + timedelta(seconds=2.1), 0)[2] is True
+
+
+def test_a_long_silence_does_not_inflate_the_estimate() -> None:
+    _, last = _walk(0.1, 50)
+    nxt, _, _ = step(last, V, 50, last.last_t + timedelta(seconds=600))
+    assert nxt.period_s < 2 * last.period_s  # one in-order frame after 10 min: clamped
+    assert stale_s(nxt.period_s) == STALE_S

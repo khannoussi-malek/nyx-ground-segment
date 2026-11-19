@@ -31,7 +31,7 @@ from gs.ingest.acks import AckReq, apply_acks, db_now, pending_acks
 from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
 from gs.ingest.events import GroundEvent, poison_key, reset_key, to_link
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
-from gs.ingest.link import STALE_S, on_silence
+from gs.ingest.link import STALE_S, on_silence, stale_s
 from gs.ingest.owner import acquire, fence, release, waiting
 from gs.ingest.store import (
     insert_frames,
@@ -88,8 +88,7 @@ class Ctx:
     reclaim_idle_ms: int = 30_000  # RECLAIM_IDLE_MS (D-ING-26; CI 3 000)
     owned: set[str] = field(default_factory=set)  # mutated only by each vehicle's own task
     reconnected_at: list[float | None] = field(default_factory=lambda: [None])  # monotonic
-    used_memory: list[int | None] = field(default_factory=lambda: [None])  # Redis INFO
-    max_memory: list[int | None] = field(default_factory=lambda: [None])  # Redis maxmemory
+    memory: list[tuple[int, int] | None] = field(default_factory=lambda: [None])  # INFO used, max
     suspects: dict[str, int] = field(default_factory=dict)  # vehicle -> holder pid over idle
     hooks: Hooks = Hooks()  # D-ENG-16 test hooks; all off by default
     # ponytail: never evicted; one entry per set this worker ever saw (a handful per run)
@@ -483,7 +482,8 @@ async def _silence(
     vs: VehicleState,
     rejected: Mapping[str, int] | None = None,
 ) -> tuple[VehicleState, list[Link]]:
-    """LOS after STALE_S without a new frame: LOS and engine_state in one small transaction.
+    """LOS after stale_s (max(2 s, 5 x period)) without a new frame: LOS and engine_state in one
+    small transaction.
     Returns the committed state (LOS open) and its `link` for the caller to publish; `vs`
     unchanged and no link when no LOS was due."""
     ls, ev = on_silence(vs.link, vehicle, vs.seq, rejected)
@@ -587,7 +587,10 @@ async def _own(ctx: Ctx, conn: psycopg.AsyncConnection, vehicle: str, stop: asyn
             if was_down:  # R2-23: start the steal hold-off
                 ctx.reconnected_at[0], was_down = (t := time.monotonic()), False
                 grace_until = t + RESUME_GRACE_S
-            if los_due(time.monotonic(), last_new, grace_until, ctx.timing.los_s):
+            los_s = (
+                ctx.timing.los_s if vs.seq is None else stale_s(vs.seq.period_s, ctx.timing.los_s)
+            )
+            if los_due(time.monotonic(), last_new, grace_until, los_s):
                 vs, links = await _silence(conn, vehicle, vs, ctx.rejected.get(vehicle))
                 unsent = [*links]
                 await publish_ui(ctx.redis, unsent)

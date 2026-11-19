@@ -14,6 +14,7 @@ from gs.common.missiondb import (
     NumArg,
     RocCheck,
     load_dir,
+    set_hashes,
 )
 from tests.support.mission import MISSION_DIR, files, ld
 
@@ -251,3 +252,14 @@ def test_limit_entry_dump_round_trips() -> None:  # G21: a dump kept only the Ch
         assert LimitEntry.model_validate(dumped) == entry, name
     lim, roc = load_dir(MISSION_DIR).limits["cabin_pressure_kpa"].model_dump()["checks"]
     assert (lim["red_low"], lim["red_high"], roc["limit_per_s"]) == (95.0, 106.0, 0.15)
+
+
+def test_set_hashes_pinned() -> None:  # the set_sha in LIMITS_REJECTED events must not change
+    assert set_hashes(b"L", b"C", b"P") == (
+        (
+            "72dfcfb0c470ac255cde83fb8fe38de8a128188e03ea5ba5b2a93adbea1062fa",
+            "6b23c0d5f35d1b11f9b683f0b0a617355deb11277d91ae091d399c655b87940d",
+            "5c62e091b8c0565f1bafad0dad5934276143ae2ccef7a5381e8ada5b1a8d26d2",
+        ),
+        "3dc9202a2a3e33e639f9f5b1cd0b63a4cf7e1937bbdab0c393e423a05491b45b",
+    )

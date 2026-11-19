@@ -95,6 +95,27 @@ async def test_rejected_entry_gets_its_dlq_record_after_a_redis_failure(
     assert len(recs) == 1
 
 
+async def test_non_redis_error_in_handle_does_not_pin_the_stream(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # D-ING-27: the stream carries on; only a Redis failure holds the reader
+    h = hub(live_api)
+    real, left = h._handle, [0]  # noqa: SLF001
+
+    async def flaky(entry_id: str, data: str) -> None:
+        if "poison" in data:  # deterministic: a retry would raise again
+            left[0] += 1
+            raise RuntimeError("test: handler bug")
+        await real(entry_id, data)
+
+    monkeypatch.setattr(h, "_handle", flaky)
+    async with sse(live_api) as s:
+        await s.next_of("snapshot")
+        xadd_data("ui:events", '{"kind":"poison"}')
+        await until(lambda: left[0] >= 1, 4)
+        publish_tm(live_api.vehicle, 1)
+        assert (await tm_of(s, live_api.vehicle))["seq"] == 1
+
+
 async def test_slow_client_overflow_closes_then_snapshot(live_api: LiveApi) -> None:
     v, base = live_api.vehicle, now() - timedelta(minutes=1)  # Review Focus 5
     produce_values(v, {TEMP: [22.0] * 5 + [31.0] * 5}, base=base)

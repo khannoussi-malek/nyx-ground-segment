@@ -18,8 +18,8 @@ from fastapi.responses import StreamingResponse
 from psycopg_pool import PoolTimeout
 
 from gs.api import deps
-from gs.api.alarms import _db
 from gs.api.bodies import ReplayCreated, ReplayRequest
+from gs.api.dbguard import connect, db_503
 from gs.api.deps import ApiError, User, errors
 from gs.api.hub import format_sse
 from gs.common.interfaces.replay import ReplayEnd
@@ -86,11 +86,12 @@ async def create_replay(body: ReplayRequest, request: Request, user: User) -> Re
 
     st = request.app.state
     try:
-        async with _db(request) as conn:
-            if not await has_data(conn, body.vehicle, body.t_from, body.t_to):
-                raise ApiError(HTTPStatus.NOT_FOUND, "NO_DATA", "no data in window")
-            bucket = st.s3_settings.bucket
-            await verify_window(conn, _s3(st), bucket, body.vehicle, body.t_from, body.t_to)
+        with db_503(request):
+            async with connect(request) as conn:
+                if not await has_data(conn, body.vehicle, body.t_from, body.t_to):
+                    raise ApiError(HTTPStatus.NOT_FOUND, "NO_DATA", "no data in window")
+                bucket = st.s3_settings.bucket
+                await verify_window(conn, _s3(st), bucket, body.vehicle, body.t_from, body.t_to)
     except ArchiveCorrupt as e:
         raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", str(e)) from e
     except S3_ERRORS as e:

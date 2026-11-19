@@ -12,16 +12,15 @@ from pathlib import Path
 import psycopg
 import yaml
 from fastapi import APIRouter, Request, Response
-from psycopg_pool import PoolTimeout
 
 from gs.api.bodies import LoginRequest, Me
+from gs.api.dbguard import connect, db_503
 from gs.api.deps import ApiError, User, errors, sess_key
 from gs.common.audit import Action, audit
 
 SESSION_TTL_S = 43200
 LOGIN_LIMIT, LOGIN_WINDOW_S = 5, 60
 ACTOR_MAX, USER_MAX = 64, 256
-DB_TIMEOUT_S = 3
 _N, _R, _P, _MAXMEM = 2**17, 8, 1, 2**28
 router = APIRouter()
 log = logging.getLogger("gs.api")
@@ -65,11 +64,6 @@ async def failed_logins(conn: psycopg.AsyncConnection, user: str) -> int:
     return int(row[0]) if row else 0
 
 
-def _db_down(e: Exception) -> ApiError:
-    log.warning("database error in auth: %s: %s", type(e).__name__, e)
-    return ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", "database unreachable")
-
-
 async def _audit(
     request: Request,
     actor: str,
@@ -77,13 +71,11 @@ async def _audit(
     reason: str | None = None,
     details: dict[str, bool] | None = None,
 ) -> None:
-    """One autocommit audit row; a database error is 503 (DB-503 stays in this module)."""
-    try:
-        async with request.app.state.pool.connection(timeout=DB_TIMEOUT_S) as conn:
+    """One autocommit audit row; a database error is 503 (db_503)."""
+    with db_503(request):
+        async with connect(request) as conn:
             await conn.set_autocommit(True)
             await audit(conn, actor, action, reason, details)
-    except (psycopg.Error, PoolTimeout) as e:
-        raise _db_down(e) from e
 
 
 @cache
@@ -96,7 +88,7 @@ async def _attempt(request: Request, body: LoginRequest, actor: str) -> ApiError
     overshoot the limit; the audit row commits before any refusal is raised."""
     # ponytail: one user's burst can pin the 4-connection pool for up to DB_TIMEOUT_S (accepted
     # for a 3-user local station)
-    async with request.app.state.pool.connection(timeout=DB_TIMEOUT_S) as conn, conn.transaction():
+    async with connect(request) as conn, conn.transaction():
         await conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"login:{actor}",))
         if await failed_logins(conn, actor) >= LOGIN_LIMIT:
             await audit(conn, actor, "LOGIN_FAILED", "rate limited", {"rate_limited": True})
@@ -117,10 +109,8 @@ async def _attempt(request: Request, body: LoginRequest, actor: str) -> ApiError
 async def login(body: LoginRequest, request: Request) -> Response:
     if "\x00" in body.user or len(body.user) > USER_MAX:
         raise ApiError(HTTPStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", "user: invalid name")
-    try:
+    with db_503(request):
         refused = await _attempt(request, body, body.user[:ACTOR_MAX])
-    except (psycopg.Error, PoolTimeout) as e:
-        raise _db_down(e) from e
     if refused:
         raise refused
     sid = secrets.token_urlsafe(32)

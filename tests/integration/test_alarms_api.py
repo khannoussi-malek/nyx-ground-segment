@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+import psycopg
 import pytest
 from psycopg_pool import AsyncConnectionPool
 
-from gs.api import alarms
+from gs.api import alarms, dbguard
 from gs.api.app import create_app
 from gs.ingest import acks
 from tests.support.env import now, until, vid
@@ -178,7 +179,7 @@ async def test_ack_requires_session_and_header(app: Any) -> None:
 
 
 async def test_database_down_is_503(app: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(alarms, "DB_TIMEOUT_S", 0.5)  # a closed port: the pool never connects
+    monkeypatch.setattr(dbguard, "DB_TIMEOUT_S", 0.5)  # a closed port: the pool never connects
     async with authed(app) as c:  # login audits to the database: log in first, then cut it
         bad = AsyncConnectionPool("postgresql://x@127.0.0.1:1/x", min_size=1, open=False)
         await bad.open(wait=False)
@@ -188,6 +189,20 @@ async def test_database_down_is_503(app: Any, monkeypatch: pytest.MonkeyPatch) -
                 assert (r.status_code, r.json()["error"]) == (503, "UNAVAILABLE")
         finally:
             await bad.close()
+
+
+async def test_database_rejecting_a_value_is_422_not_503(
+    app: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # every query param is validated before SQL, so the database's DataError is forced here
+    async def bad(*a: Any, **k: Any) -> Any:
+        raise psycopg.DataError("string literal cannot contain NUL (0x00) characters")
+
+    monkeypatch.setattr(alarms, "alarm_views", bad)
+    async with authed(app) as c:
+        r = await c.get("/api/alarms")
+    assert (r.status_code, r.json()["error"]) == (422, "VALIDATION_ERROR")
+    assert "NUL" not in r.json()["message"]
 
 
 async def test_request_id_reused_for_another_ack_is_422(app: Any) -> None:  # review of T10

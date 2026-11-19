@@ -21,6 +21,7 @@ import redis.exceptions
 from fastapi import APIRouter, Request
 
 from gs.api.bodies import CommandAccepted, CommandConflict, CommandRequest
+from gs.api.dbguard import connect, db_503
 from gs.api.deps import ApiError, User, errors, mission, vehicles
 from gs.commanding.args import check_args
 from gs.common.audit import audit
@@ -33,7 +34,6 @@ CONFIRM_TTL_MS = 60_000
 LOCK_TTL_MS = 2_000
 REASON_MIN = 10
 LIST_LIMIT = 200
-DB_TIMEOUT_S = 5.0
 log = logging.getLogger(__name__)
 router = APIRouter()
 
@@ -129,11 +129,6 @@ def _broker_down(e: Exception) -> ApiError:
     return ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "BROKER_DOWN", "message broker unreachable")
 
 
-def _db_down(e: Exception) -> ApiError:
-    log.warning("command database error: %s: %s", type(e).__name__, e)
-    return ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", "database unreachable")
-
-
 def _conflict(error: str, message: str, **fields: Any) -> ApiError:
     body = CommandConflict(error=error, message=message, **fields)
     return ApiError(HTTPStatus.CONFLICT, error, message, body=body)
@@ -142,11 +137,9 @@ def _conflict(error: str, message: str, **fields: Any) -> ApiError:
 async def _audit(
     request: Request, user: str, action: Any, reason: str | None, details: dict[str, Any]
 ) -> None:
-    try:
-        async with request.app.state.pool.connection(timeout=DB_TIMEOUT_S) as conn:
+    with db_503(request):
+        async with connect(request) as conn:
             await audit(conn, user, action, reason, details)
-    except psycopg.Error as e:
-        raise _db_down(e) from e
 
 
 async def mark_sent(conn: psycopg.AsyncConnection, cmd_id: UUID, user: str, vehicle: str) -> bool:
@@ -219,18 +212,18 @@ async def _take_lock(
     seconds_ago, cmd_id = 0.0, None
     try:
         cmd_id = UUID(held_id)
-        async with request.app.state.pool.connection(timeout=DB_TIMEOUT_S) as conn:
-            cur = await conn.execute(
-                "SELECT extract(epoch FROM clock_timestamp() - queued_at)::float8"
-                " FROM commands WHERE cmd_id=%s",
-                (cmd_id,),
-            )
-            row = await cur.fetchone()
-            seconds_ago = float(row[0]) if row else 0.0  # not visible yet: just queued
     except ValueError:
         pass  # the holder expired between SET and GET
-    except psycopg.Error as e:
-        raise _db_down(e) from e
+    else:
+        with db_503(request):
+            async with connect(request) as conn:
+                cur = await conn.execute(
+                    "SELECT extract(epoch FROM clock_timestamp() - queued_at)::float8"
+                    " FROM commands WHERE cmd_id=%s",
+                    (cmd_id,),
+                )
+                row = await cur.fetchone()
+                seconds_ago = float(row[0]) if row else 0.0  # not visible yet: just queued
     details = {"vehicle": body.vehicle, "name": body.name, "args": body.args, "cmd_id": cmd_id}
     await _audit(request, user, "CMD_REJECTED", "DUPLICATE_COMMAND", details)
     raise _conflict(
@@ -247,8 +240,7 @@ async def _queue_and_mark_sent(
 ) -> bool:
     """INSERT QUEUED + CMD_REQUESTED, commit; then SENT + CMD_STATE, commit (before the XADD).
     False when the row had already left QUEUED (the tracker's timeout won): do not send."""
-    pool = request.app.state.pool
-    async with pool.connection(timeout=DB_TIMEOUT_S) as conn:
+    async with connect(request) as conn:
         async with conn.transaction():
             await conn.execute(
                 "INSERT INTO commands (cmd_id, vehicle, name, args, args_hash, hazardous, reason,"
@@ -274,7 +266,7 @@ async def _queue_and_mark_sent(
 async def _send_error(request: Request, tc: Tc, vehicle: str) -> None:
     """FAILED SEND_ERROR (guarded) + audit; a DB failure here leaves SENT for the tracker."""
     try:
-        async with request.app.state.pool.connection(timeout=DB_TIMEOUT_S) as conn:
+        async with connect(request) as conn:
             cur = await conn.execute(
                 "UPDATE commands SET state='FAILED', failure_reason='SEND_ERROR',"
                 " failed_at=clock_timestamp() WHERE cmd_id=%s AND state IN ('QUEUED','SENT')",
@@ -329,10 +321,11 @@ async def post_command(body: CommandRequest, request: Request, user: User) -> Co
         reason=reason,
     )
     try:
-        sent = await _queue_and_mark_sent(request, tc, body.vehicle, ah, cmd.hazardous)
-    except psycopg.Error as e:  # nothing sent: give the lock back so a retry is not a duplicate
+        with db_503(request):
+            sent = await _queue_and_mark_sent(request, tc, body.vehicle, ah, cmd.hazardous)
+    except ApiError:  # nothing sent: give the lock back so a retry is not a duplicate
         await _release(request, key, owner)
-        raise _db_down(e) from e
+        raise
     if not sent:
         await _release(request, key, owner)
         raise ApiError(
@@ -374,8 +367,8 @@ async def list_commands(
 ) -> list[CommandView]:
     # read-only: timeouts are the owner's tracker's job, never a side effect of a GET (a
     # comment, not a docstring: FastAPI would put a docstring into the frozen openapi.json)
-    try:
-        async with request.app.state.pool.connection(timeout=DB_TIMEOUT_S) as conn:
+    with db_503(request):
+        async with connect(request) as conn:
             return await command_views(
                 conn,
                 vehicle=vehicle,
@@ -383,5 +376,3 @@ async def list_commands(
                 since=since,
                 limit=LIST_LIMIT,
             )
-    except psycopg.Error as e:
-        raise _db_down(e) from e

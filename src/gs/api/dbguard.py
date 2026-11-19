@@ -1,5 +1,6 @@
 """Track D routes: a database error is 503 UNAVAILABLE "database unreachable", never a 500
-(P-pf27; auth.py keeps its own copy of the same rule)."""
+(P-pf27). Every route that touches Postgres goes through connect + db_503: one helper, one pool
+timeout."""
 
 import logging
 from collections.abc import Iterator, Sequence
@@ -30,6 +31,11 @@ def connect(request: Request) -> AbstractAsyncContextManager[psycopg.AsyncConnec
 def db_503(request: Request) -> Iterator[None]:
     try:
         yield
+    except psycopg.DataError as e:  # a bad query/path value (NUL...), not an outage
+        log.info("bad value on %s: %s", request.url.path, type(e).__name__)
+        raise ApiError(
+            HTTPStatus.UNPROCESSABLE_ENTITY, "VALIDATION_ERROR", "a request value is not valid"
+        ) from e
     except (psycopg.Error, PoolTimeout) as e:
         log.warning("database error on %s: %s: %s", request.url.path, type(e).__name__, e)
         raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", "database unreachable") from e

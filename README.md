@@ -73,32 +73,11 @@ To run the tests or work on the code you also need [uv](https://docs.astral.sh/u
 
 ## Architecture
 
-```mermaid
-flowchart LR
-    sim["simulator<br/>NYX-TA1, NYX-TA2"]
-    redis[("Redis streams")]
-    ingest["ingest-1, ingest-2<br/>one owner per vehicle"]
-    db[("TimescaleDB")]
-    api["api<br/>REST, SSE, console files"]
-    ui["browser console"]
-    arch["archiver"]
-    minio[("MinIO")]
+[![The Nyx architecture in Docker Compose: the simulator writes telemetry for NYX-TA1 and NYX-TA2 into Redis streams; two ingest workers read them and commit telemetry, events, alarms, commands and sessions to TimescaleDB; the FastAPI service serves the console over REST and SSE and sends commands; the archiver writes verified hourly Parquet files to MinIO, which the API reads back for replay](docs/img/architecture.png)](https://youtu.be/SmON-rX1CMs?t=388)
 
-    sim -- "telemetry, command acks" --> redis
-    redis -- "commands" --> sim
-    redis -- "telemetry, acks" --> ingest
-    ingest -- "commit frames, alarms, events" --> db
-    ingest -- "screen updates" --> redis
-    redis -- "screen updates" --> api
-    api -- "commands" --> redis
-    api <-->|queries| db
-    api <-->|SSE + REST| ui
-    db -- "finished hours" --> arch
-    arch -- "Parquet + .sha256" --> minio
-    minio -- "replay" --> api
-```
+*Click the diagram to watch the [architecture chapter](https://youtu.be/SmON-rX1CMs?t=388), where each service is explained in turn.*
 
-Redis is the only link between the simulator, the ingest workers and the API: they never call each other, so each part can be read and tested on its own. Compose services: `db`, `redis`, `minio` (+ `minio-init`, `migrate`), `simulator`, `ingest-1`, `ingest-2`, `api` (REST, SSE and the console files on one origin), `archiver`. Each service connects to Redis as its own user, limited by ACL to the keys it needs. The one-paragraph story is in [design §1](docs/design.md#1-system-in-one-picture).
+The streams on the Redis card: `tm:NYX-*` carries telemetry, `tc:*` commands, `tcack:*` the vehicles' answers to commands, `tm:dlq` frames that failed validation, `ui:events` the updates the console shows, and `cmdlock:*` the 2 s command interlock. Redis is the only link between the simulator, the ingest workers and the API: they never call each other, so each part can be read and tested on its own. Compose services: `db`, `redis`, `minio` (+ `minio-init`, `migrate`), `simulator`, `ingest-1`, `ingest-2`, `api` (REST, SSE and the console files on one origin), `archiver`. Each service connects to Redis as its own user, limited by ACL to the keys it needs. The one-paragraph story is in [design §1](docs/design.md#1-system-in-one-picture).
 
 ### How order is kept
 One reader per vehicle: each vehicle has exactly one owner among the ingest workers, enforced by a Postgres advisory lock. The other worker blocks on that lock and continues the moment the owner's session ends. The owner stores the frame, runs the alarm engine, commits, only then acknowledges the Redis entry, so a killed worker loses nothing. A fenced owner (one whose lock was taken) exits before it reads again.

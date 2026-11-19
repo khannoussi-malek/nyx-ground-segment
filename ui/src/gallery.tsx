@@ -2,10 +2,10 @@
 // with the real mission-db labels, units and limits, so the look can be reviewed before day 3 wires it.
 import "@fontsource-variable/inter";
 import { createRoot } from "react-dom/client";
-import type { ParamView } from "./ParamRow";
-import type { ParamState } from "./status";
-import "./style.css";
-import { VehicleCard } from "./VehicleCard";
+import type { ParamView } from "./components/ParamRow";
+import type { ParamState } from "./tools/status";
+import "./styles/style.css";
+import { VehicleCard } from "./components/VehicleCard";
 
 const P: Record<string, Omit<ParamView, "value" | "state">> = {
   bus_current_a: { id: "bus_current_a", label: "Main bus current", unit: "A", limits: { yellow_high: 8, red_high: 10 } },

@@ -71,7 +71,8 @@ UI_SRC = REPO / "ui" / "src"
 
 
 @pytest.mark.skipif(
-    not (UI_SRC / "commandText.ts").exists(), reason="the console UI (Track C) is not in this tree"
+    not (UI_SRC / "tools" / "commandText.ts").exists(),
+    reason="the console UI (Track C) is not in this tree",
 )
 def test_bold_labels_in_the_operator_guide_are_console_strings() -> None:
     """The guide quotes the console in bold; a label the UI does not contain is drift."""

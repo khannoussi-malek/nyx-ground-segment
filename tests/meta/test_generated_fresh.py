@@ -16,6 +16,8 @@ from gs.archiver.s3 import S3Settings
 from gs.common.interfaces.export import write_all
 from tests.support.gen import REPO, gen_types, stale_files
 
+SCHEMA_TS = REPO / "ui/src/server/schema.d.ts"  # the generated UI types (make gen)
+
 
 def test_committed_schemas_are_fresh(tmp_path: Path) -> None:
     write_all(tmp_path)
@@ -62,7 +64,7 @@ def test_schema_dts_is_deterministic_and_fresh(tmp_path: Path) -> None:  # A-EXT
     write_all(tmp_path)
     first = gen_types(tmp_path / "openapi.json", tmp_path / "a.d.ts")
     assert gen_types(tmp_path / "openapi.json", tmp_path / "b.d.ts") == first
-    assert first == (REPO / "ui/src/api/schema.d.ts").read_bytes()
+    assert first == SCHEMA_TS.read_bytes()
 
 
 def test_negative_control_openapi_edit_changes_schema_dts(tmp_path: Path) -> None:
@@ -71,7 +73,7 @@ def test_negative_control_openapi_edit_changes_schema_dts(tmp_path: Path) -> Non
     doc["components"]["schemas"]["Tm"]["properties"]["negative_control"] = {"type": "integer"}
     edited = tmp_path / "edited.json"
     edited.write_text(json.dumps(doc))
-    assert gen_types(edited, tmp_path / "c.d.ts") != (REPO / "ui/src/api/schema.d.ts").read_bytes()
+    assert gen_types(edited, tmp_path / "c.d.ts") != SCHEMA_TS.read_bytes()
 
 
 def test_served_openapi_is_the_built_document(tmp_path: Path) -> None:
@@ -96,4 +98,4 @@ def test_ack_request_carries_seen_key() -> None:  # P-pf43, owner-approved contr
     assert "seen_key" in body["properties"] and "seen_key" not in body["required"]
     (text, _null) = body["properties"]["seen_key"]["anyOf"]
     assert (text["minLength"], text["maxLength"]) == (1, 200)
-    assert "seen_key?: string | null;" in (REPO / "ui/src/api/schema.d.ts").read_text()
+    assert "seen_key?: string | null;" in SCHEMA_TS.read_text()

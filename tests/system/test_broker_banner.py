@@ -4,7 +4,7 @@ snapshot, and is never mistaken for a loss of signal (no LOS row for either vehi
 import asyncio
 import time
 import urllib.request
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import datetime
 
 import redis.exceptions
@@ -19,6 +19,7 @@ from tests.support.redisx import client
 from tests.support.sse import collecting, live_stack, wait_seen
 
 OUTAGE_S = 10.0
+USERS = ("ingest", "sim")  # the Redis users the late-resume test switches off
 LATE_S = 3.5  # after ingest's reconnect: more than los_s (2 s), less than RESUME_GRACE_S (5 s)
 MARGIN_S = 3.0  # one 1 s blocked read, the event write, polling
 LOS_BOUND_S = RESUME_GRACE_S + STALE_S + MARGIN_S  # from ingest's first pass back to the LOS row
@@ -76,24 +77,34 @@ def outage_source_late(late_s: float) -> None:
     is late, as in CI run 44423135993 (NCR-04). Redis keeps running, so its ACL change sticks."""
     r = client("admin")
     try:
-        users(r, ("ingest", "sim"), on=False)
+        users(r, USERS, on=False)
         time.sleep(OUTAGE_S)
         users(r, ("ingest",), on=True)
         wait_until(ingest_back, 60)
         time.sleep(late_s)
     finally:
-        users(r, ("ingest", "sim"), on=True)
+        users(r, USERS, on=True)
 
 
-def acl_log_only_our_auth_failures(r: redis.Redis, was_empty: bool) -> None:
+def acl_log_reset_if_ours(r: redis.Redis, was_empty: bool) -> Sequence[object]:
     """CI's check_acl_log wants an empty ACL LOG. Reset it only when it was empty before this
-    test and every new entry is an auth failure of the users this test switched off."""
-    entries = r.acl_log()
-    assert all(e["reason"] == "auth" and e["username"] in ("ingest", "sim") for e in entries), (
-        entries
-    )
-    if was_empty:
+    test and every entry is an auth failure of the users this test switched off; return the
+    entries that are not ours (to assert on after the LOS check)."""
+    entries = r.acl_log(count=128)
+    foreign = [e for e in entries if not (e["reason"] == "auth" and e["username"] in USERS)]
+    if was_empty and not foreign:
         r.acl_log_reset()
+    return foreign
+
+
+def delivered_since(cut: dict[str, datetime | None]) -> bool:
+    """Frames generated during the cut-off are stored: the newest t_onboard is past the cut by
+    more than the outage, so the simulator's late delivery has been seen."""
+    for v, b in cut.items():
+        t = newest_t(v)
+        if t is None or b is None or (t - b).total_seconds() <= OUTAGE_S:
+            return False
+    return True
 
 
 def assert_no_los(t0: datetime) -> None:
@@ -134,12 +145,15 @@ async def test_source_resumes_late_after_broker_no_los() -> None:
     t0 = now()  # NCR-04: the first frame comes LATE_S after ingest's reconnect (> los_s)
     admin = client("admin")
     was_empty = not admin.acl_log()
+    cut = {v: newest_t(v) for v in LIVE}
     await asyncio.to_thread(outage_source_late, LATE_S)
+    await asyncio.to_thread(wait_until, lambda: delivered_since(cut), 60)  # the late frames
     await asyncio.to_thread(wait_drained, LIVE, 30)
     try:
         assert_no_los(t0)
     finally:
-        acl_log_only_our_auth_failures(admin, was_empty)
+        foreign = acl_log_reset_if_ours(admin, was_empty)
+    assert not foreign, foreign
 
 
 async def test_source_silent_after_broker_still_los() -> None:

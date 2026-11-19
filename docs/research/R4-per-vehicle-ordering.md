@@ -127,3 +127,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | PgBouncer transaction mode breaks session locks | VERIFIED | pgbouncer.org features | D-ING-09 |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

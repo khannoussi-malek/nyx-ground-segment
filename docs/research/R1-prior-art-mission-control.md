@@ -144,3 +144,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | Yamcs replay alarms not guaranteed identical to live | VERIFIED | Yamcs source | D-REP-01/05 (why we record) |
 
 CONTRADICTED: COSMOS stale setting `System.staleness_seconds` in v7.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

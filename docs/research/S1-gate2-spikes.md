@@ -363,3 +363,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | Source of the observed 1 s stop timeout | STILL UNVERIFIED | documented default is 10 s | D-ENG-03 (explicit stop_grace_period) |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

@@ -195,3 +195,5 @@ Claims that were marked UNVERIFIED, checked against primary sources or by runnin
 | `ccsdspy` usable per message (streaming) | VERIFIED possible | `FixedLength.load(io.BytesIO(...))` decoded one packet | §3 decoder plug point (v1+) |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

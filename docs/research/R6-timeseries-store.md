@@ -191,3 +191,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | Q11 24 h band query time | STILL UNVERIFIED | extrapolation | D-PERF-09 |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

@@ -147,3 +147,5 @@ Integration (real Postgres): insert the same 100 frames twice → `count(*) = 10
 ## Verification pass (2026-11-14)
 
 No claim in this note is marked UNVERIFIED. Its one open item (PUS time next to the counter) was answered and VERIFIED in [R2](R2-standards-and-command-safety.md). CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

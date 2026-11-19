@@ -99,7 +99,9 @@ def test_schemathesis_asgi(case):
 
 ## Sources
 
-- Schemathesis 4.32.7 (PyPI); run logs in this session's scratchpad.
+- Schemathesis 4.32.7 (PyPI); the raw run logs were not kept. The spike was later repeated on the branch and recorded in [S2-schemathesis-spike.md](S2-schemathesis-spike.md).
 - Chrome timer throttling: https://developer.chrome.com/blog/timer-throttling-in-chrome-88; background tabs: https://developer.chrome.com/blog/background_tabs; autoplay: https://developer.chrome.com/blog/autoplay; Energy Saver freezing: https://developer.chrome.com/blog/freezing-on-energy-saver.
 - WHATWG HTML, server-sent events: https://html.spec.whatwg.org/multipage/server-sent-events.html. RFC 9110 §15.5.6 (405 and `Allow`).
 - Playwright `chromiumSwitches.ts` (default launch switches).
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

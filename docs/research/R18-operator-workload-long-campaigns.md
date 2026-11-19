@@ -64,3 +64,5 @@ Chosen: F1 (loss-of-monitoring tone, played by the browser, once per onset) and 
 ## Sources (PaperLab: Nyx ground segment design)
 
 Warm, Parasuraman & Matthews 2008 Vigilance Requires Hard Mental Work and Is Stressful, 10.1518/001872008X312152 · Mackworth 1948 The Breakdown of Vigilance during Prolonged Visual Search, 10.1080/17470214808416738 · Parasuraman & Manzey 2010 Complacency and Bias in Human Use of Automation, 10.1177/0018720810376055 · Edworthy, Loxley & Dennis 1991 Improving Auditory Warning Design, 10.1177/001872089103300206 · Patterson & Woods 2001 Shift Changes, Updates, and the On-Call Architecture in Space Shuttle Mission Control, 10.1023/a:1012705926828 · Patterson et al. 2004 Handoff Strategies in Settings with High Consequences for Failure, 10.1093/intqhc/mzh026 · Hart & Staveland 1988 Development of NASA-TLX, 10.1016/s0166-4115(08)62386-9 · Woods 1995 The alarm problem and directed attention in dynamic fault management (already in workspace)
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

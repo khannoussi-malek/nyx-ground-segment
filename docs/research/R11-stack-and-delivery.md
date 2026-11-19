@@ -235,3 +235,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | Unhealthy containers are not restarted | VERIFIED | test + docs | D-ING-26 watchdog, D-ING-12 |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

@@ -88,7 +88,7 @@ def far_and_raise_rate(n: int, p: float) -> tuple[float, float]:
     return sum(pi[n:]), pi[n - 1] * p   # time in alarm (Xu's FAR), raises per sample
 ```
 
-The full script, with the engine Monte Carlo and the margin table, is in the researcher session's scratchpad (`xu_chain.py`, `chatter.py`) and can be handed over.
+The full scripts, with the engine Monte Carlo and the margin table, are [`scripts/r20_xu_chain.py`](scripts/r20_xu_chain.py) and [`scripts/r20_chatter_at_limit.py`](scripts/r20_chatter_at_limit.py) (see [scripts/README.md](scripts/README.md)) and can be handed over.
 
 ## Decision candidate
 
@@ -112,3 +112,5 @@ The full script, with the engine Monte Carlo and the margin table, is in the res
 ## Sources (PaperLab: Nyx ground segment design)
 
 Xu, Wang, Izadi & Chen 2012, Performance Assessment and Design for Univariate Alarm Systems Based on FAR, MAR, and AAD, IEEE T-ASE, 10.1109/TASE.2011.2176490 (full text, owner upload) · Adnan, Izadi & Chen 2011, On expected detection delays for alarm systems with deadbands and delay-timers, J. Process Control, 10.1016/j.jprocont.2011.06.019 (full text, owner upload) · Gyasi & Wang 2022, 10.1016/j.psep.2022.05.006 · Wang, Bai, Wang & Yang 2019, Indexing and Designing Deadbands for Industrial Alarm Signals, IEEE TIE, 10.1109/TIE.2018.2885718 (full text after OCR)
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

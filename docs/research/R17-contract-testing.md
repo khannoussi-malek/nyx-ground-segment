@@ -72,3 +72,5 @@ Claims that were marked UNVERIFIED, checked against primary sources, source code
 | Web-API evolution breaks clients | STILL UNVERIFIED | metadata only | F1 (context only) |
 
 CONTRADICTED: none.
+
+Sources with local PDFs: see [SOURCES.md](SOURCES.md).

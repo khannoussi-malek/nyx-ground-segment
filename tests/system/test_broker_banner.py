@@ -61,6 +61,41 @@ def outage_source_paused(then: Callable[[], None]) -> None:
         compose("unpause", "simulator", check=False)
 
 
+def users(r: redis.Redis, names: tuple[str, ...], on: bool) -> None:
+    """Switch Redis users on or off; off also drops their open connections."""
+    for u in names:
+        r.acl_setuser(u, enabled=on)  # only on/off: no reset, the rules stay
+        if not on:
+            r.client_kill_filter(user=u)
+
+
+def outage_source_late(late_s: float) -> None:
+    """Ingest and the simulator lose the broker for OUTAGE_S; ingest gets it back first, the
+    simulator `late_s` after ingest's first successful pass. Unlike `docker pause`, the simulator
+    keeps generating on its grid and buffers, so there is no vehicle-time gap: only the delivery
+    is late, as in CI run 44423135993 (NCR-04). Redis keeps running, so its ACL change sticks."""
+    r = client("admin")
+    try:
+        users(r, ("ingest", "sim"), on=False)
+        time.sleep(OUTAGE_S)
+        users(r, ("ingest",), on=True)
+        wait_until(ingest_back, 60)
+        time.sleep(late_s)
+    finally:
+        users(r, ("ingest", "sim"), on=True)
+
+
+def acl_log_only_our_auth_failures(r: redis.Redis, was_empty: bool) -> None:
+    """CI's check_acl_log wants an empty ACL LOG. Reset it only when it was empty before this
+    test and every new entry is an auth failure of the users this test switched off."""
+    entries = r.acl_log()
+    assert all(e["reason"] == "auth" and e["username"] in ("ingest", "sim") for e in entries), (
+        entries
+    )
+    if was_empty:
+        r.acl_log_reset()
+
+
 def assert_no_los(t0: datetime) -> None:
     """No LOS since t0. On a failure, print the ingest and simulator logs of the window first:
     later system tests recreate the containers, so CI's compose.log never holds them (NCR-04)."""
@@ -80,10 +115,14 @@ def los_for_all(t0: datetime) -> bool:
 
 async def test_source_resumes_late_after_broker_no_los() -> None:
     t0 = now()  # NCR-04: the first frame comes LATE_S after ingest's reconnect (> los_s)
-    await asyncio.to_thread(outage_source_paused, lambda: time.sleep(LATE_S))
-    await asyncio.to_thread(wait_until, api_ok, 60)
+    admin = client("admin")
+    was_empty = not admin.acl_log()
+    await asyncio.to_thread(outage_source_late, LATE_S)
     await asyncio.to_thread(wait_drained, LIVE, 30)
-    assert_no_los(t0)
+    try:
+        assert_no_los(t0)
+    finally:
+        acl_log_only_our_auth_failures(admin, was_empty)
 
 
 async def test_source_silent_after_broker_still_los() -> None:

@@ -32,6 +32,15 @@ async def tm_of(s: Stream, v: str) -> dict[str, Any]:
     return d
 
 
+async def frames_until_tm(s: Stream, v: str) -> list[tuple[str, dict[str, Any]]]:
+    """Every frame up to and including the next tm of `v`."""
+    got: list[tuple[str, dict[str, Any]]] = []
+    async with asyncio.timeout(4):
+        while not ((f := await s._next())[0] == "tm" and f[1]["vehicle"] == v):  # noqa: SLF001
+            got.append(f)
+    return [*got, f]
+
+
 def hub(live: LiveApi) -> Hub:
     h: Hub = live.app.state.hub
     return h
@@ -113,7 +122,33 @@ async def test_non_redis_error_in_handle_does_not_pin_the_stream(
         xadd_data("ui:events", '{"kind":"poison"}')
         await until(lambda: left[0] >= 1, 4)
         publish_tm(live_api.vehicle, 1)
-        assert (await tm_of(s, live_api.vehicle))["seq"] == 1
+        frames = await frames_until_tm(s, live_api.vehicle)
+    assert frames[-1][1]["seq"] == 1
+    assert not [f for f in frames if f[0] == "ground" and f[1]["broker"] == "down"]  # no flash
+
+
+@pytest.mark.usefixtures("compose_api_stopped")
+async def test_non_transient_redis_error_on_the_dlq_write_does_not_pin_the_stream(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:  # only a connection error or timeout holds the reader; OOM / NOPERM skip the entry
+    r = live_api.app.state.redis
+    real, hits = r.xadd, [0]
+
+    async def oom(name: str, *a: Any, **k: Any) -> Any:
+        if name == "tm:dlq":
+            hits[0] += 1
+            raise redis.exceptions.ResponseError("OOM command not allowed (test)")
+        return await real(name, *a, **k)
+
+    monkeypatch.setattr(r, "xadd", oom)
+    async with sse(live_api) as s:
+        await s.next_of("snapshot")
+        xadd_data("ui:events", '{"kind":"no-such-kind","marker":"oom"}')
+        await until(lambda: hits[0] >= 1, 4)
+        publish_tm(live_api.vehicle, 1)
+        frames = await frames_until_tm(s, live_api.vehicle)
+    assert frames[-1][1]["seq"] == 1 and hits[0] == 1  # skipped once, not re-read
+    assert not [f for f in frames if f[0] == "ground" and f[1]["broker"] == "down"]
 
 
 async def test_resync_with_a_failed_snapshot_build_is_retried(

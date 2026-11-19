@@ -14,13 +14,13 @@ export const GROUPS: { title: string; items: Scenario[] }[] = [
     title: "Signal",
     items: [
       { label: "Loss of signal 10 s", fault: "dropout", params: { duration_s: 10 }, hint: "STALE, then LOSS OF SIGNAL, then one gap event." },
-      { label: "Frozen sensor 15 s", fault: "freeze", params: { duration_s: 15 }, clear: true, hint: "FROZEN on the sensor that stops changing." },
+      { label: "Frozen data 15 s", fault: "freeze", params: { duration_s: 15 }, clear: true, hint: "Every value of the vehicle stops changing: FROZEN after 2 s, and the loss-of-monitoring tone plays once." },
     ],
   },
   {
     title: "Data",
     items: [
-      { label: "Bad frame", fault: "malformed", params: { kind: "schema" }, hint: "The frame is quarantined; FRAMES REJECTED shows." },
+      { label: "Bad frame", fault: "malformed", params: { kind: "schema" }, hint: "One frame is quarantined to tm:dlq; nothing changes on screen." },
       { label: "Duplicate frames", fault: "duplicate", params: { count: 5 }, hint: "Stored once; nothing changes on screen." },
       { label: "Sequence jump", fault: "seq_jump", hint: "One sequence event in the event list." },
     ],

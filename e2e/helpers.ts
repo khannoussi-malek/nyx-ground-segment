@@ -98,6 +98,12 @@ export async function apiLogin(user: string): Promise<string> {
 
 /** The Commands panel: choose vehicle, command and its args, then Send. */
 export async function sendCommand(page: Page, vehicle: string, name: string, args: Record<string, string> = {}, reason = ""): Promise<void> {
+  await fillCommand(page, vehicle, name, args, reason);
+  await page.getByRole("region", { name: "Commands" }).getByRole("button", { name: "Send" }).click();
+}
+
+/** The Commands panel filled in, not sent: a test that needs two sends inside the 2 s window fills both first. */
+export async function fillCommand(page: Page, vehicle: string, name: string, args: Record<string, string> = {}, reason = ""): Promise<void> {
   const panel = page.getByRole("region", { name: "Commands" });
   await panel.getByLabel(/^Vehicle/).selectOption(vehicle);
   await panel.getByLabel(/^Command/).selectOption(name);
@@ -108,7 +114,6 @@ export async function sendCommand(page: Page, vehicle: string, name: string, arg
     else await field.fill(v);
   }
   if (reason) await panel.getByLabel("Reason", { exact: true }).fill(reason);
-  await panel.getByRole("button", { name: "Send" }).click();
 }
 
 /** The newest command list entry of `name` on `vehicle` (data-state is its state). */

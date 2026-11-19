@@ -1,6 +1,6 @@
 // ATP-06: hazardous two-step, the 2 s interlock across operators, and the audit trail.
 import { expect, test } from "@playwright/test";
-import { auditRows, commandItem, login, sendCommand } from "./helpers";
+import { auditRows, commandItem, fillCommand, login, sendCommand } from "./helpers";
 
 const REASON = "venting for the ATP-06 spec";
 
@@ -34,8 +34,12 @@ test("fc1 and fc2 send isolate_valve A within 2 s: fc2 is told fc1 sent the same
   const two = await (await browser.newContext()).newPage();
   await login(one, "fc1");
   await login(two, "fc2");
-  await sendCommand(one, "NYX-TA1", "isolate_valve", { valve: "A" });
-  await sendCommand(two, "NYX-TA1", "isolate_valve", { valve: "A" });
+  // both forms filled first, then the two Sends back to back: the 2 s window must not depend on how
+  // fast a runner fills two forms (a CI run on main failed that way)
+  await fillCommand(one, "NYX-TA1", "isolate_valve", { valve: "A" });
+  await fillCommand(two, "NYX-TA1", "isolate_valve", { valve: "A" });
+  await one.getByRole("region", { name: "Commands" }).getByRole("button", { name: "Send" }).click();
+  await two.getByRole("region", { name: "Commands" }).getByRole("button", { name: "Send" }).click();
   await expect(two.getByRole("alert")).toHaveText(/^fc1 sent the same command \d+ s ago$/);
   const rejected = auditRows(since).filter((r) => r.actor === "fc2" && r.action === "CMD_REJECTED");
   expect(rejected.map((r) => r.reason)).toEqual(["DUPLICATE_COMMAND"]);

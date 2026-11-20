@@ -81,7 +81,7 @@ async def _compare(request: Request, ids: list[int], names: list[str]) -> Compar
     try:
         with db_503(request):
             found = await _sessions(request, ids)
-            ends = [e or now for *_, e in found]
+            ends = [compare_calc.session_end(e, now) for *_, e in found]
             spans = [e - s for (_, _, _, s, _), e in zip(found, ends, strict=True)]
             if max(spans) > MAX_WINDOW:
                 raise _bad("WINDOW_TOO_LARGE", "a session is longer than 24 h")

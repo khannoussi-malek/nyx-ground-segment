@@ -21,6 +21,14 @@ router = APIRouter()
 MAX_WINDOW = timedelta(hours=24)
 RETRY_AFTER_S = "5"
 STAMP = "%Y%m%dT%H%M%SZ"  # file names: no colons
+
+
+def utc_window(started: datetime, ended: datetime | None) -> tuple[datetime, datetime]:
+    """A session's window in UTC: timestamptz arrives in the DB session's time zone, and the file
+    name stamps end in a literal Z. A running session ends now."""
+    return started.astimezone(UTC), (ended or datetime.now(UTC)).astimezone(UTC)
+
+
 MEDIA = {"csv": "text/csv", "parquet": "application/vnd.apache.parquet"}
 
 
@@ -69,7 +77,7 @@ async def _window(
                 row = await cur.fetchone()
         if row is None:
             raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", "unknown session")
-        vehicle, t_from, t_to = row[0], row[1].astimezone(UTC), (row[2] or datetime.now(UTC))
+        vehicle, (t_from, t_to) = row[0], utc_window(row[1], row[2])
     elif vehicle is None or t_from is None or t_to is None:
         raise _bad("INVALID_WINDOW", "give a session, or vehicle, from and to")
     else:

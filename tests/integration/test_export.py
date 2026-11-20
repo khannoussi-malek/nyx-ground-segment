@@ -251,6 +251,7 @@ async def test_second_export_429(live_api: LiveApi, monkeypatch: pytest.MonkeyPa
         await asyncio.wait_for(entered.wait(), 10)
         busy = await c.get(url(v))
         assert busy.status_code == 429 and busy.json()["error"] == "EXPORT_BUSY"
+        assert busy.json()["message"] == "an export is running; retry"
         assert int(busy.headers["retry-after"]) > 0
         release.set()
         assert (await first).status_code == 200

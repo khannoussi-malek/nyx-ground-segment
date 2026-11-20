@@ -31,9 +31,10 @@ def one_at_a_time(
     """429 `<NAME>_BUSY` while another `name` request runs; the flag is freed in finally."""
     st, flag = request.app.state, f"{name}_busy"
     if getattr(st, flag):
+        article = "an" if name[0] in "aeiou" else "a"
         raise ApiError(
-            HTTPStatus.TOO_MANY_REQUESTS, f"{name.upper()}_BUSY", f"a {name} is running; retry",
-            headers=headers,
+            HTTPStatus.TOO_MANY_REQUESTS, f"{name.upper()}_BUSY",
+            f"{article} {name} is running; retry", headers=headers,
         )  # fmt: skip
     setattr(st, flag, True)  # no await between the check and this line
     try:

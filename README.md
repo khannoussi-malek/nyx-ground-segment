@@ -59,18 +59,24 @@ make up
 To run the tests or work on the code you also need [uv](https://docs.astral.sh/uv/) and Node.js; the [developer guide](docs/dev-guide.md#run-the-tests) has the commands.
 
 ## What to try first
+Everything below happens in the console, with no terminal. The **Scenarios** button in the top bar is the test panel: pick a vehicle, click a scenario, and each button tells you what to watch.
+
 1. Log in as `conductor`. Two vehicle tables update ten times a second; every time is UTC and ends in `Z`.
-2. Inject a cabin leak on NYX-TA1 (the simulator listens on port 8081):
-   `curl -X POST http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA1","fault":"leak"}'`.
-   The pressure falls at 0.4 kPa/s: a YELLOW rate alarm first, then RED LOW, with the reason in words and the limits-file hash. Press **ACK**, type a note, confirm.
+2. **A cabin leak.** Press **Scenarios**, choose NYX-TA1 and click **Cabin leak**. The pressure falls at 0.4 kPa/s: a YELLOW rate alarm first, then RED LOW, with the reason in words and the limits-file hash. Press **ACK** on the alarm, type a note, confirm. Then click **Clear** in the panel to stop the leak.
 
    ![The leak at 1.5x speed: the pressure turns YELLOW on its falling rate, then RED LOW, and the alarm list fills](docs/img/leak-alarm.gif)
 
-   Clear the fault with `curl -X DELETE http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA1","fault":"leak"}'`.
-   No curl needed: the **Scenarios** button in the top bar starts any test scenario (leak, overheat, signal loss, bad frames, ignored commands) on the vehicle you pick, with a hint of what to watch. Clear exists for leak, overheat and freeze; the others end by themselves or are one-shot.
-3. Cut NYX-TA2 for 10 s: `curl -X POST http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA2","fault":"dropout","params":{"duration_s":10}}'`. The console shows **LOSS OF SIGNAL**, then one gap event with about 100 lost frames when it returns. A dropout ends by itself; no DELETE is needed.
-4. Send a hazardous command and read the confirmation dialog; start and stop a test session and download its report (the [operator guide](docs/operator-guide.md) walks through each).
-5. Archive and replay: a backfilled NYX-TA9 history is archived within one loop and can be replayed from the Replay toggle in the top bar; the manual steps are in [docs/atp/ATP-07.md](docs/atp/ATP-07.md) and the replay screen is described in the [operator guide](docs/operator-guide.md#run-a-replay).
+3. **Loss of signal.** In the panel, choose NYX-TA2 and click **Loss of signal 10 s**. After 2 s the rows go STALE, then the console shows **LOSS OF SIGNAL**; when the signal returns, one gap event with about 100 lost frames appears. It ends by itself.
+4. **Commands.** In the Commands pane, send the hazardous `vent_cabin` to NYX-TA1 and read the confirmation dialog: it wants a reason and the vehicle ID typed in. Then click **Vehicle ignores commands 20 s** in the panel and send any command: it ends FAILED, with the reason.
+5. **A test session.** Start a session, run one of the scenarios above, stop it and download its report (the [operator guide](docs/operator-guide.md) walks through each).
+6. **Archive and replay:** a backfilled NYX-TA9 history is archived within one loop and can be replayed from the Replay toggle in the top bar; the manual steps are in [docs/atp/ATP-07.md](docs/atp/ATP-07.md) and the replay screen is described in the [operator guide](docs/operator-guide.md#run-a-replay).
+
+The panel also has an overheat, a bus voltage spike, frozen data, a bad frame, duplicate frames, a sequence jump and a late execution. Clear exists for the leak, the overheat and frozen data; the others end by themselves. To start again from a clean board, `docker compose restart simulator` drops every fault, then ACK the alarms that returned.
+
+From a terminal, the same scenarios are one call each to the simulator on port 8081; scripts and the tests use these:
+`curl -X POST http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA1","fault":"leak"}'`,
+`curl -X DELETE http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA1","fault":"leak"}'`,
+`curl -X POST http://127.0.0.1:8081/sim/fault -H 'Content-Type: application/json' -d '{"vehicle":"NYX-TA2","fault":"dropout","params":{"duration_s":10}}'`.
 
 ## Architecture
 

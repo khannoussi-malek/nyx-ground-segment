@@ -3,10 +3,8 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from concurrent.futures import ProcessPoolExecutor
 from contextlib import asynccontextmanager
 from http import HTTPStatus
-from multiprocessing import get_context
 from typing import Any, Literal
 
 import psycopg
@@ -201,7 +199,7 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.s3 = None  # the first replay builds the client (replays._s3)
         # D-EXT-11: its own one-worker process, started at the first compare (spawn: no fork of
         # a threaded, event-loop process)
-        app.state.compare_pool = ProcessPoolExecutor(1, mp_context=get_context("spawn"))
+        app.state.compare_pool = compare.new_pool()
         app.state.compare_busy = False
         app.state.database_url, app.state.replays = settings.database_url, {}
         # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly

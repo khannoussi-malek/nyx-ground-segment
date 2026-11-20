@@ -3,9 +3,10 @@ run in the app's one-worker compare process (compare_calc), one compare at a tim
 
 import asyncio
 import logging
+from concurrent.futures import BrokenExecutor, ProcessPoolExecutor
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
-from typing import Any
+from multiprocessing import get_context
 
 import psycopg
 from fastapi import APIRouter, Request
@@ -66,6 +67,11 @@ async def _sessions(
     ]
 
 
+def new_pool() -> ProcessPoolExecutor:
+    # spawn: no fork of a threaded, event-loop process
+    return ProcessPoolExecutor(1, mp_context=get_context("spawn"))
+
+
 @router.get("/api/compare", responses=errors(400, 401, 404, 409, 422, 429, 503))
 async def get_compare(request: Request, user: User, sessions: str, params: str) -> Compare:
     ids, names = _ids(sessions), _params(request, params)
@@ -100,15 +106,32 @@ async def _compare(request: Request, ids: list[int], names: list[str]) -> Compar
             await check_rows(_s3(st), st.s3_settings.bucket, r)
         width = compare_calc.bucket_width_s([sp.total_seconds() for sp in spans])
         jobs = [(v, s, e) for (_, v, _, s, _), e in zip(found, ends, strict=True)]
-        out: list[list[Any]] = await asyncio.get_running_loop().run_in_executor(
-            st.compare_pool, compare_calc.compute, st.database_url, st.s3_settings, jobs, names,
-            width,
-        )  # fmt: skip
-    except (ArchiveCorrupt, compare_calc.CompareCorrupt) as e:
-        raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", str(e)) from e
+        loop = asyncio.get_running_loop()
+        try:
+            kind, out = await loop.run_in_executor(
+                st.compare_pool, compare_calc.compute, st.database_url, st.s3_settings, jobs,
+                names, width,
+            )  # fmt: skip
+        except BrokenExecutor as e:  # a killed worker: this pool is dead for good, build a new one
+            st.compare_pool.shutdown(wait=False, cancel_futures=True)
+            st.compare_pool = new_pool()
+            raise _unavailable("compare worker", e) from e
+        if kind == "corrupt":
+            log.warning("compare: %s", out)
+            raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", out)
+        if kind != "ok":  # "s3" | "db": the worker's own words are only logged
+            log.warning("compare worker: %s: %s", kind, out)
+            raise (
+                ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", "archive store unreachable")
+                if kind == "s3"
+                else ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", "database unreachable")
+            )
+    except ArchiveCorrupt as e:
+        log.warning("compare: %s", compare_calc.corrupt_text(e))
+        raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", compare_calc.corrupt_text(e)) from e
     except S3_ERRORS as e:
         raise _unavailable("archive store", e) from e
-    except (psycopg.Error, PoolTimeout) as e:  # raised in the compare process
+    except (psycopg.Error, PoolTimeout) as e:
         raise _unavailable("database", e) from e
     series = iter(out)
     return Compare(

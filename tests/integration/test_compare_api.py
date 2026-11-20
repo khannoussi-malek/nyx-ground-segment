@@ -17,6 +17,7 @@ from gs.archiver import window
 from gs.archiver.hours import hour_of, object_key
 from tests.integration.conftest import LiveApi
 from tests.integration.test_window_reader import archive_and_delete
+from tests.support import compare_worker
 from tests.support.archive import (  # noqa: F401  (archiver_paused is the module fixture)
     app_conn,
     archive_rows,
@@ -168,3 +169,58 @@ async def test_second_compare_429(live_api: LiveApi, monkeypatch: pytest.MonkeyP
         release.set()
         assert (await first).status_code == 200
         assert (await c.get(url(ids, [p]))).status_code == 200  # free again
+
+
+async def _broken_then_ok(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch, worker: str, message: str
+) -> None:
+    from gs.api import compare_calc
+
+    ids = [session(), session()]
+    p = param_columns()[0]
+    async with app_conn() as conn:  # archived, so the worker reads MinIO
+        for v in _made:
+            await archive_and_delete(conn, v, H)
+    async with client(live_api) as c:
+        with monkeypatch.context() as m:
+            m.setattr(compare_calc, "compute", getattr(compare_worker, worker))
+            r = await c.get(url(ids, [p]))
+        assert r.status_code == 503, r.text
+        assert r.json() == {"error": "UNAVAILABLE", "message": message}
+        assert (await c.get(url(ids, [p]))).status_code == 200  # the pool still works
+
+
+async def test_worker_s3_failure_503(live_api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    await _broken_then_ok(live_api, monkeypatch, "dead_s3", "archive store unreachable")
+
+
+async def test_worker_db_failure_503(live_api: LiveApi, monkeypatch: pytest.MonkeyPatch) -> None:
+    await _broken_then_ok(live_api, monkeypatch, "dead_db", "database unreachable")
+
+
+async def test_killed_worker_503_then_recovers(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await _broken_then_ok(live_api, monkeypatch, "killed", "compare worker unreachable")
+
+
+async def test_worker_corrupt_409_names_vehicle_and_hour(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from gs.api import compare_calc
+
+    ids = [session(), session()]
+    monkeypatch.setattr(compare_calc, "compute", compare_worker.corrupt)
+    async with client(live_api) as c:
+        r = await c.get(url(ids, [param_columns()[0]]))
+    assert r.status_code == 409 and r.json()["error"] == "ARCHIVE_CORRUPT"
+    assert "V1" in r.json()["message"] and "2026-11-01T10:00:00.000000Z" in r.json()["message"]
+
+
+async def test_worker_statement_timeout(live_api: LiveApi) -> None:
+    from gs.api import compare_calc
+
+    conn = await compare_calc._connect(live_api.app.state.database_url, statement_timeout_ms=200)
+    async with conn:
+        with pytest.raises(psycopg.errors.QueryCanceled):
+            await conn.execute("select pg_sleep(5)")

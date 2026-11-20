@@ -186,6 +186,20 @@ export async function getReport(id: number): Promise<ReportResult> {
   throw fail("report", r);
 }
 
+export type Summary = components["schemas"]["Summary"];
+export type SummaryResult = { ok: true; summary: Summary } | Failure;
+
+/** The "Since..." list (D-EXT-21); no `since` = the server's default. A refusal comes back as its code + message. */
+export async function getSummary(vehicle: string, since: string): Promise<SummaryResult> {
+  const q = new URLSearchParams({ vehicle, ...(since ? { since } : {}) });
+  try {
+    const r = await fetch(`/api/summary?${q}`, { credentials: "same-origin" });
+    return r.ok ? { ok: true, summary: (await r.json()) as Summary } : await failure(r, "summary");
+  } catch {
+    return NETWORK;
+  }
+}
+
 export const reportCsvUrl = (id: number): string => `/api/sessions/${id}/report.csv`;
 
 export type ReplayRequest = components["schemas"]["ReplayRequest"];

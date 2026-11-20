@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 ### Added
-- `GET /api/summary?vehicle=<v>&since=<UTC Z>` (login required): the "Since..." list for the shift handover, one time-ordered list of the vehicle's alarm transitions (ACK with user and note), commands with their outcome, and LOS/AOS, GAP, SEQ_RESET, mission-db and archive/interface events. `since` defaults to the caller's last logout, else the start of the vehicle's active session; 400 `SINCE_REQUIRED` without either, 400 `WINDOW_TOO_LARGE` over 7 days (EXT-05, D-EXT-21). The console button follows.
+- `GET /api/summary?vehicle=<v>&since=<UTC Z>` (login required): the "Since..." list for the shift handover, one time-ordered list of the vehicle's alarm transitions (ACK with user and note), commands with their outcome, and LOS/AOS, GAP, SEQ_RESET, mission-db and archive/interface events. `since` defaults to the caller's last logout, else the start of the vehicle's active session; 400 `SINCE_REQUIRED` without either, 400 `WINDOW_TOO_LARGE` over 7 days (EXT-05, D-EXT-21). The Sessions pane has a **Since…** button that opens the list for a chosen vehicle, with an optional UTC `since` (EXT-05).
 - A **Scenarios** button in the console top bar (shown only when test controls are on) opens a panel that starts and clears the simulator test scenarios on a chosen vehicle, each with a hint of what to watch (D-SIM-12).
 - Test controls (D-SIM-12): `GET /api/test-controls` and `POST`/`DELETE /api/test-controls/fault` start and clear simulator faults from the console API (audited, session and `X-GS-Client` required). On by default in the local compose stack; `GS_TEST_CONTROLS=0` turns them off (the routes answer 404).
 

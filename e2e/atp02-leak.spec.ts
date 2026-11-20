@@ -15,7 +15,7 @@ test.afterEach(async () => {
   await clearFault(V, "leak");
 });
 
-test("leak → yellow → red → ack → isolate → verified → clear", async ({ page }) => {
+test("leak → yellow → red → ack → isolate → verified → clear", async ({ page }, testInfo) => {
   test.setTimeout(120_000);
   await login(page, "fc1");
   const pressureRows = page.locator("tr[data-alarm-id]").filter({ hasText: V }).filter({ hasText: "Cabin total pressure" });
@@ -36,7 +36,9 @@ test("leak → yellow → red → ack → isolate → verified → clear", async
   await expect(alarm.locator("th")).toContainText("RED");
   await expect(alarm.locator(".hash")).toContainText(`limits ${limits}`); // the escalation used the new set
   await expect.poll(() => beeps(page)).toBe(b0 + 1);
-  await page.screenshot({ path: new URL("../docs/img/console-leak.png", import.meta.url).pathname }); // the alarm list and the first vehicle
+  // the operator guide's screenshot is refreshed only on request; a normal run never writes a tracked file
+  const shot = process.env.UPDATE_DOCS_IMG === "1" ? new URL("../docs/img/console-leak.png", import.meta.url).pathname : testInfo.outputPath("console-leak.png");
+  await page.screenshot({ path: shot }); // the alarm list and the first vehicle
 
   await page.waitForTimeout(ACK_PROPAGATION_MS);
   await alarm.getByRole("button", { name: `Acknowledge ${V} cabin_pressure_kpa` }).click();

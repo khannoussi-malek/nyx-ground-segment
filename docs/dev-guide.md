@@ -41,4 +41,5 @@ NYX-TA9 is the backfill vehicle: it has no live frames. `docker compose run --rm
 - Static: `uv run ruff check`, `uv run ruff format --check`, `uv run mypy --strict src tests scripts perf`, `make gen && git diff --exit-code -- interfaces ui/src/server/schema.d.ts`.
 - System (Docker; stops and starts containers, one run at a time): `uv run pytest tests/system`.
 - End to end: `make e2e` (Playwright, browser). UI unit tests: `cd ui && npx vitest run`.
+  The specs edit `mission/limits.yaml` and `parameters.yaml` and restore them after each test; a run that refuses to start with "mission/ has local edits" was interrupted before: `git checkout -- mission`. `UPDATE_DOCS_IMG=1 make e2e` also refreshes the operator guide's `docs/img/console-leak.png`; a normal run writes no tracked file.
 - Performance: `make perf`, `make perf-p`, `make soak` (see above).

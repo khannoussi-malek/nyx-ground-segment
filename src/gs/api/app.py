@@ -27,6 +27,7 @@ from gs.api import (
     compare,
     deps,
     events,
+    export,
     replays,
     sessions,
     summary,
@@ -177,7 +178,7 @@ ROUTER.add_api_route(
 )
 for _r in (
     auth.router, commands.router, alarms.router, sessions.router, telemetry.router, replays.router,
-    testctl.router, summary.router, compare.router,
+    testctl.router, summary.router, compare.router, export.router,
 ):  # fmt: skip
     ROUTER.include_router(_r)
 

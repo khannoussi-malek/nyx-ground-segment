@@ -43,15 +43,15 @@ export async function missionDb(): Promise<MissionDb | null> {
 type AckAccepted = components["schemas"]["AckAccepted"];
 type AckRequest = components["schemas"]["AckRequest"];
 type ErrorBody = components["schemas"]["ErrorBody"];
-type Failure = { ok: false; error: string; message: string };
+export type Failure = { ok: false; error: string; message: string };
 export type AckResult = { ok: true; status: AckAccepted["status"] } | Failure;
 
 /** The server's error + message for a refused POST; `HTTP_<status>` and "<what> failed" when the body is not JSON. */
-async function failure(r: Response, what: string): Promise<Failure> {
+export async function failure(r: Response, what: string): Promise<Failure> {
   const body = (await r.json().catch(() => null)) as Partial<ErrorBody> | null;
   return { ok: false, error: body?.error ?? `HTTP_${r.status}`, message: body?.message ?? `${what} failed (${r.status})` };
 }
-const NETWORK: Failure = { ok: false, error: "NETWORK", message: "Could not reach the ground segment" };
+export const NETWORK: Failure = { ok: false, error: "NETWORK", message: "Could not reach the ground segment" };
 
 /** Ask for an ACK. 202 = the request is accepted (it may still be pending); anything else comes back as the server's
  *  error + message for the dialog, a network failure as NETWORK. The same request id may be sent again: the server
@@ -260,6 +260,38 @@ export async function sendFault(method: "POST" | "DELETE", body: FaultRequest | 
       body: JSON.stringify(body),
     });
     return r.status === 204 ? { ok: true } : await failure(r, "Test fault");
+  } catch {
+    return NETWORK;
+  }
+}
+
+export type Compare = components["schemas"]["Compare"];
+export type CompareResult = { ok: true; compare: Compare } | Failure;
+
+/** Sessions overlaid on relative time (D-EXT-11); a refusal (400 limits, 404, 409, 429 COMPARE_BUSY ...) keeps the server's words. */
+export async function getCompare(ids: number[], params: string[]): Promise<CompareResult> {
+  const q = new URLSearchParams({ sessions: ids.join(","), params: params.join(",") });
+  try {
+    const r = await fetch(`/api/compare?${q}`, { credentials: "same-origin" });
+    return r.ok ? { ok: true, compare: (await r.json()) as Compare } : await failure(r, "Compare");
+  } catch {
+    return NETWORK;
+  }
+}
+
+export type ExportResult = { ok: true; blob: Blob; filename: string } | Failure;
+
+/** The export file (D-EXT-13) for a query built by `exportQuery`; 429 EXPORT_BUSY carries its Retry-After in the message. */
+export async function getExport(query: string): Promise<ExportResult> {
+  try {
+    const r = await fetch(`/api/export?${query}`, { credentials: "same-origin" });
+    if (r.ok) {
+      const name = /filename="([^"]+)"/.exec(r.headers.get("Content-Disposition") ?? "")?.[1];
+      return { ok: true, blob: await r.blob(), filename: name ?? "export" };
+    }
+    const f = await failure(r, "Export");
+    const wait = r.headers.get("Retry-After");
+    return r.status === 429 && wait ? { ...f, message: `${f.message} (retry in ${wait} s)` } : f;
   } catch {
     return NETWORK;
   }

@@ -12,6 +12,7 @@ import { SessionPanel } from "./components/SessionPanel";
 import { LiveTable } from "./components/LiveTable";
 import { Scenarios } from "./components/Scenarios";
 import { ReplayPage } from "./components/ReplayPage";
+import { ComparePage } from "./components/ComparePage";
 import { Login } from "./components/Login";
 import { bootUser, checkSession, loadMission, safeLogout } from "./server/session";
 import { connectEvents } from "./server/sse";
@@ -117,7 +118,8 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
       store.stop();
     };
   }, [store, onLogout]);
-  const [replay, setReplay] = useState(false); // the live store, SSE, beep and tone stay mounted either way
+  const [page, setPage] = useState<"live" | "replay" | "compare">("live"); // the live store, SSE, beep and tone stay mounted either way
+  const replay = page === "replay";
   const running = useRunning(ctx);
   const { beeps, lastTone } = useAudio(store, ctx, running);
   const { layout, update, reset } = useLayout();
@@ -137,7 +139,8 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
         <h1>Nyx</h1>
         <AlarmSummary store={store} onClick={toAlarms} />
         <SoundBadge ctx={ctx} running={running} onArm={setCtx} />
-        <button onClick={() => setReplay((r) => !r)}>{replay ? "Live" : "Replay"}</button>
+        <button onClick={() => setPage(replay ? "live" : "replay")}>{replay ? "Live" : "Replay"}</button>
+        <button onClick={() => setPage(page === "compare" ? "live" : "compare")}>{page === "compare" ? "Live" : "Compare"}</button>
         <Scenarios />
         <span>{user}</span>
         {editing && <button className="quiet" onClick={reset}>Reset layout</button>}
@@ -146,6 +149,8 @@ function Console({ user, audio, onLogout }: { user: string; audio: AudioContext 
       </header>
       {replay ? (
         <ReplayPage live={store} mission={mission} user={user} />
+      ) : page === "compare" ? (
+        <ComparePage mission={mission} />
       ) : (
         <Board
           layout={layout}

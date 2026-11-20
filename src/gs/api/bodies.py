@@ -198,3 +198,32 @@ class Summary(_Body):
     until: UtcTime
     since_source: Literal["query", "last_logout", "session_start"]
     items: list[SummaryItem]  # oldest first
+
+
+class CompareSession(_Body):
+    id: int
+    vehicle: VehicleId
+    name: str
+    started_at: UtcTime
+    ended_at: UtcTime | None  # null: running, compared up to now
+    duration_s: float
+
+
+class CompareBucket(_Body):
+    t_rel_s: float  # seconds since the session's started_at, the bucket's start
+    lo: float
+    hi: float
+    mean: float
+    n: int
+
+
+class CompareSeries(_Body):
+    session_id: int
+    param: str
+    buckets: list[CompareBucket]  # oldest first; an empty bucket is absent
+
+
+class Compare(_Body):
+    bucket_s: float  # one width for every session (D-EXT-11)
+    sessions: list[CompareSession]  # in the order asked
+    series: list[CompareSeries]  # per session, then per param, in the order asked

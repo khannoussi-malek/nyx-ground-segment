@@ -3,8 +3,10 @@
 import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from concurrent.futures import ProcessPoolExecutor
 from contextlib import asynccontextmanager
 from http import HTTPStatus
+from multiprocessing import get_context
 from typing import Any, Literal
 
 import psycopg
@@ -24,6 +26,7 @@ from gs.api import (
     alarms,
     auth,
     commands,
+    compare,
     deps,
     events,
     replays,
@@ -175,7 +178,7 @@ ROUTER.add_api_route(
 )
 for _r in (
     auth.router, commands.router, alarms.router, sessions.router, telemetry.router, replays.router,
-    testctl.router, summary.router,
+    testctl.router, summary.router, compare.router,
 ):  # fmt: skip
     ROUTER.include_router(_r)
 
@@ -196,6 +199,10 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.test_controls, app.state.sim_url = settings.test_controls, settings.sim_url
         app.state.s3_settings = settings.s3
         app.state.s3 = None  # the first replay builds the client (replays._s3)
+        # D-EXT-11: its own one-worker process, started at the first compare (spawn: no fork of
+        # a threaded, event-loop process)
+        app.state.compare_pool = ProcessPoolExecutor(1, mp_context=get_context("spawn"))
+        app.state.compare_busy = False
         app.state.database_url, app.state.replays = settings.database_url, {}
         # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
         # no client-side retry: connection errors reach our own handling (R28). Maintenance
@@ -236,6 +243,7 @@ def create_app(settings: Settings) -> FastAPI:
             try:
                 await asyncio.gather(*tasks)
             finally:  # a task error at shutdown must not leak the pool or the client
+                app.state.compare_pool.shutdown(wait=False, cancel_futures=True)
                 await pool.close()
                 await app.state.redis.aclose()
 

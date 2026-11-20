@@ -857,6 +857,146 @@
         "title": "CommandView",
         "type": "object"
       },
+      "Compare": {
+        "additionalProperties": false,
+        "properties": {
+          "bucket_s": {
+            "title": "Bucket S",
+            "type": "number"
+          },
+          "series": {
+            "items": {
+              "$ref": "#/components/schemas/CompareSeries"
+            },
+            "title": "Series",
+            "type": "array"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/CompareSession"
+            },
+            "title": "Sessions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "bucket_s",
+          "sessions",
+          "series"
+        ],
+        "title": "Compare",
+        "type": "object"
+      },
+      "CompareBucket": {
+        "additionalProperties": false,
+        "properties": {
+          "hi": {
+            "title": "Hi",
+            "type": "number"
+          },
+          "lo": {
+            "title": "Lo",
+            "type": "number"
+          },
+          "mean": {
+            "title": "Mean",
+            "type": "number"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "t_rel_s": {
+            "title": "T Rel S",
+            "type": "number"
+          }
+        },
+        "required": [
+          "t_rel_s",
+          "lo",
+          "hi",
+          "mean",
+          "n"
+        ],
+        "title": "CompareBucket",
+        "type": "object"
+      },
+      "CompareSeries": {
+        "additionalProperties": false,
+        "properties": {
+          "buckets": {
+            "items": {
+              "$ref": "#/components/schemas/CompareBucket"
+            },
+            "title": "Buckets",
+            "type": "array"
+          },
+          "param": {
+            "title": "Param",
+            "type": "string"
+          },
+          "session_id": {
+            "title": "Session Id",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session_id",
+          "param",
+          "buckets"
+        ],
+        "title": "CompareSeries",
+        "type": "object"
+      },
+      "CompareSession": {
+        "additionalProperties": false,
+        "properties": {
+          "duration_s": {
+            "title": "Duration S",
+            "type": "number"
+          },
+          "ended_at": {
+            "anyOf": [
+              {
+                "format": "date-time",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ended At"
+          },
+          "id": {
+            "title": "Id",
+            "type": "integer"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "title": "Started At",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "vehicle",
+          "name",
+          "started_at",
+          "ended_at",
+          "duration_s"
+        ],
+        "title": "CompareSession",
+        "type": "object"
+      },
       "DlqRecord": {
         "additionalProperties": false,
         "properties": {
@@ -3213,6 +3353,114 @@
           }
         },
         "summary": "Post Command"
+      }
+    },
+    "/api/compare": {
+      "get": {
+        "operationId": "get_compare_api_compare_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "sessions",
+            "required": true,
+            "schema": {
+              "title": "Sessions",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "params",
+            "required": true,
+            "schema": {
+              "title": "Params",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Compare"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Compare"
       }
     },
     "/api/events": {

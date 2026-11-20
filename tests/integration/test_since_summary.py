@@ -118,7 +118,9 @@ async def test_lists_everything_in_order(summ: Client) -> None:
     assert r.status_code == 200, r.text
     body = r.json()
     assert (body["vehicle"], body["since_source"]) == (v, "query")
-    items = body["items"]
+    # ground events (vehicle null, e.g. INTERFACE_MISMATCH) belong to every vehicle's list, so other
+    # tests sharing this database can add some to the window; this test pins its own vehicle's rows
+    items = [i for i in body["items"] if not (i["event"] and i["event"]["vehicle"] is None)]
     assert [(i["source"], i["kind"]) for i in items] == [
         ("alarm", "RAISE"), ("command", "COMMAND"), ("alarm", "ACK"), ("event", "LOS"),
         ("event", "AOS"), ("alarm", "CLEAR"), ("event", "LIMITS_APPLIED"),

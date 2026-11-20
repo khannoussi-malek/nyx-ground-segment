@@ -82,7 +82,13 @@ def command_text(c: CommandView) -> str:
         "NOT_EXECUTED": "vehicle did not execute it – safe to resend after checking why",
         "RECEIVED_LATE": "vehicle accepted it late, not yet seen executing – wait",
         "NOT_SENT": "not sent – safe to retry",
-    }.get(c.outcome or "", "outcome unknown: check the vehicle before resending")
+    }.get(
+        c.outcome or "",
+        (
+            "outcome unknown: check mode, last_cmd_id and the affected parameters;"
+            " never blind-resend a hazardous command; tell the test conductor"
+        ),
+    )
     return f"{head} – FAILED ({c.failure_reason}) – {outcome}"
 
 

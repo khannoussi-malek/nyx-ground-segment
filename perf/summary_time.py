@@ -17,9 +17,7 @@ CALLS, WINDOW_H, LIMIT_S = 20, 12, 2.0
 VEHICLE = "NYX-TA1"
 
 
-def timed_calls(
-    env: dict[str, str], window_h: float, now: datetime
-) -> list[tuple[datetime, float]]:
+def timed_calls(env: dict[str, str], window_h: float) -> list[tuple[datetime, float, int]]:
     opener = urllib.request.build_opener(
         urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar())
     )
@@ -34,18 +32,19 @@ def timed_calls(
     for _ in range(CALLS):
         since = iso_z(datetime.now(UTC) - timedelta(hours=window_h))
         t = time.perf_counter()
-        opener.open(f"{base}/api/summary?vehicle={VEHICLE}&since={since}", timeout=30).read()
-        out.append((datetime.now(UTC), time.perf_counter() - t))
+        body = opener.open(f"{base}/api/summary?vehicle={VEHICLE}&since={since}", timeout=30).read()
+        out.append((datetime.now(UTC), time.perf_counter() - t, len(json.loads(body)["items"])))
     return out
 
 
 def main(window_h: float = WINDOW_H) -> None:
     now = datetime.now(UTC)
-    rows = timed_calls(read_env(), window_h, now)
+    rows = timed_calls(read_env(), window_h)
     path = REPO / "docs" / "perf" / f"summary-{now:%Y-%m-%d}.csv"
-    write_csv(path, ["at", "seconds"], rows)
-    v = verdict_of([s for _, s in rows], LIMIT_S)
+    write_csv(path, ["at", "seconds", "items"], rows)
+    v = verdict_of([s for _, s, _ in rows], LIMIT_S)
     print(f"summary over {window_h:g} h: p95 {v.p95:.3f} s (limit {LIMIT_S:g} s), {ci_text(v)}")
+    print(f"items per call: min {min(n for _, _, n in rows)} (0 means the window was empty)")
     print(f"wrote {path.relative_to(REPO)}")
 
 

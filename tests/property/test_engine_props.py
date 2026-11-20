@@ -126,11 +126,16 @@ def _cuts(n: int) -> st.SearchStrategy[frozenset[int]]:
 def test_p3_same_input_same_keys(data: st.DataObject) -> None:
     """Same frames + same ACKs + same mission-db timeline => the same transitions, whatever the
     batch split; a late frame (re-delivery with other values) changes nothing: it is not
-    classified and leaves every ROC window as it was (EX-13). Derived values and the mode switch
-    are not built (D-EXT-05 / D-EXT-06, EXT-01 after the 47): left out."""
+    classified and leaves every ROC window and the state as it was (EX-13). The "one batch" run
+    is itself cut at ACK frames and at the mission-db switch (D-ALM-14), so the split only moves
+    the other boundaries. Left out (not built, EXT-01 after the 47): derived values (D-EXT-05),
+    including rate_of NULL on a late frame (EX-13), and the mode switch (D-EXT-06)."""
     _, run, mdbs, switch = data.draw(_timelines())
+    n = len(run.frames)  # an empty run has nothing to re-deliver
     late = data.draw(
-        st.lists(st.tuples(st.integers(0, len(run.frames) - 1), st.integers(0, 20)), max_size=8)
+        st.lists(
+            st.tuples(st.integers(0, max(0, n - 1)), st.integers(0, 20)), max_size=8 if n else 0
+        )
     )
     base = headers(run)
     whole, end = play(base, mdbs, switch, run.acks, frozenset())

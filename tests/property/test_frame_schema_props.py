@@ -14,7 +14,7 @@ from hypothesis import strategies as st
 from hypothesis_jsonschema import from_schema
 from jsonschema import Draft202012Validator
 
-from gs.common.interfaces import DlqRecord, FrameHeader, build_frame_model
+from gs.common.interfaces import DlqRecord, FrameHeader, build_frame_model, frame_schema
 from gs.common.interfaces.frame import T_ONBOARD_FUTURE, T_ONBOARD_PAST
 from gs.common.missiondb import load_dir
 from gs.common.time import iso_z
@@ -24,7 +24,6 @@ from tests.support.mission import MISSION_DIR
 
 NOW = datetime(2026, 11, 14, 10, tzinfo=UTC)
 EID = "1794650400000-0"
-DIALECT = "https://json-schema.org/draft/2020-12/schema"  # as GET /api/mission-db/frame-schema
 # D-EXT-18: the validity window is a rule JSON Schema can't express, so `date-time` is drawn in it
 IN_WINDOW = st.datetimes(
     min_value=(NOW - T_ONBOARD_PAST).replace(tzinfo=None),
@@ -41,8 +40,7 @@ def _model() -> type[FrameHeader]:
 
 @lru_cache(maxsize=1)
 def _schema() -> dict[str, Any]:
-    # what the route serves for the repository's mission/ (src/gs/api/app.py frame_schema)
-    return {"$schema": DIALECT, **_model().model_json_schema()}
+    return frame_schema(load_dir(MISSION_DIR).param_names)  # the function the route calls
 
 
 def _frames() -> st.SearchStrategy[Any]:

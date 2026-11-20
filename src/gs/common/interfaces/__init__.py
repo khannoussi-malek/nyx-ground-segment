@@ -1,6 +1,6 @@
 from gs.common.interfaces.base import U32, Mode, StrictModel, UtcTime, VehicleId
 from gs.common.interfaces.dlq import DlqReason, DlqRecord
-from gs.common.interfaces.frame import FrameHeader, build_frame_model
+from gs.common.interfaces.frame import FrameHeader, build_frame_model, frame_schema
 from gs.common.interfaces.replay import (
     ReplayAlarm,
     ReplayClock,
@@ -58,6 +58,7 @@ __all__ = [
     "DlqReason",
     "DlqRecord",
     "FrameHeader",
+    "frame_schema",
     "Hb",
     "Hello",
     "Mode",

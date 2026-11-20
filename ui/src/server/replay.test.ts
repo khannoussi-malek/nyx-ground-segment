@@ -91,7 +91,10 @@ test("end reasons and an interrupted stream have their own text", () => {
   expect(endText({ reason: "archive_corrupt", detail: "hour 14" })).toBe("Replay stopped: an archive object failed its hash check (hour 14)");
 });
 
-test("datetime-local is read as UTC", () => {
-  expect(utcInput("2026-11-10T14:00")).toBe("2026-11-10T14:00:00.000Z");
-  expect(utcInput("")).toBeNull();
+test("utcInput reads ISO 8601 UTC with a required Z, with or without seconds", () => {
+  expect(utcInput("2026-11-10T14:00Z")).toBe("2026-11-10T14:00:00.000Z");
+  expect(utcInput("2026-11-10T14:00:07Z")).toBe("2026-11-10T14:00:07.000Z");
+  expect(utcInput(" 2026-11-10T14:00Z ")).toBe("2026-11-10T14:00:00.000Z");
+  for (const bad of ["", "2026-11-10T14:00", "2026-11-10T14:00:00", "11/10/2026, 02:00 PM", "2026-11-10 14:00Z", "2026-11-10T14:00+02:00", "2026-11-10T25:00Z", "2026-02-31T10:00Z", "garbage"])
+    expect(utcInput(bad), bad).toBeNull();
 });

@@ -20,8 +20,8 @@ test.afterEach(async () => clearFault("NYX-TA1", "step"));
 
 const start = async (page: import("@playwright/test").Page, from: string, to: string) => {
   await page.locator(".replay-controls").getByLabel(/^Vehicle/).selectOption(V);
-  await page.getByLabel("From (UTC)").fill(from);
-  await page.getByLabel("To (UTC)").fill(to);
+  await page.getByLabel("From (UTC)").fill(`${from}Z`);
+  await page.getByLabel("To (UTC)").fill(`${to}Z`);
   await page.getByLabel("Speed").selectOption("10");
   await page.getByRole("button", { name: "Start" }).click();
 };

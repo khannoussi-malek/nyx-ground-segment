@@ -1,6 +1,7 @@
 """gs-sim: two-vehicle 10 Hz telemetry simulator writing tm:<vehicle> streams."""
 
 import asyncio
+import logging
 import os
 import random
 import signal
@@ -21,6 +22,7 @@ from gs.simulator.buffer import FrameBuffer, send_loop
 from gs.simulator.commands import CommandBox, tc_loop
 from gs.simulator.faults import FaultBoard, fault_routes
 from gs.simulator.frames import tick_loop
+from gs.simulator.ledger import Ledger
 
 DEFAULT_RATE_HZ, MAX_RATE_HZ = 10, 100  # D-PERF-05: run P drives 100 Hz
 MAXLEN = 108_000  # 3 h at 10 Hz: the 2 h soak window + margin; ~47 MB per vehicle (D-ING-06)
@@ -37,6 +39,14 @@ def _rate_hz() -> int:
     return rate
 
 
+def _ledger_path() -> Path | None:
+    path = os.environ.get("SIM_LEDGER")
+    if path and os.environ.get("GS_TEST_HOOKS") != "1":
+        logging.getLogger(__name__).warning("SIM_LEDGER set but GS_TEST_HOOKS != 1: ignored")
+        return None
+    return Path(path) if path else None
+
+
 @dataclass(frozen=True)
 class SimSettings:
     redis_url: str
@@ -46,6 +56,7 @@ class SimSettings:
     health_port: int
     mission_db: Path
     rate_hz: int = DEFAULT_RATE_HZ
+    ledger: Path | None = None  # SIM_LEDGER, only with GS_TEST_HOOKS=1 (D-EXT-15)
 
     @classmethod
     def from_env(cls) -> SimSettings:
@@ -57,6 +68,7 @@ class SimSettings:
             health_port=require_int("HEALTH_PORT"),
             mission_db=Path(require("MISSION_DB")),
             rate_hz=_rate_hz(),
+            ledger=_ledger_path(),
         )
 
 
@@ -90,6 +102,7 @@ async def run(s: SimSettings, stop: asyncio.Event) -> None:
         retry=Retry(NoBackoff(), 0),
     )
 
+    ledger = Ledger(s.ledger) if s.ledger else None
     board = FaultBoard()
     routes = fault_routes(board, s.vehicles, time.monotonic)
     server = await serve_health(
@@ -100,11 +113,22 @@ async def run(s: SimSettings, stop: asyncio.Event) -> None:
             for v in s.vehicles:
                 rng = random.Random(f"{s.seed}:{v}")
                 tg.create_task(
-                    tick_loop(v, buf, rng, stop, faults=board, box=boxes[v], period_s=1 / s.rate_hz)
+                    tick_loop(
+                        v,
+                        buf,
+                        rng,
+                        stop,
+                        faults=board,
+                        box=boxes[v],
+                        period_s=1 / s.rate_hz,
+                        ledger=ledger,
+                    )
                 )
                 tg.create_task(tc_loop(r, v, boxes[v], stop))
             tg.create_task(send_loop(buf, lambda st, d: xadd_tm(r, st, d), stop))
     finally:
+        if ledger:
+            ledger.close()
         server.close()
         await server.wait_closed()
         await r.aclose()

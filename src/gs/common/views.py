@@ -65,7 +65,7 @@ ORDER BY a.opened_at DESC, a.alarm_id
 
 # ponytail: no index on coalesce(t_onboard, created_at); add one when events outgrow a scan
 _EVENTS = """
-SELECT key, vehicle, kind, t_onboard, details
+SELECT key, vehicle, kind, t_onboard, details, coalesce(t_onboard, created_at) AS t_at
 FROM events
 WHERE (%(vehicle)s::text IS NULL OR vehicle = %(vehicle)s OR vehicle IS NULL)
   AND (%(vehicles)s::text[] IS NULL OR vehicle = ANY(%(vehicles)s) OR vehicle IS NULL)
@@ -154,7 +154,7 @@ async def alarm_views(
     return [_alarm(r) for r in await _rows(conn, _ALARMS, p)]
 
 
-async def event_views(
+async def timed_event_views(
     conn: psycopg.AsyncConnection,
     *,
     vehicle: str | None = None,
@@ -163,10 +163,19 @@ async def event_views(
     since: datetime | None = None,
     until: datetime | None = None,
     limit: int | None = 50,
-) -> list[EventView]:
-    """Newest first by coalesce(t_onboard, created_at); `until` exclusive; a vehicle filter
-    keeps the ground events (vehicle NULL: LIMITS_REJECTED, INTERFACE_MISMATCH), as `vehicles`."""
+) -> list[tuple[datetime, EventView]]:
+    """Newest first by coalesce(t_onboard, created_at), which is each view's first element
+    (a ground event has no t_onboard); `until` exclusive; a vehicle filter keeps the ground
+    events (vehicle NULL: LIMITS_REJECTED, INTERFACE_MISMATCH), as `vehicles`."""
     p = {"vehicle": vehicle, "vehicles": None if vehicles is None else list(vehicles),
          "kinds": None if kinds is None else list(kinds), "since": since,
          "until": until, "limit": limit}  # fmt: skip
-    return [EventView(**r) for r in await _rows(conn, _EVENTS, p)]
+    return [
+        (r["t_at"], EventView(**{k: v for k, v in r.items() if k != "t_at"}))
+        for r in await _rows(conn, _EVENTS, p)
+    ]
+
+
+async def event_views(conn: psycopg.AsyncConnection, **kw: Any) -> list[EventView]:
+    """`timed_event_views` without the times."""
+    return [e for _, e in await timed_event_views(conn, **kw)]

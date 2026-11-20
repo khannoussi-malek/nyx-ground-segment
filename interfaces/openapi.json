@@ -2309,6 +2309,117 @@
         "title": "Snapshot",
         "type": "object"
       },
+      "Summary": {
+        "additionalProperties": false,
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SummaryItem"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "since": {
+            "format": "date-time",
+            "title": "Since",
+            "type": "string"
+          },
+          "since_source": {
+            "enum": [
+              "query",
+              "last_logout",
+              "session_start"
+            ],
+            "title": "Since Source",
+            "type": "string"
+          },
+          "until": {
+            "format": "date-time",
+            "title": "Until",
+            "type": "string"
+          },
+          "vehicle": {
+            "pattern": "^[A-Z0-9-]{1,32}$",
+            "title": "Vehicle",
+            "type": "string"
+          }
+        },
+        "required": [
+          "vehicle",
+          "since",
+          "until",
+          "since_source",
+          "items"
+        ],
+        "title": "Summary",
+        "type": "object"
+      },
+      "SummaryItem": {
+        "additionalProperties": false,
+        "description": "One line of the \"Since...\" list (D-EXT-21): `source` says which of `alarm` / `command` /\n`event` is set; `kind` is that row's own kind (RAISE... CLEAR, COMMAND, LOS... ).",
+        "properties": {
+          "alarm": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AlarmTransition"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "command": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/CommandView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "event": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/EventView"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "kind": {
+            "title": "Kind",
+            "type": "string"
+          },
+          "source": {
+            "enum": [
+              "alarm",
+              "command",
+              "event"
+            ],
+            "title": "Source",
+            "type": "string"
+          },
+          "t": {
+            "format": "date-time",
+            "title": "T",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "t",
+          "source",
+          "kind",
+          "text"
+        ],
+        "title": "SummaryItem",
+        "type": "object"
+      },
       "Tc": {
         "additionalProperties": false,
         "properties": {
@@ -4083,6 +4194,103 @@
           }
         },
         "summary": "Stop Session"
+      }
+    },
+    "/api/summary": {
+      "get": {
+        "operationId": "get_summary_api_summary_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "vehicle",
+            "required": true,
+            "schema": {
+              "pattern": "^[A-Z0-9-]{1,32}$",
+              "title": "Vehicle",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "since",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Since"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Summary"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Unprocessable Content"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "summary": "Get Summary"
       }
     },
     "/api/telemetry/{vehicle}/{param}": {

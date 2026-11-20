@@ -1,37 +1,22 @@
 """Compare maths and the worker that runs in the API's one-worker compare process (D-EXT-11).
 Imports pyarrow, so the API imports this module only when a compare runs (UI-07 start budget)."""
 
-import asyncio
-from collections.abc import Awaitable, Sequence
+from collections.abc import Sequence
 from datetime import datetime
-from typing import Any
 
-import psycopg
 import pyarrow as pa
 import pyarrow.compute as pc
-from psycopg_pool import PoolTimeout
 
-from gs.api.dbguard import DB_TIMEOUT_S
-from gs.archiver.s3 import S3_ERRORS, client
-from gs.archiver.window import ArchiveCorrupt, window_hours
+from gs.api.worker_calc import Outcome, connect, guarded
+from gs.archiver.s3 import client
+from gs.archiver.window import window_hours
 from gs.common.s3_settings import S3Settings
-from gs.common.time import iso_z
 
 TARGET_BUCKETS = 1500
 MIN_BUCKET_S = 0.1
 US = 1_000_000
 Bucket = tuple[float, float, float, float, int]  # t_rel_s, lo, hi, mean, n
 Job = tuple[str, datetime, datetime]  # vehicle, session start, end
-
-
-# One hour of hot rows per statement, so more than the API's 3 s; 30 s still frees the only worker
-# when a query is stuck.
-STATEMENT_TIMEOUT_MS = 30_000
-Outcome = tuple[str, Any]  # ("ok", series) | ("corrupt" | "s3" | "db", message): all picklable
-
-
-def corrupt_text(e: ArchiveCorrupt) -> str:
-    return f"{e}: {e.vehicle} {iso_z(e.hour)}"
 
 
 def bucket_width_s(durations_s: Sequence[float]) -> float:
@@ -70,21 +55,12 @@ def buckets(
     ]  # fmt: skip
 
 
-def _connect(
-    database_url: str, statement_timeout_ms: int = STATEMENT_TIMEOUT_MS
-) -> Awaitable[psycopg.AsyncConnection[Any]]:
-    return psycopg.AsyncConnection.connect(
-        database_url, autocommit=True, connect_timeout=DB_TIMEOUT_S,
-        options=f"-c default_transaction_read_only=on -c statement_timeout={statement_timeout_ms}",
-    )  # fmt: skip
-
-
 async def _compute(
     database_url: str, s3: S3Settings, jobs: Sequence[Job], params: Sequence[str], width_s: float
 ) -> list[list[Bucket]]:
     out: list[list[Bucket]] = []
     c = client(s3)
-    async with await _connect(database_url) as conn:
+    async with await connect(database_url) as conn:
         for vehicle, start, end in jobs:
             tables = [
                 t async for t in window_hours(conn, c, s3.bucket, vehicle, start, end, params)
@@ -96,14 +72,5 @@ async def _compute(
 def compute(
     database_url: str, s3: S3Settings, jobs: Sequence[Job], params: Sequence[str], width_s: float
 ) -> Outcome:
-    """Runs in the compare process: one list per (session, param), sessions in `jobs` order. A
-    failure comes back as a marker, never raised: MinIO and psycopg errors do not unpickle, and a
-    broken result would break the pool."""
-    try:
-        return "ok", asyncio.run(_compute(database_url, s3, jobs, params, width_s))
-    except ArchiveCorrupt as e:
-        return "corrupt", corrupt_text(e)
-    except S3_ERRORS as e:
-        return "s3", f"{type(e).__name__}: {e}"
-    except (psycopg.Error, PoolTimeout) as e:
-        return "db", f"{type(e).__name__}: {e}"
+    """Runs in the compare process: one list per (session, param), sessions in `jobs` order."""
+    return guarded(_compute(database_url, s3, jobs, params, width_s))

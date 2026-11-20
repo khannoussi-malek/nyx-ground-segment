@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import datetime
 from typing import Any
 
-from gs.api import compare_calc
+from gs.api import compare_calc, worker_calc
 from gs.common.s3_settings import S3Settings
 
 Args = tuple[Any, ...]
@@ -28,4 +28,4 @@ def corrupt(database_url: str, s3: S3Settings, jobs: Any, *rest: Any) -> Any:
     from gs.archiver.window import ArchiveCorrupt
 
     when = datetime(2026, 11, 1, 10, tzinfo=jobs[0][1].tzinfo)
-    return ("corrupt", compare_calc.corrupt_text(ArchiveCorrupt("V1", when, "a", None)))
+    return ("corrupt", worker_calc.corrupt_text(ArchiveCorrupt("V1", when, "a", None)))

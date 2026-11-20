@@ -218,9 +218,9 @@ async def test_worker_corrupt_409_names_vehicle_and_hour(
 
 
 async def test_worker_statement_timeout(live_api: LiveApi) -> None:
-    from gs.api import compare_calc
+    from gs.api import worker_calc
 
-    conn = await compare_calc._connect(live_api.app.state.database_url, statement_timeout_ms=200)
+    conn = await worker_calc.connect(live_api.app.state.database_url, statement_timeout_ms=200)
     async with conn:
         with pytest.raises(psycopg.errors.QueryCanceled):
             await conn.execute("select pg_sleep(5)")

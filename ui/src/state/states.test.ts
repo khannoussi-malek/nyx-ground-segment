@@ -31,3 +31,10 @@ test("acquisition: null → NO_DATA, frozen → FROZEN, then STALE, else OK; the
   for (const unknown of [null, undefined]) expect(paramState(1, unknown, false, undefined).acq).toBe("STALE"); // P-pf22
   expect(paramState(null, null, false, undefined).acq).toBe("NO_DATA");
 });
+
+test("a slow source's stale_ms moves the STALE line; the 2 s floor holds (R22 F2)", () => {
+  expect(paramState(1, 3000, false, undefined, 15000).acq).toBe("OK");
+  expect(paramState(1, 16_000, false, undefined, 15000).acq).toBe("STALE");
+  expect(paramState(1, 2000, false, undefined, 2000).acq).toBe("STALE"); // 10 Hz unchanged
+  expect(paramState(1, 2000, false, undefined, 500).acq).toBe("STALE"); // never under 2 s
+});

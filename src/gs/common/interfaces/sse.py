@@ -27,6 +27,9 @@ class Tm(_Sse):
     values: dict[str, float | None]
     age_ms: int | None = None  # api_now - t_onboard, set by the API only
     frozen: bool = False
+    # the console shows STALE / LOSS OF SIGNAL after max(2 s, this); the sender sets it from the
+    # vehicle's frame period (max(2 s, 5 x period)); 2000 when the period is not at hand (replay)
+    stale_ms: int = 2000
 
 
 CmdState = Literal["QUEUED", "SENT", "RECEIVED", "VERIFIED", "FAILED"]

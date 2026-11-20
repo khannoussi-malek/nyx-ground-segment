@@ -32,7 +32,7 @@ function Vehicle({ store, v, mission, clock, probe }: { store: Store; v: string;
   const banner = condition === "FROZEN" || condition === "STALE" ? undefined : (condition ?? undefined);
   // no row state before the first snapshot: the gauge fill and the summary wait for the engine (G26)
   const params = paramViews(tm.values, mission).map((p) =>
-    wired ? { ...p, state: paramState(p.value, ageMs, tm.frozen, store.openAlarm(v, p.id)) } : p,
+    wired ? { ...p, state: paramState(p.value, ageMs, tm.frozen, store.openAlarm(v, p.id), tm.stale_ms) } : p,
   );
   return (
     <VehicleCard

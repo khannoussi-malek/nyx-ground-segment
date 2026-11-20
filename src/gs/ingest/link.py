@@ -23,6 +23,10 @@ def stale_s(period_s: float, floor: float = STALE_S) -> float:
     return max(floor, STALE_K * period_s)
 
 
+def stale_ms(period_s: float) -> int:
+    return round(stale_s(period_s) * 1000)
+
+
 FROZEN_S = 2.0
 
 

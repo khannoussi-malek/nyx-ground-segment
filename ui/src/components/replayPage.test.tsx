@@ -51,8 +51,8 @@ const setInput = (label: string, v: string) => {
 const button = (name: string) => [...host.querySelectorAll("button")].find((b) => b.textContent === name)!;
 async function fillAndStart() {
   await flush();
-  setInput("From (UTC)", "2026-11-10T14:00");
-  setInput("To (UTC)", "2026-11-10T14:20");
+  setInput("From (UTC)", "2026-11-10T14:00Z");
+  setInput("To (UTC)", "2026-11-10T14:20Z");
   act(() => button("Start").click());
   await flush();
 }
@@ -122,12 +122,31 @@ test("Stop deletes the replay", async () => {
 
 const deferred = () => { let ok!: (r: Response) => void; const p = new Promise<Response>((r) => (ok = r)); return { p, ok }; };
 
+test("an unreadable time disables Start and says so next to the field; a Z-less local value is unreadable", async () => {
+  const calls = mount(vehicles);
+  await flush();
+  setInput("From (UTC)", "11/10/2026, 02:00 PM");
+  setInput("To (UTC)", "2026-11-10T14:20Z");
+  expect(button("Start").disabled).toBe(true);
+  expect(host.textContent).toContain("From (UTC): use 2026-11-20T08:05Z");
+  const from = host.querySelector<HTMLInputElement>('input[aria-label="From (UTC)"]')!;
+  const msg = host.ownerDocument.getElementById(from.getAttribute("aria-describedby")!); // the error is linked to its input
+  expect(msg?.textContent).toContain("From (UTC): use");
+  expect(host.querySelector('input[aria-label="To (UTC)"]')!.hasAttribute("aria-describedby")).toBe(false);
+  setInput("From (UTC)", "2026-11-10T14:00");
+  expect(button("Start").disabled).toBe(true);
+  setInput("From (UTC)", "2026-11-10T14:00:30Z");
+  expect(button("Start").disabled).toBe(false);
+  expect(host.textContent).not.toContain("use 2026-11-20T08:05Z");
+  expect(from.hasAttribute("aria-describedby")).toBe(false);
+  expect(calls.some((c) => c.startsWith("POST"))).toBe(false);
+});
 test("a second Start while the create is pending makes no second replay", async () => {
   const d = deferred();
   const calls = mount((u, i) => (i?.method === "POST" ? d.p : vehicles(u)));
   await flush();
-  setInput("From (UTC)", "2026-11-10T14:00");
-  setInput("To (UTC)", "2026-11-10T14:20");
+  setInput("From (UTC)", "2026-11-10T14:00Z");
+  setInput("To (UTC)", "2026-11-10T14:20Z");
   act(() => button("Start").click());
   act(() => button("Start").click());
   act(() => host.querySelector("form")!.requestSubmit());
@@ -144,8 +163,8 @@ test("leaving the page while the create is pending closes nothing open and delet
   const d = deferred();
   const calls = mount((u, i) => (i?.method === "POST" ? d.p : i?.method === "DELETE" ? Promise.resolve(new Response(null, { status: 204 })) : vehicles(u)));
   await flush();
-  setInput("From (UTC)", "2026-11-10T14:00");
-  setInput("To (UTC)", "2026-11-10T14:20");
+  setInput("From (UTC)", "2026-11-10T14:00Z");
+  setInput("To (UTC)", "2026-11-10T14:20Z");
   act(() => button("Start").click());
   act(() => root.unmount());
   root = createRoot(host);

@@ -24,8 +24,10 @@ from gs.api import (
     alarms,
     auth,
     commands,
+    compare,
     deps,
     events,
+    export,
     replays,
     sessions,
     summary,
@@ -38,6 +40,7 @@ from gs.api.deps import ApiError, User, errors
 from gs.api.hub import Hub, format_sse
 from gs.api.openapi import build_openapi
 from gs.api.settings import Settings
+from gs.api.workers import new_pool
 from gs.common.audit import audit
 from gs.common.interfaces import build_frame_model
 from gs.common.interfaces.missiondb import MissionDbView, Vehicles
@@ -175,7 +178,7 @@ ROUTER.add_api_route(
 )
 for _r in (
     auth.router, commands.router, alarms.router, sessions.router, telemetry.router, replays.router,
-    testctl.router, summary.router,
+    testctl.router, summary.router, compare.router, export.router,
 ):  # fmt: skip
     ROUTER.include_router(_r)
 
@@ -196,6 +199,11 @@ def create_app(settings: Settings) -> FastAPI:
         app.state.test_controls, app.state.sim_url = settings.test_controls, settings.sim_url
         app.state.s3_settings = settings.s3
         app.state.s3 = None  # the first replay builds the client (replays._s3)
+        # D-EXT-11, D-EXT-13: compare and export each have a one-worker process, started at its
+        # first use (spawn: no fork of a threaded, event-loop process)
+        app.state.compare_pool = new_pool()
+        app.state.compare_busy = False
+        app.state.export_pool, app.state.export_busy = new_pool(), False
         app.state.database_url, app.state.replays = settings.database_url, {}
         # redis-py 8.1: Redis(...) defaults to 10 retries, from_url(...) to 0; keep it 0 explicitly
         # no client-side retry: connection errors reach our own handling (R28). Maintenance
@@ -236,6 +244,8 @@ def create_app(settings: Settings) -> FastAPI:
             try:
                 await asyncio.gather(*tasks)
             finally:  # a task error at shutdown must not leak the pool or the client
+                for name in ("compare", "export"):
+                    getattr(app.state, f"{name}_pool").shutdown(wait=False, cancel_futures=True)
                 await pool.close()
                 await app.state.redis.aclose()
 
@@ -271,7 +281,7 @@ def create_app(settings: Settings) -> FastAPI:
     async def _api_error(_: Request, e: ApiError) -> JSONResponse:
         if e.body is not None:
             return JSONResponse(e.body.model_dump(mode="json"), status_code=e.status)
-        return _error(e.status, e.error, e.message)
+        return _error(e.status, e.error, e.message, e.headers)
 
     @app.exception_handler(HTTPException)
     async def _http_error(_: Request, e: HTTPException) -> JSONResponse:

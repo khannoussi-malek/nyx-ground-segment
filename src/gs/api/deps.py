@@ -16,10 +16,12 @@ class ApiError(Exception):
     ErrorBody; it carries `error` and `message` itself."""
 
     def __init__(
-        self, status: int, error: str, message: str, body: BaseModel | None = None
-    ) -> None:
+        self, status: int, error: str, message: str, body: BaseModel | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> None:  # fmt: skip
         super().__init__(message)
         self.status, self.error, self.message, self.body = status, error, message, body
+        self.headers = headers
 
 
 def sess_key(sid: str) -> str:

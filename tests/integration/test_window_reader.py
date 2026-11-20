@@ -102,7 +102,7 @@ async def test_window_from_parquet_equals_hot() -> None:
     assert before[0].schema.field(params[0]).type == pa.float64()
 
 
-async def test_seam_window_no_dup_no_gap() -> None:
+async def test_hot_parquet_seam() -> None:
     v = vid()
     hot_hour(v, H, n=36_000)
     hot_hour(v, H + HOUR, n=9_000)  # the next hour: hot only
@@ -120,19 +120,21 @@ async def test_seam_window_no_dup_no_gap() -> None:
     assert [s for _, s in ks if s < 36_000 and _ < H + HOUR] == list(range(18_000, 36_000))
 
 
-async def test_rows_in_both_archive_and_hot_appear_once() -> None:
+async def test_late_hot_rows_merged() -> None:
     v = vid()
     hot_hour(v, H, n=200, rate_hz=1.0)
     async with app_conn() as c:
-        assert await archive_hour(archiver_ctx(), c, v, H) is not None  # hot rows stay
+        assert await archive_hour(archiver_ctx(), c, v, H) is not None  # hot rows stay (EX-29)
+        insert_late(v, [{"t_onboard": H + timedelta(minutes=50), "seq": 7000}])  # a late frame
         (t,) = await read(c, v, H, H + HOUR, [])
-    assert t.num_rows == 200 and len(set(keys([t]))) == 200
+    assert t.num_rows == 201 and len(set(keys([t]))) == 201  # shared keys once, the late one added
+    assert 7000 in t["seq"].to_pylist() and keys([t]) == sorted(keys([t]))
 
 
 COL = "g4w_added_col"
 
 
-async def test_window_across_added_parameter() -> None:
+async def test_schema_changed_between_hours() -> None:
     v = vid()
     hot_hour(v, H, n=100, rate_hz=1.0)
     with psycopg.connect(admin_dsn("gs"), autocommit=True) as adm:
@@ -153,7 +155,7 @@ async def test_window_across_added_parameter() -> None:
     assert second[COL].to_pylist() == [7.5]
 
 
-async def test_corrupt_hour_raises() -> None:
+async def test_hash_mismatch_409() -> None:
     v = vid()
     hot_hour(v, H - HOUR, n=50, rate_hz=1.0)
     hot_hour(v, H, n=50, rate_hz=1.0)

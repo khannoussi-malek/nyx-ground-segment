@@ -182,6 +182,9 @@ test("pickers, chart title and axis label show the mission-db description with t
   expect(host.querySelector(".compare-charts h3")!.textContent).toBe("Cabin pressure (kPa)");
   expect(host.querySelector(".compare-charts h3")!.getAttribute("title")).toBe("cabin_pressure_kpa");
   expect(made.plots[0]!.opts.axes[1].label).toBe("Cabin pressure (kPa)");
+  const exportOpts = [...host.querySelectorAll(".export select[multiple] option")];
+  expect(exportOpts.map((o) => o.textContent)).toContain("Cabin pressure (kPa)");
+  expect(exportOpts.map((o) => o.getAttribute("value"))).toContain("cabin_pressure_kpa");
 });
 
 test("changing the selection clears the shown result", async () => {

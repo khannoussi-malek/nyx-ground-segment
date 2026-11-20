@@ -57,6 +57,7 @@ export function ComparePage({ mission }: { mission: MissionDb | null }) {
     const m = mission?.parameters[p];
     return `${m?.description || p}${m?.unit ? ` (${m.unit})` : ""}`;
   };
+  const titles = Object.fromEntries(known.map((p) => [p, label(p)]));
   const ready = ids.length >= MIN_SESSIONS && params.length >= MIN_PARAMS;
 
   async function run(e: FormEvent) {
@@ -85,8 +86,8 @@ export function ComparePage({ mission }: { mission: MissionDb | null }) {
         <button type="submit" disabled={!ready || busy} aria-busy={busy}>{busy ? "Comparing…" : "Compare"}</button>
       </form>
       {error && <p role="alert">{error}</p>}
-      {result && <CompareCharts c={result} titles={Object.fromEntries(known.map((p) => [p, label(p)]))} />}
-      <ExportPanel vehicles={names} sessions={sessions} params={known} />
+      {result && <CompareCharts c={result} titles={titles} />}
+      <ExportPanel vehicles={names} sessions={sessions} params={known} labels={titles} />
     </div>
   );
 }

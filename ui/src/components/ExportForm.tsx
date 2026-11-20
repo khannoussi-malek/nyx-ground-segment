@@ -13,7 +13,7 @@ function save(blob: Blob, filename: string) {
 }
 
 /** "Export data" (D-EXT-13): a session, or a vehicle and From/To in UTC; no parameters picked = every parameter. */
-export function ExportPanel({ vehicles, sessions, params }: { vehicles: string[]; sessions: SessionView[]; params: string[] }) {
+export function ExportPanel({ vehicles, sessions, params, labels }: { vehicles: string[]; sessions: SessionView[]; params: string[]; labels: Record<string, string> }) {
   const [f, setF] = useState<Form>(EMPTY);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,7 +60,7 @@ export function ExportPanel({ vehicles, sessions, params }: { vehicles: string[]
         <label>
           Parameters (none = all)
           <select multiple value={f.params} onChange={(e) => set({ params: [...e.target.selectedOptions].map((o) => o.value) })}>
-            {params.map((p) => <option key={p} value={p}>{p}</option>)}
+            {params.map((p) => <option key={p} value={p} title={p}>{labels[p] ?? p}</option>)}
           </select>
         </label>
         <label>

@@ -23,10 +23,10 @@ export function conditionFor(c: {
   if (!c.connected) return "NO LIVE CONNECTION";
   if (c.broker === "down") return "GROUND PROCESSING DOWN – BROKER";
   if (c.processing === false) return "GROUND PROCESSING DOWN";
-  // a broker or owner outage is not loss of signal: the 2 s count again from when monitoring came back, as the
+  // a broker or owner outage is not loss of signal: the vehicle's limit counts again from when monitoring came back, as the
   // server's own LOS clock restarts (D-UI-04/15); the rows are still STALE meanwhile
   const limit = Math.max(STALE_MS, c.staleMs ?? 0);
-  const healthy = c.healthyMs == null || c.healthyMs >= STALE_MS;
+  const healthy = c.healthyMs == null || c.healthyMs >= limit;
   if (c.ageMs !== null && c.ageMs >= limit && healthy) return "LOSS OF SIGNAL";
   return c.frozen ? "FROZEN" : null;
 }

@@ -209,6 +209,11 @@ test("a slow source: no LOSS OF SIGNAL before its own threshold, the 2 s floor o
   expect(conditionFor({ ...base, ageMs: 12_000, healthyMs: 2000, staleMs: 15000 })).toBeNull();
 });
 
+test("a slow source 5 s after the broker/owner recovered: no LOSS OF SIGNAL (grace follows its own limit)", () => {
+  expect(conditionFor({ ...base, ageMs: 20_000, healthyMs: 5000, staleMs: 15000 })).toBeNull();
+  expect(conditionFor({ ...base, ageMs: 20_000, healthyMs: 15_000, staleMs: 15000 })).toBe("LOSS OF SIGNAL");
+});
+
 test("vehicleCondition reads stale_ms from the vehicle's latest tm", () => {
   const s = createStore(() => 0, { setTimeout: (() => 1) as never, clearTimeout: () => {} });
   ingest(s, "hb", { processing: { [V]: true } });

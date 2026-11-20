@@ -1,14 +1,17 @@
 """P5 (design 11.5, D-EXT-14): every alarm's transitions form a valid D-ALM-07/08 path.
 
-P3 and P4 land with the derived-value and mode work they depend on (EXT-01 after the 47).
+P3 and P4 (D-EXT-14) run the real `fold` over batches; their derived-value and mode parts wait
+for EXT-01 after the 47.
 """
 
-import pytest
 from hypothesis import event, given
 from hypothesis import strategies as st
 
 from gs.alarms.contract import AlarmState, Level, Transition
 from gs.alarms.engine import ack, compile_set, initial_state, step
+from gs.common.missiondb import MissionDb
+from gs.ingest.fold import dump_vehicle
+from tests.property.folding import headers, play
 from tests.property.strategies import Run, Tuning, mission_for, runs, tunings
 from tests.support.alarms import EPOCH, PERIOD_S, V, at
 
@@ -104,9 +107,52 @@ def test_p5_transition_paths_valid(data: st.DataObject) -> None:
     event("kinds=" + ",".join(sorted({t.kind for t in trs})))
 
 
-@pytest.mark.skip(reason="P3 needs derived values and mission-db timelines (D-EXT-05/06, EXT-01)")
-def test_p3_same_input_same_keys() -> None: ...
+@st.composite
+def _timelines(draw: st.DrawFn) -> tuple[Tuning, Run, tuple[MissionDb, MissionDb | None], int]:
+    """Frames, a mission-db timeline (a second tuning from some real frame on, or none)."""
+    tuning = draw(tunings())
+    run = draw(runs(tuning.faults))
+    other = draw(st.none() | tunings())
+    n = len(run.frames)
+    switch = draw(st.integers(1, max(1, n - 1)))
+    return tuning, run, (mission_for(tuning), None if other is None else mission_for(other)), switch
 
 
-@pytest.mark.skip(reason="P4 needs modes and derived state in the snapshot (D-EXT-06, EXT-01)")
-def test_p4_snapshot_any_split() -> None: ...
+def _cuts(n: int) -> st.SearchStrategy[frozenset[int]]:
+    return st.sets(st.integers(1, max(1, n - 1)), max_size=30).map(frozenset)
+
+
+@given(st.data())
+def test_p3_same_input_same_keys(data: st.DataObject) -> None:
+    """Same frames + same ACKs + same mission-db timeline => the same transitions, whatever the
+    batch split; a late frame (re-delivery with other values) changes nothing: it is not
+    classified and leaves every ROC window as it was (EX-13). Derived values and the mode switch
+    are not built (D-EXT-05 / D-EXT-06, EXT-01 after the 47): left out."""
+    _, run, mdbs, switch = data.draw(_timelines())
+    late = data.draw(
+        st.lists(st.tuples(st.integers(0, len(run.frames) - 1), st.integers(0, 20)), max_size=8)
+    )
+    base = headers(run)
+    whole, end = play(base, mdbs, switch, run.acks, frozenset())
+    stream = headers(run, late)
+    split, end2 = play(stream, mdbs, switch, run.acks, data.draw(_cuts(len(stream))))
+    assert split == whole
+    assert dump_vehicle(end2) == dump_vehicle(end)
+    event(f"transitions>0={bool(whole)}")
+    event(f"late={bool(late)}")
+    event(f"switched={mdbs[1] is not None and mdbs[0].set_sha256 != mdbs[1].set_sha256}")
+
+
+@given(st.data())
+def test_p4_snapshot_any_split(data: st.DataObject) -> None:
+    """Dump to JSON and load at random batch boundaries (with a mission-db change between) =>
+    the same transitions and end state as the uninterrupted run. The mode switch is not built
+    (D-EXT-06, EXT-01 after the 47): left out."""
+    _, run, mdbs, switch = data.draw(_timelines())
+    stream = headers(run)
+    cuts = data.draw(_cuts(len(stream)))
+    whole, end = play(stream, mdbs, switch, run.acks, cuts)
+    again, end2 = play(stream, mdbs, switch, run.acks, cuts, restore=True)
+    assert again == whole
+    assert dump_vehicle(end2) == dump_vehicle(end)
+    event(f"transitions>0={bool(whole)}")

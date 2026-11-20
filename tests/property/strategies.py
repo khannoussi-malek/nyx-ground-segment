@@ -13,6 +13,7 @@ from typing import Any
 import yaml
 from hypothesis import strategies as st
 
+from gs.alarms.checks.limit import LimitCheck, floor
 from gs.common.missiondb import MissionDb, load_dir
 from gs.ingest.seq import MOD, RESET_SEQ_MAX
 from tests.property import profiles  # noqa: F401  (registers and loads the profiles)
@@ -128,7 +129,9 @@ def scenarios(draw: st.DrawFn) -> Scenario:
 @dataclass(frozen=True)
 class Tuning:
     persistence: int
-    hysteresis_k: int  # hysteresis_pct = shipped value x (1 + k / 100), so never below the floor
+    above_floor_pct: (
+        int  # every limit check's deadband = floor x (1 + this / 100); 0 = at the floor
+    )
     window_s: float
     faults: frozenset[str]
 
@@ -137,7 +140,7 @@ def tunings() -> st.SearchStrategy[Tuning]:
     return st.builds(
         Tuning,
         persistence=st.integers(1, 5),
-        hysteresis_k=st.integers(0, 100),
+        above_floor_pct=st.one_of(st.just(0), st.integers(0, 200)),  # floor end is the chatter end
         window_s=st.sampled_from((0.5, 0.75, 1.0, 1.5, 2.0)),
         faults=st.sets(st.sampled_from(FAULT_KINDS), min_size=1).map(frozenset),  # swarm
     )
@@ -147,27 +150,33 @@ def tunings() -> st.SearchStrategy[Tuning]:
 def mission_for(t: Tuning) -> MissionDb:
     """The shipped limits with this tuning applied, through the real mission-db loader."""
     doc: dict[str, Any] = yaml.safe_load((MISSION_DIR / "limits.yaml").read_bytes())
-    scale = 1 + t.hysteresis_k / 100
     d = doc["defaults"]
-    doc["defaults"] = {"hysteresis_pct": d["hysteresis_pct"] * scale, "persistence": t.persistence}
+    doc["defaults"] = {"hysteresis_pct": d["hysteresis_pct"], "persistence": t.persistence}
     for entry in doc["limits"].values():
-        entry["checks"] = [_tune_check(c, scale, t.window_s) for c in entry["checks"]]
+        entry["checks"] = [_tune_check(c, t) for c in entry["checks"]]
     return ld(files(limits=yaml.safe_dump(doc, sort_keys=False).encode()))
 
 
-def _tune_check(c: dict[str, Any], scale: float, window_s: float) -> dict[str, Any]:
+def _tune_check(c: dict[str, Any], t: Tuning) -> dict[str, Any]:
     out = dict(c)
-    if "hysteresis_pct" in out:
-        out["hysteresis_pct"] = out["hysteresis_pct"] * scale
     if out["type"] == "roc":
-        out["window_s"] = window_s
+        out["window_s"] = t.window_s
+        return out
+    # D-ALM-02 floor of this check (it does not depend on the hysteresis), then draw above it
+    lo = floor(LimitCheck.model_validate({**c, "hysteresis_pct": None, "hysteresis_abs": 1.0}))
+    d = lo * (1 + t.above_floor_pct / 100)
+    out.pop("hysteresis_pct", None)
+    out.pop("hysteresis_abs", None)
+    if "hysteresis_abs" in c:
+        out["hysteresis_abs"] = d
+    else:
+        bounds = [out[k] for k in ("red_low", "yellow_low", "yellow_high", "red_high") if k in out]
+        out["hysteresis_pct"] = d / (max(bounds) - min(bounds)) * 100
     return out
 
 
 @lru_cache(maxsize=1)
 def _bounds() -> dict[str, tuple[float, ...]]:
-    from gs.alarms.checks.limit import LimitCheck
-
     out: dict[str, tuple[float, ...]] = {}
     for p, e in load_dir(MISSION_DIR).limits.items():
         for c in e.checks:

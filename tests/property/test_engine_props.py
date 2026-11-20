@@ -15,9 +15,11 @@ from tests.support.alarms import EPOCH, PERIOD_S, V, at
 # (kind, state before) -> states allowed after; None = no open alarm. D-ALM-07/08.
 _PATHS: dict[tuple[str, AlarmState | None], tuple[AlarmState, ...]] = {
     ("RAISE", None): ("UNACK",),
-    ("RAISE", "RTN_UNACK"): ("UNACK",),  # the same alarm again before the operator saw it clear
+    ("RAISE", "RTN_UNACK"): (
+        "UNACK",
+    ),  # D-ALM-07 RTN_UNACK: the same alarm again before the operator saw it clear
     ("ESCALATE", "UNACK"): ("UNACK",),
-    ("ESCALATE", "ACKED"): ("UNACK", "ACKED"),
+    ("ESCALATE", "ACKED"): ("UNACK", "ACKED"),  # which one: D-ALM-08, checked on acked_sev below
     ("DEESCALATE", "UNACK"): ("UNACK",),
     ("DEESCALATE", "ACKED"): ("ACKED",),
     ("RTN", "UNACK"): ("RTN_UNACK",),
@@ -27,7 +29,11 @@ _PATHS: dict[tuple[str, AlarmState | None], tuple[AlarmState, ...]] = {
 }
 
 
-def _check_path(open_: dict[str, tuple[AlarmState, Level, object]], tr: Transition) -> None:
+# state, severity, alarm id, severity at the operator's ACK (None before one)
+_Open = tuple[AlarmState, Level, object, Level | None]
+
+
+def _check_path(open_: dict[str, _Open], tr: Transition) -> None:
     """Advance the per-param model by one transition, asserting it is a legal step."""
     before = open_.get(tr.param)
     prev = before[0] if before else None
@@ -38,23 +44,39 @@ def _check_path(open_: dict[str, tuple[AlarmState, Level, object]], tr: Transiti
         assert tr.alarm_id == before[2], "one alarm id per open alarm"
     if tr.kind == "ESCALATE":
         assert before and tr.severity > before[1]
+        if prev == "ACKED":  # D-ALM-08: only an acked RED keeps its ack; a worse alarm alerts once
+            red_acked = before[3] == Level.RED
+            assert tr.alarm_state == ("ACKED" if red_acked else "UNACK"), (tr.alarm_state, before)
+            assert tr.alert == (tr.severity == Level.RED and not red_acked)
+        else:
+            assert tr.alert == (tr.severity == Level.RED)
+    if tr.kind == "RAISE":
+        assert tr.alert == (tr.severity == Level.RED)
+    if tr.kind in ("DEESCALATE", "RTN", "CLEAR", "ACK"):
+        assert not tr.alert
     if tr.kind == "DEESCALATE":
         assert before and Level.NOMINAL < tr.severity < before[1]
     if tr.alarm_state == "CLEARED":
         open_.pop(tr.param, None)
         assert tr.closed_at is not None
     else:
+        acked = before[3] if before else None
+        if tr.kind == "ACK":
+            acked = before[1] if before else None  # severity when the operator acked
+        elif tr.kind in ("RAISE", "ESCALATE") and tr.alarm_state == "UNACK":
+            acked = None
         open_[tr.param] = (
             tr.alarm_state,
             tr.severity if tr.kind != "RTN" else Level.NOMINAL,
             tr.alarm_id,
+            acked,
         )
 
 
 def _replay(tuning: Tuning, run: Run) -> list[Transition]:
     cset = compile_set(mission_for(tuning))
     state = initial_state(cset)
-    model: dict[str, tuple[AlarmState, Level, object]] = {}
+    model: dict[str, _Open] = {}
     seen: set[str] = set()
     out: list[Transition] = []
     for seq, t, values, reset in run.frames:

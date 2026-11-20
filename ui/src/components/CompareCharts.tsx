@@ -11,7 +11,7 @@ const BAND_ALPHA = "26"; // hex alpha: the min/max band is 15 % of the line colo
 
 /** One line + min/max band per session (series 3i+1, 3i+2, 3i+3), x in seconds since each start, labelled T+hh:mm:ss.
  *  Exported for the tests. */
-export function compareOptions(c: Compare, param: string, unit: string | undefined, width: number): uPlot.Options {
+export function compareOptions(c: Compare, param: string, unit: string | undefined, width: number, name = param): uPlot.Options {
   const muted = "#57534E";
   const grid = "#D8D3CD";
   const series: uPlot.Series[] = [{}];
@@ -31,14 +31,14 @@ export function compareOptions(c: Compare, param: string, unit: string | undefin
     scales: { x: { time: false } },
     axes: [
       { values: (_u, splits) => splits.map(tPlus), stroke: muted, space: 90, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid } },
-      { values: (_u, splits) => splits.map((v) => formatValue(v)), stroke: muted, label: unit ? `${param} (${unit})` : param, size: 64, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid } },
+      { values: (_u, splits) => splits.map((v) => formatValue(v)), stroke: muted, label: unit ? `${name} (${unit})` : name, size: 64, grid: { stroke: grid, width: 1 }, ticks: { stroke: grid } },
     ],
     series,
     bands,
   };
 }
 
-function Plot({ c, param, unit }: { c: Compare; param: string; unit?: string }) {
+function Plot({ c, param, name }: { c: Compare; param: string; name: string }) {
   const host = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const el = host.current;
@@ -46,14 +46,16 @@ function Plot({ c, param, unit }: { c: Compare; param: string; unit?: string }) 
     const p = alignParam(c, param);
     const data = [p.x, ...c.sessions.flatMap((_, i) => [p.lines[i]!, p.los[i]!, p.his[i]!])] as uPlot.AlignedData;
     const width = el.clientWidth || 800;
-    const u = new uPlot(compareOptions(c, param, unit, width), data, el);
+    const opts = compareOptions(c, param, undefined, width, name) /* name already carries the unit */;
+    el.dataset.bands = String(opts.bands?.length ?? 0); // read by the e2e: one band per session
+    const u = new uPlot(opts, data, el);
     const onResize = () => u.setSize({ width: el.clientWidth || width, height: HEIGHT });
     window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("resize", onResize);
       u.destroy();
     };
-  }, [c, param, unit]);
+  }, [c, param, name]);
   return <div ref={host} className="compare-plot" data-param={param} />;
 }
 
@@ -73,15 +75,15 @@ export function CompareLegend({ c }: { c: Compare }) {
   );
 }
 
-export function CompareCharts({ c, units }: { c: Compare; units: Record<string, string | undefined> }) {
+export function CompareCharts({ c, titles }: { c: Compare; titles: Record<string, string> }) {
   const params = [...new Set(c.series.map((s) => s.param))];
   return (
     <div className="compare-charts">
       <CompareLegend c={c} />
       {params.map((p) => (
-        <section key={p} aria-label={`Compare ${p}`}>
-          <h3>{p}{units[p] ? ` (${units[p]})` : ""}</h3>
-          <Plot c={c} param={p} unit={units[p]} />
+        <section key={p} aria-label={`Compare ${titles[p] ?? p}`}>
+          <h3 title={p}>{titles[p] ?? p}</h3>
+          <Plot c={c} param={p} name={titles[p] ?? p} />
         </section>
       ))}
     </div>

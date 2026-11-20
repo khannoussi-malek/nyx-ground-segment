@@ -34,10 +34,12 @@ test("two sessions overlaid: legend, dash patterns, paint time; one session expo
   await page.getByRole("button", { name: "Compare" }).click();
   const form = page.locator(".compare form").first();
   for (const n of names) await form.getByLabel(new RegExp(n)).check();
-  await form.getByLabel(PARAM).check();
+  await form.getByLabel(/^Cabin total pressure/).check();
   const t0 = Date.now();
   await form.getByRole("button", { name: "Compare" }).click();
   await expect(page.locator(`.compare-plot[data-param="${PARAM}"] canvas`)).toBeVisible();
+  await expect(page.locator(`.compare-plot[data-param="${PARAM}"]`)).toHaveAttribute("data-bands", String(names.length));
+  await expect(page.getByRole("heading", { name: /^Cabin total pressure/ })).toBeVisible();
   console.log(`compare paint time: ${Date.now() - t0} ms`);
 
   const items = page.locator(".compare-legend li");

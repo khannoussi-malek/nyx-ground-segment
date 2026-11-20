@@ -37,7 +37,7 @@ afterEach(() => {
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers });
 const sess = (id: number, name: string, vehicle: string, at: string) => ({ id, name, vehicle, started_at: at, ended_at: null, ended_by: null, conductor: "c" });
 const SESSIONS = [sess(1, "burn A", "NYX-TA1", "2026-11-14T10:00:00Z"), sess(2, "burn B", "NYX-TA2", "2026-11-14T11:30:00Z")];
-const mission = { parameters: { cabin_pressure_kpa: { unit: "kPa" }, temp_c: { unit: "C" } } } as unknown as MissionDb;
+const mission = { parameters: { cabin_pressure_kpa: { unit: "kPa", description: "Cabin pressure" }, temp_c: { unit: "C", description: "Cabin temperature" } } } as unknown as MissionDb;
 const bucket = (t: number, v: number) => ({ t_rel_s: t, lo: v - 1, hi: v + 1, mean: v, n: 2 });
 const COMPARE = {
   bucket_s: 1,
@@ -66,7 +66,7 @@ const compareButton = () => [...host.querySelectorAll("button")].find((b) => b.t
 async function pickTwo() {
   await click(box("burn A"));
   await click(box("burn B"));
-  await click(box("cabin_pressure_kpa"));
+  await click(box("Cabin pressure"));
   await click(compareButton());
 }
 
@@ -75,7 +75,7 @@ test("Compare stays disabled below two sessions and one parameter", async () => 
   await ready;
   expect(compareButton().disabled).toBe(true);
   await click(box("burn A"));
-  await click(box("cabin_pressure_kpa"));
+  await click(box("Cabin pressure"));
   expect(compareButton().disabled).toBe(true);
 });
 
@@ -106,11 +106,22 @@ test("one chart per parameter: dash per session, a band each, T+ axis labels", a
   expect([o.series![1]!.dash, o.series![4]!.dash]).toEqual([[], [8, 4]]);
   expect(o.series![1]!.stroke).not.toBe(o.series![4]!.stroke);
   expect(o.bands).toHaveLength(2);
+  o.bands!.forEach((b, i) => {
+    expect(b.series).toEqual([3 * i + 3, 3 * i + 2]); // [max, min] of session i
+    expect(b.fill).toBe(`${o.series![3 * i + 1]!.stroke}26`);
+  });
   const xAxis = o.axes![0]!.values as (u: unknown, s: number[]) => string[];
   expect(xAxis(null, [0, 65, 3725])).toEqual(["T+00:00:00", "T+00:01:05", "T+01:02:05"]);
   expect(made.plots[0]!.data[0]).toEqual([0, 65]);
   expect(made.plots[0]!.data[1]).toEqual([100, 101]);
   expect(made.plots[0]!.data[4]).toEqual([90, null]);
+  // band columns: min/max of each session are the API's lo/hi, at the series indices the bands point to
+  const d = made.plots[0]!.data;
+  expect([d[2], d[3]]).toEqual([[99, 100], [101, 102]]);
+  expect([d[5], d[6]]).toEqual([[89, null], [91, null]]);
+  expect(made.plots[0]!.opts.bands).toHaveLength(2);
+  expect(host.querySelector(".compare-plot")!.getAttribute("data-bands")).toBe("2");
+  expect(host.querySelector(".compare-plot")!.getAttribute("data-bands")).toBe(String(o.bands!.length));
 });
 
 test.each([
@@ -161,4 +172,52 @@ test("export: 429 EXPORT_BUSY shows the Retry-After", async () => {
   await click(exportForm().querySelector("button")!);
   expect(f.mock.calls.map((c) => c[0])).toContain("/api/export?session=1&format=csv");
   expect(exportForm().querySelector("[role=alert]")!.textContent).toBe("an export is running; retry (retry in 5 s)");
+});
+
+test("pickers, chart title and axis label show the mission-db description with the unit; the id stays as hover text", async () => {
+  const { ready } = mount(() => json(200, COMPARE));
+  await ready;
+  await pickTwo();
+  expect(box("Cabin pressure (kPa)").closest("label")!.getAttribute("title")).toBe("cabin_pressure_kpa");
+  expect(host.querySelector(".compare-charts h3")!.textContent).toBe("Cabin pressure (kPa)");
+  expect(host.querySelector(".compare-charts h3")!.getAttribute("title")).toBe("cabin_pressure_kpa");
+  expect(made.plots[0]!.opts.axes[1].label).toBe("Cabin pressure (kPa)");
+});
+
+test("changing the selection clears the shown result", async () => {
+  const { ready } = mount(() => json(200, COMPARE));
+  await ready;
+  await pickTwo();
+  expect(host.querySelector(".compare-legend")).not.toBeNull();
+  await click(box("burn B"));
+  expect(host.querySelector(".compare-charts")).toBeNull();
+  await click(box("burn B"));
+  await click(compareButton());
+  expect(host.querySelector(".compare-legend")).not.toBeNull();
+  await click(box("Cabin temperature"));
+  expect(host.querySelector(".compare-charts")).toBeNull();
+});
+
+test("while a compare runs the button is disabled and says so; a late answer for an older selection is dropped", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((r) => (release = r));
+  const f = vi.fn(async (url: string) => {
+    if (url.startsWith("/api/sessions")) return json(200, SESSIONS);
+    if (url.startsWith("/api/vehicles")) return json(200, { vehicles: [] });
+    await gate;
+    return json(200, COMPARE);
+  });
+  vi.stubGlobal("fetch", f);
+  await act(async () => root.render(<ComparePage mission={mission} />));
+  await click(box("burn A"));
+  await click(box("burn B"));
+  await click(box("Cabin pressure"));
+  await click(compareButton());
+  const b = [...host.querySelectorAll("button")].find((x) => x.textContent === "Comparing…")!;
+  expect(b.disabled).toBe(true);
+  expect(b.getAttribute("aria-busy")).toBe("true");
+  await click(box("Cabin temperature")); // selection changes while the request is out
+  await act(async () => release());
+  expect(host.querySelector(".compare-charts")).toBeNull();
+  expect(compareButton().disabled).toBe(false);
 });

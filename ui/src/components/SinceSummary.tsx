@@ -9,7 +9,7 @@ const SOURCE: Record<Summary["since_source"], string> = {
   session_start: "the session start",
 };
 // ponytail: own small ISO-Z check until the replay-form parser (ui-utc-slow-source) lands on main; then unify.
-const ISO_Z = /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d)?Z$/;
+const ISO_Z = /^\d{4}-\d\d-\d\dT\d\d:\d\d(:\d\d(\.\d+)?)?Z$/;
 export const validSince = (s: string) => s === "" || (ISO_Z.test(s) && !Number.isNaN(Date.parse(s)));
 
 /** "Since..." (D-EXT-21): what changed on a vehicle since the last logout, the session start or a chosen time. */
@@ -64,15 +64,13 @@ export function SinceSummary({ store }: { store: Store }) {
           {result.items.length === 0 ? (
             <p className="empty">Nothing since then</p>
           ) : (
-            <div className="scroll">
-              <ol className="report-lines">
-                {result.items.map((i, n) => (
-                  <li key={n} data-kind={i.kind}>
-                    <time dateTime={i.t}>{utcIso(i.t)}</time> {result.vehicle} <b className="badge">{i.kind}</b> {i.text}
-                  </li>
-                ))}
-              </ol>
-            </div>
+            <ol className="report-lines">
+              {result.items.map((i, n) => (
+                <li key={n} data-kind={i.kind}>
+                  <time dateTime={i.t}>{utcIso(i.t)}</time> <b className="badge">{i.kind}</b> {i.text}
+                </li>
+              ))}
+            </ol>
           )}
         </>
       )}

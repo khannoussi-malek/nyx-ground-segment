@@ -62,6 +62,7 @@ test("items are listed in the server's order with Z times and the operator text 
   expect(lis).toHaveLength(2);
   expect(lis[0]!.textContent).toContain("2026-11-14T10:05:00.000Z");
   expect(lis[0]!.textContent).toContain("valve checked");
+  expect(lis[0]!.textContent!.split("NYX-TA1")).toHaveLength(2); // the vehicle is named once per item
   expect(lis[1]!.textContent).toContain("COMMAND");
 });
 
@@ -88,4 +89,7 @@ test("an API error is shown as its message; a since without Z is refused before 
   set(field("Since"), "2026-11-14T10:00Z");
   await show();
   expect(f.mock.calls[1]![0]).toBe("/api/summary?vehicle=NYX-TA1&since=2026-11-14T10%3A00Z");
+  set(field("Since"), "2026-11-14T10:00:00.000Z"); // the time the header prints
+  await show();
+  expect(f.mock.calls[2]![0]).toBe("/api/summary?vehicle=NYX-TA1&since=2026-11-14T10%3A00%3A00.000Z");
 });

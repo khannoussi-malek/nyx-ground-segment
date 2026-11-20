@@ -7,14 +7,12 @@ from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 from typing import Annotated, Literal
 
-import psycopg
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import FileResponse, Response
-from psycopg_pool import PoolTimeout
 from starlette.background import BackgroundTask
 
 from gs.api.dbguard import connect, db_503
-from gs.api.deps import ApiError, User, errors, mission
+from gs.api.deps import ApiError, User, errors, mission, vehicles
 from gs.api.replays import _s3, _unavailable
 from gs.api.workers import one_at_a_time, run_in_worker
 from gs.common.interfaces.base import UtcTime, VehicleId
@@ -43,6 +41,16 @@ def _names(request: Request, text: str | None) -> list[str]:
     return [n for n in known if n in asked]
 
 
+async def _check_vehicle(request: Request, vehicle: str) -> None:
+    """Like /api/summary: a live vehicle or one the ingest ever stored a frame for."""
+    from gs.api.summary import _known
+
+    with db_503(request):
+        async with connect(request) as conn:
+            if vehicle not in vehicles(request) and not await _known(conn, vehicle):
+                raise ApiError(HTTPStatus.NOT_FOUND, "NOT_FOUND", f"unknown vehicle: {vehicle}")
+
+
 async def _window(
     request: Request, session: int | None, vehicle: str | None, t_from: datetime | None,
     t_to: datetime | None,
@@ -64,6 +72,8 @@ async def _window(
         vehicle, t_from, t_to = row[0], row[1].astimezone(UTC), (row[2] or datetime.now(UTC))
     elif vehicle is None or t_from is None or t_to is None:
         raise _bad("INVALID_WINDOW", "give a session, or vehicle, from and to")
+    else:
+        await _check_vehicle(request, vehicle)
     if t_from >= t_to:
         raise _bad("INVALID_WINDOW", "from must be before to")
     if t_to - t_from > MAX_WINDOW:
@@ -111,8 +121,6 @@ async def _export(
         raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", corrupt_text(e)) from e
     except S3_ERRORS as e:
         raise _unavailable("archive store", e) from e
-    except (psycopg.Error, PoolTimeout) as e:
-        raise _unavailable("database", e) from e
     fd, path = tempfile.mkstemp(prefix="nyx-export-", suffix=f".{fmt}")
     os.close(fd)
     try:

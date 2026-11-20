@@ -24,6 +24,7 @@ from gs.archiver.hours import hour_of, object_key
 from gs.common.time import iso_z
 from tests.integration.conftest import LiveApi
 from tests.integration.test_window_reader import archive_and_delete, flip
+from tests.support import export_worker
 from tests.support.archive import (  # noqa: F401  (archiver_paused is the module fixture)
     app_conn,
     archive_rows,
@@ -50,7 +51,7 @@ def _cleanup() -> Iterator[None]:
     root = s3_client("root")
     with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
         for v in _made:
-            for t in ("archive_object", "telemetry", "test_session"):
+            for t in ("archive_object", "telemetry", "test_session", "seq_state"):
                 c.execute(f"delete from {t} where vehicle = %s", (v,))  # noqa: S608
             for o in root.list_objects("archive", prefix=f"{v}/", recursive=True):
                 root.remove_object("archive", o.object_name)
@@ -60,6 +61,12 @@ def _cleanup() -> Iterator[None]:
 def backfilled(n: int = N) -> str:
     v = vid()
     _made.append(v)
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:  # a vehicle the ingest knows
+        c.execute(
+            "insert into seq_state (vehicle, epoch, last_seq, last_t, period_s)"
+            " values (%s, now(), 0, now(), 1.0)",
+            (v,),
+        )
     hot_hour(v, H, n=n, rate_hz=1.0)
     return v
 
@@ -248,3 +255,74 @@ async def test_second_export_429(live_api: LiveApi, monkeypatch: pytest.MonkeyPa
         release.set()
         assert (await first).status_code == 200
         assert (await c.get(url(v))).status_code == 200  # free again
+
+
+async def test_unknown_vehicle_404(live_api: LiveApi) -> None:
+    async with client(live_api) as c:
+        r = await c.get(url(vid()))
+    assert (r.status_code, r.json()["error"]) == (404, "NOT_FOUND")
+
+
+@pytest.fixture
+def tmp_export_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    return tmp_path
+
+
+async def _broken_then_ok(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch, tmp: Path, worker: str, message: str
+) -> None:
+    from gs.api import export_calc
+
+    v = backfilled(60)
+    async with app_conn() as conn:  # archived, so the worker reads MinIO
+        await archive_and_delete(conn, v, H)
+    async with client(live_api) as c:
+        with monkeypatch.context() as m:
+            m.setattr(export_calc, "export", getattr(export_worker, worker))
+            r = await c.get(url(v))
+        assert r.status_code == 503, r.text
+        assert r.json() == {"error": "UNAVAILABLE", "message": message}
+        assert not list(tmp.iterdir())  # the temporary file is gone
+        assert (await c.get(url(v))).status_code == 200  # busy flag free, pool still works
+
+
+async def test_worker_s3_failure_503(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch, tmp_export_dir: Path
+) -> None:
+    await _broken_then_ok(
+        live_api, monkeypatch, tmp_export_dir, "dead_s3", "archive store unreachable"
+    )
+
+
+async def test_worker_db_failure_503(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch, tmp_export_dir: Path
+) -> None:
+    await _broken_then_ok(live_api, monkeypatch, tmp_export_dir, "dead_db", "database unreachable")
+
+
+async def test_killed_worker_503_then_recovers(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch, tmp_export_dir: Path
+) -> None:
+    await _broken_then_ok(
+        live_api, monkeypatch, tmp_export_dir, "killed", "export worker unreachable"
+    )
+
+
+async def test_route_side_s3_failure_503(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch, tmp_export_dir: Path
+) -> None:
+    v = backfilled(60)
+    real: Any = window.check_rows
+
+    async def down(*a: Any, **k: Any) -> None:
+        raise OSError("minio down")
+
+    async with client(live_api) as c:
+        with monkeypatch.context() as m:
+            m.setattr(window, "check_rows", down)
+            r = await c.get(url(v))
+        assert (r.status_code, r.json()["message"]) == (503, "archive store unreachable")
+        assert not list(tmp_export_dir.iterdir())
+        monkeypatch.setattr(window, "check_rows", real)
+        assert (await c.get(url(v))).status_code == 200

@@ -224,3 +224,19 @@ async def test_worker_statement_timeout(live_api: LiveApi) -> None:
     async with conn:
         with pytest.raises(psycopg.errors.QueryCanceled):
             await conn.execute("select pg_sleep(5)")
+
+
+async def test_route_side_s3_failure_503(
+    live_api: LiveApi, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    ids = [session(), session()]
+
+    async def down(*a: Any, **k: Any) -> None:
+        raise OSError("minio down")
+
+    async with client(live_api) as c:
+        with monkeypatch.context() as m:
+            m.setattr(window, "check_rows", down)
+            r = await c.get(url(ids, [param_columns()[0]]))
+        assert (r.status_code, r.json()["message"]) == (503, "archive store unreachable")
+        assert (await c.get(url(ids, [param_columns()[0]]))).status_code == 200

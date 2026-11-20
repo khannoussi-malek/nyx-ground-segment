@@ -5,9 +5,7 @@ import logging
 from datetime import UTC, datetime, timedelta
 from http import HTTPStatus
 
-import psycopg
 from fastapi import APIRouter, Request
-from psycopg_pool import PoolTimeout
 
 from gs.api.bodies import Compare, CompareBucket, CompareSeries, CompareSession
 from gs.api.dbguard import connect, db_503
@@ -103,8 +101,6 @@ async def _compare(request: Request, ids: list[int], names: list[str]) -> Compar
         raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", corrupt_text(e)) from e
     except S3_ERRORS as e:
         raise _unavailable("archive store", e) from e
-    except (psycopg.Error, PoolTimeout) as e:
-        raise _unavailable("database", e) from e
     series = iter(out)
     return Compare(
         bucket_s=width,

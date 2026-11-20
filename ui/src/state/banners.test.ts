@@ -46,7 +46,7 @@ const V = "NYX-TA1";
 const W = "NYX-TA2";
 const frame = (seq: number, ageMs = 5): Tm => ({
   kind: "tm", vehicle: V, seq, t_onboard: new Date(Date.UTC(2026, 10, 15, 10) + seq * 100).toISOString().replace("Z", "000Z"),
-  mode: "TEST", last_cmd_id: null, values: { cabin_pressure_kpa: 101.3 }, age_ms: ageMs, frozen: false,
+  mode: "TEST", last_cmd_id: null, values: { cabin_pressure_kpa: 101.3 }, age_ms: ageMs, frozen: false, stale_ms: 2000,
 });
 const LOS = eventView("LOS/NYX-TA1/e/0", { kind: "LOS", vehicle: V });
 /** The snapshot the server sends on page load, after ground{up} and on a resync (hub.build_snapshot): the newest
@@ -199,4 +199,22 @@ test("bannerText names rejected frames only for a LOS link, never an AOS carryin
   ingest(s, "snapshot", serverSnapshot(5000, stale));
   expect(s.lastLink(V)?.kind).toBe("AOS");
   expect(bannerText(s, V, "LOSS OF SIGNAL")).toBeUndefined();
+});
+
+test("a slow source: no LOSS OF SIGNAL before its own threshold, the 2 s floor otherwise (R22 F2)", () => {
+  expect(conditionFor({ ...base, ageMs: 3000, staleMs: 15000 })).toBeNull();
+  expect(conditionFor({ ...base, ageMs: 16_000, staleMs: 15000 })).toBe("LOSS OF SIGNAL");
+  expect(conditionFor({ ...base, ageMs: 2000, staleMs: 2000 })).toBe("LOSS OF SIGNAL");
+  expect(conditionFor({ ...base, ageMs: 2000, staleMs: 500 })).toBe("LOSS OF SIGNAL");
+  expect(conditionFor({ ...base, ageMs: 12_000, healthyMs: 2000, staleMs: 15000 })).toBeNull();
+});
+
+test("vehicleCondition reads stale_ms from the vehicle's latest tm", () => {
+  const s = createStore(() => 0, { setTimeout: (() => 1) as never, clearTimeout: () => {} });
+  ingest(s, "hb", { processing: { [V]: true } });
+  ingest(s, "tm", { ...frame(0), stale_ms: 15000 });
+  expect(vehicleCondition(s, V, 3000)).toBeNull();
+  expect(vehicleCondition(s, V, 16_000)).toBe("LOSS OF SIGNAL");
+  ingest(s, "tm", { ...frame(1), stale_ms: 2000 });
+  expect(vehicleCondition(s, V, 3000)).toBe("LOSS OF SIGNAL");
 });

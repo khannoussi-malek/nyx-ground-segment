@@ -117,13 +117,13 @@ export function ReplayPage({ live, mission, user }: { live: Store; mission: Miss
         </label>
         <label>
           From (UTC)
-          <input type="text" aria-label="From (UTC)" placeholder={TIME_HINT} value={from} onChange={(e) => setFrom(e.target.value)} aria-invalid={bad(from)} />
-          {bad(from) && <small role="alert">From (UTC): use {TIME_HINT}, Z required</small>}
+          <input type="text" aria-label="From (UTC)" placeholder={TIME_HINT} value={from} onChange={(e) => setFrom(e.target.value)} aria-invalid={bad(from)} aria-describedby={bad(from) ? "replay-from-error" : undefined} />
+          {bad(from) && <small id="replay-from-error" role="alert">From (UTC): use {TIME_HINT}, Z required</small>}
         </label>
         <label>
           To (UTC)
-          <input type="text" aria-label="To (UTC)" placeholder={TIME_HINT} value={to} onChange={(e) => setTo(e.target.value)} aria-invalid={bad(to)} />
-          {bad(to) && <small role="alert">To (UTC): use {TIME_HINT}, Z required</small>}
+          <input type="text" aria-label="To (UTC)" placeholder={TIME_HINT} value={to} onChange={(e) => setTo(e.target.value)} aria-invalid={bad(to)} aria-describedby={bad(to) ? "replay-to-error" : undefined} />
+          {bad(to) && <small id="replay-to-error" role="alert">To (UTC): use {TIME_HINT}, Z required</small>}
         </label>
         <label>
           Speed

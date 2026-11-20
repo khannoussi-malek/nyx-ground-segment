@@ -5,11 +5,13 @@ import time
 from typing import Any
 
 import httpx
+import psycopg
 import pytest
 
 from gs.api import events
 from tests.integration.conftest import LiveApi
 from tests.support.env import until
+from tests.support.pg import admin_dsn
 from tests.support.redisx import client
 from tests.support.sse import Stream, publish_tm, seed_row, sse, validate
 
@@ -41,6 +43,23 @@ async def test_snapshot_is_latest_row_per_vehicle(live_api: LiveApi) -> None:
     async with sse(live_api) as s:
         await s.next_of("snapshot")
         assert s.last["vehicles"][v]["seq"] == 2 and len(s.last["vehicles"]) == 1
+
+
+async def test_snapshot_tm_carries_the_vehicles_stale_ms(live_api: LiveApi) -> None:
+    v = live_api.vehicle
+    seed_row(v, 0)
+    async with sse(live_api) as s:
+        await s.next_of("snapshot")
+        assert s.last["vehicles"][v]["stale_ms"] == 2000  # no seq_state yet: the 2 s floor
+    with psycopg.connect(admin_dsn("gs")) as c:
+        c.execute(
+            "insert into seq_state (vehicle, epoch, last_seq, last_t, period_s)"
+            " values (%s, now(), 0, now(), 3.0)",
+            (v,),
+        )
+    async with sse(live_api) as s:
+        await s.next_of("snapshot")
+        assert s.last["vehicles"][v]["stale_ms"] == 15000
 
 
 async def test_event_committed_during_snapshot_is_a_delta(

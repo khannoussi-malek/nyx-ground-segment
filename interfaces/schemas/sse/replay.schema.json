@@ -468,6 +468,11 @@
           "title": "Severity",
           "type": "object"
         },
+        "stale_ms": {
+          "default": 2000,
+          "title": "Stale Ms",
+          "type": "integer"
+        },
         "t_onboard": {
           "format": "date-time",
           "title": "T Onboard",

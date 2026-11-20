@@ -129,11 +129,16 @@ test("an unreadable time disables Start and says so next to the field; a Z-less 
   setInput("To (UTC)", "2026-11-10T14:20Z");
   expect(button("Start").disabled).toBe(true);
   expect(host.textContent).toContain("From (UTC): use 2026-11-20T08:05Z");
+  const from = host.querySelector<HTMLInputElement>('input[aria-label="From (UTC)"]')!;
+  const msg = host.ownerDocument.getElementById(from.getAttribute("aria-describedby")!); // the error is linked to its input
+  expect(msg?.textContent).toContain("From (UTC): use");
+  expect(host.querySelector('input[aria-label="To (UTC)"]')!.hasAttribute("aria-describedby")).toBe(false);
   setInput("From (UTC)", "2026-11-10T14:00");
   expect(button("Start").disabled).toBe(true);
   setInput("From (UTC)", "2026-11-10T14:00:30Z");
   expect(button("Start").disabled).toBe(false);
   expect(host.textContent).not.toContain("use 2026-11-20T08:05Z");
+  expect(from.hasAttribute("aria-describedby")).toBe(false);
   expect(calls.some((c) => c.startsWith("POST"))).toBe(false);
 });
 test("a second Start while the create is pending makes no second replay", async () => {

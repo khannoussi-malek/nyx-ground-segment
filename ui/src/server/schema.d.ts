@@ -1144,6 +1144,11 @@ export interface components {
                 [key: string]: "YELLOW" | "RED";
             };
             /**
+             * Stale Ms
+             * @default 2000
+             */
+            stale_ms: number;
+            /**
              * T Onboard
              * Format: date-time
              */
@@ -1361,6 +1366,11 @@ export interface components {
             mode: "SAFE" | "STANDBY" | "TEST" | "FAULT";
             /** Seq */
             seq: number;
+            /**
+             * Stale Ms
+             * @default 2000
+             */
+            stale_ms: number;
             /**
              * T Onboard
              * Format: date-time

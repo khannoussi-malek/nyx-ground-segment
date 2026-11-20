@@ -31,7 +31,7 @@ from gs.ingest.acks import AckReq, apply_acks, db_now, pending_acks
 from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
 from gs.ingest.events import GroundEvent, poison_key, reset_key, to_link
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
-from gs.ingest.link import STALE_S, on_silence, stale_s
+from gs.ingest.link import STALE_S, on_silence, stale_ms, stale_s
 from gs.ingest.owner import acquire, fence, release, waiting
 from gs.ingest.store import (
     insert_frames,
@@ -145,7 +145,12 @@ async def _batch(ctx: Ctx, conn: psycopg.AsyncConnection, vs: VehicleState) -> B
     return Batch(mdb, cset, None if same else await _stored(ctx, conn, vs.set_sha256))
 
 
-def to_tm(frame: FrameHeader, params: Sequence[str], frozen: bool = False) -> Tm:
+def to_tm(
+    frame: FrameHeader,
+    params: Sequence[str],
+    frozen: bool = False,
+    stale: int = round(STALE_S * 1000),
+) -> Tm:
     return Tm(
         vehicle=frame.vehicle,
         seq=frame.seq,
@@ -154,6 +159,7 @@ def to_tm(frame: FrameHeader, params: Sequence[str], frozen: bool = False) -> Tm
         last_cmd_id=frame.last_cmd_id,
         values={p: getattr(frame, p) for p in params},
         frozen=frozen,
+        stale_ms=stale,
     )
 
 
@@ -204,7 +210,8 @@ async def _ui(
 ) -> list[UiMessage]:
     """After COMMIT (D-ING-22): `tm` per stored frame, `link` per committed event, `alarm` per
     alarm the commits touched (its view after them)."""
-    tm = [to_tm(f, params, vs.frozen.reported) for f in stored]
+    stale = stale_ms(vs.seq.period_s) if vs.seq else round(STALE_S * 1000)
+    tm = [to_tm(f, params, vs.frozen.reported, stale) for f in stored]
     links = _links([e for o in outs for e in o.events], vs)
     ids = list(dict.fromkeys([*(t.alarm_id for o in outs for t in o.transitions),
                               *(a for o in outs for a in o.acked)]))  # fmt: skip

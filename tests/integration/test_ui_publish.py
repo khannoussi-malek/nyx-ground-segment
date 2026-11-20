@@ -124,6 +124,19 @@ async def test_tm_frozen_flag() -> None:
     assert tms(v)[-1]["frozen"] is False
 
 
+async def test_tm_stale_ms_follows_the_source_period() -> None:  # R22 F2, console part
+    fast, slow, base = vid(), vid(), now() - timedelta(minutes=5)
+    produce_values(fast, {"cabin_temp_c": [22.0 + i % 2 for i in range(30)]}, base=base)
+    for seq in range(40):  # one frame per 3 s: the smoothed period settles near 3 s
+        t = base + timedelta(seconds=3 * seq)
+        xadd_raw(slow, build_frame(slow, seq, t, NOMINAL | {"cabin_temp_c": 22.0 + seq % 2}))
+    async with worker([fast, slow]):
+        await until(lambda: drained(fast) and drained(slow), 10)
+    assert {m["stale_ms"] for m in tms(fast)} == {2000}  # 10 Hz: unchanged
+    assert 10_000 < tms(slow)[-1]["stale_ms"] <= 15_000  # 5 x the settled ~3 s period
+    validate_ui_event(tms(slow)[-1])
+
+
 async def test_link_message_for_los() -> None:  # P-pf9: the _silence path
     v = vid()
     produce(v, 5)

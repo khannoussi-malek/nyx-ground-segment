@@ -71,6 +71,7 @@ def test_tm_whole_second_keeps_six_digits() -> None:
     assert '"t_onboard":"2026-11-14T10:00:00.000000Z"' in tm.model_dump_json()
     assert tm.kind == "tm"
     assert tm.age_ms is None
+    assert tm.stale_ms == 2000  # the 2 s floor when the sender does not know the period
 
 
 def test_dlq_record_rejects_extra_field() -> None:

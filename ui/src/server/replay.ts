@@ -9,10 +9,12 @@ export const REPLAY_KINDS = ["replay_start", "tm", "alarm", "link", "clock", "re
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null;
 const never = { setTimeout: (() => undefined) as unknown as typeof setTimeout, clearTimeout: () => {} };
 
-/** "YYYY-MM-DDTHH:MM" from a datetime-local input, read as UTC; null if empty or unreadable. */
+/** ISO 8601 UTC "YYYY-MM-DDTHH:MM[:SS]Z" (Z required, D-UI); null if empty or unreadable (e.g. 2026-02-31). */
 export function utcInput(v: string): string | null {
-  const d = new Date(`${v}Z`);
-  return v === "" || Number.isNaN(d.getTime()) ? null : d.toISOString();
+  const m = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(:\d{2})?Z$/.exec(v.trim());
+  if (!m) return null;
+  const d = new Date(`${m[1]}${m[2] ?? ":00"}Z`);
+  return Number.isNaN(d.getTime()) || !d.toISOString().startsWith(m[1]!) ? null : d.toISOString();
 }
 
 /** The live row state with age = replay t − t_onboard, STALE at 2.0 s of vehicle time (D-REP-06). */

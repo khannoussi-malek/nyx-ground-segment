@@ -1,7 +1,7 @@
 from datetime import UTC, datetime, timedelta
 
 from gs.ingest.events import link_key
-from gs.ingest.link import STALE_S, LinkState, on_frame, on_silence, stale_s
+from gs.ingest.link import STALE_S, LinkState, on_frame, on_silence, stale_ms, stale_s
 from gs.ingest.seq import SeqState, step
 
 V = "NYX-TA1"
@@ -119,3 +119,8 @@ def test_a_long_silence_does_not_inflate_the_estimate() -> None:
     nxt, _, _ = step(last, V, 50, last.last_t + timedelta(seconds=600))
     assert nxt.period_s < 2 * last.period_s  # one in-order frame after 10 min: clamped
     assert stale_s(nxt.period_s) == STALE_S
+
+
+def test_stale_ms_is_stale_s_in_ms() -> None:  # the console's threshold (R22 F2 console part)
+    assert stale_ms(0.1) == stale_ms(0.01) == 2000
+    assert stale_ms(3.0) == 15000

@@ -12,8 +12,9 @@ export function paramState(
   ageMs: number | null | undefined,
   frozen: boolean,
   alarm: AlarmView | undefined,
+  staleMs = STALE_MS, // the vehicle's tm.stale_ms; never under the 2 s floor
 ): ParamState {
-  const acq = value === null ? "NO_DATA" : frozen ? "FROZEN" : ageMs == null || ageMs >= STALE_MS ? "STALE" : "OK";
+  const acq = value === null ? "NO_DATA" : frozen ? "FROZEN" : ageMs == null || ageMs >= Math.max(STALE_MS, staleMs) ? "STALE" : "OK";
   if (!alarm || (alarm.state !== "UNACK" && alarm.state !== "ACKED")) return { acq, level: "NOMINAL" };
   // "RED_HIGH" -> RED, HIGH; an unreadable text falls back to the alarm's own severity, never to a guess
   const [sev, side] = alarm.level.split("_");

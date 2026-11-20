@@ -1929,6 +1929,11 @@
             "title": "Severity",
             "type": "object"
           },
+          "stale_ms": {
+            "default": 2000,
+            "title": "Stale Ms",
+            "type": "integer"
+          },
           "t_onboard": {
             "format": "date-time",
             "title": "T Onboard",
@@ -2615,6 +2620,11 @@
             "maximum": 4294967295,
             "minimum": 0,
             "title": "Seq",
+            "type": "integer"
+          },
+          "stale_ms": {
+            "default": 2000,
+            "title": "Stale Ms",
             "type": "integer"
           },
           "t_onboard": {

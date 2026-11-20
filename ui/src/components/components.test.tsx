@@ -188,6 +188,17 @@ test("LiveTable banners: LOSS OF SIGNAL after 2 s, GROUND PROCESSING DOWN from t
   expect(render()).not.toContain("LOSS OF SIGNAL"); // outranks LOS
 });
 
+test("LiveTable: a slow source (tm.stale_ms 15000) is not STALE nor LOSS OF SIGNAL at 3 s (R22 F2)", async () => {
+  const { store, ingest, render, at } = await setup();
+  const snap = snapOf();
+  ingest(store, "snapshot", { ...snap, vehicles: { "NYX-TA1": { ...snap.vehicles["NYX-TA1"], stale_ms: 15000 } } });
+  at(3000);
+  const html = render();
+  expect(html).not.toContain("LOSS OF SIGNAL");
+  expect(html).not.toContain('data-acq="STALE"');
+  expect(html).toContain('data-acq="OK"');
+});
+
 const active = (html: string) => html.match(/data-kind="\w+" data-side="\w+" data-active="true"/g) ?? [];
 
 const limit = (level: "RED" | "YELLOW", side: "LOW" | "HIGH", acq: ParamState["acq"] = "OK"): ParamState =>

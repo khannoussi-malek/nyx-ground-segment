@@ -32,6 +32,7 @@ from gs.common.interfaces.ui_event import Resync, UiMessage
 from gs.common.uievents import UI_EVENTS
 from gs.common.views import alarm_views, command_views, event_views
 from gs.ingest.events import GroundEvent, insert_events, mismatch_key, to_link
+from gs.ingest.link import stale_ms
 
 CLIENT_QUEUE = 1000  # SSE frames buffered per client before it is closed
 RETRY_S = 1.0  # between XREAD attempts while the broker is down
@@ -76,6 +77,10 @@ async def _last_values(
             (list(vehicles),),
         )
         frozen = {r["vehicle"]: r["frozen"] for r in await cur.fetchall()}
+        await cur.execute(  # the same per-vehicle threshold the live tm carries
+            "SELECT vehicle, period_s FROM seq_state WHERE vehicle = ANY(%s)", (list(vehicles),)
+        )
+        period = {r["vehicle"]: r["period_s"] for r in await cur.fetchall()}
     out: dict[str, Tm] = {}
     for r in rows:
         t = r["t_onboard"].astimezone(UTC)
@@ -83,6 +88,7 @@ async def _last_values(
             vehicle=r["vehicle"], seq=r["seq"], t_onboard=t, mode=r["mode"],
             last_cmd_id=r["last_cmd_id"], values={p: r[p] for p in params},
             age_ms=ms(now) - ms(t), frozen=frozen.get(r["vehicle"], False),
+            stale_ms=stale_ms(period[r["vehicle"]]) if r["vehicle"] in period else 2000,
         )  # fmt: skip
     return out
 

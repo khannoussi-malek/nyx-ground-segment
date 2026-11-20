@@ -72,6 +72,8 @@ Everything below happens in the console, with no terminal. The **Scenarios** but
 6. **Shift handover.** Before step 2, log out and in again: that is the end of the previous shift. After step 4, open the Sessions pane, press **Since…**, choose NYX-TA1 and press **Show changes**: the leak alarm's raise, your ACK with its note, its clear and the commands since that logout, in time order. Choose NYX-TA2 to see the loss of signal and the gap.
 7. **Archive and replay:** a backfilled NYX-TA9 history is archived within one loop and can be replayed from the Replay toggle in the top bar; the manual steps are in [docs/atp/ATP-07.md](docs/atp/ATP-07.md) and the replay screen is described in the [operator guide](docs/operator-guide.md#run-a-replay).
 
+The **Compare** page in the top bar overlays 2 to 6 sessions on one time axis and exports any window as CSV or Parquet ([operator guide](docs/operator-guide.md#compare-sessions)).
+
 The panel also has an overheat, a bus voltage spike, frozen data, a bad frame, duplicate frames, a sequence jump and a late execution. Clear exists for the leak, the overheat and frozen data; the others end by themselves. To start again from a clean board, `docker compose restart simulator` drops every fault, then ACK the alarms that returned.
 
 From a terminal, the same scenarios are one call each to the simulator on port 8081; scripts and the tests use these:

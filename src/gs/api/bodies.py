@@ -177,3 +177,24 @@ class ReplayRequest(_Request):
 
 class ReplayCreated(_Body):
     replay_id: UUID
+
+
+class SummaryItem(_Body):
+    """One line of the "Since..." list (D-EXT-21): `source` says which of `alarm` / `command` /
+    `event` is set; `kind` is that row's own kind (RAISE... CLEAR, COMMAND, LOS... )."""
+
+    t: UtcTime
+    source: Literal["alarm", "command", "event"]
+    kind: str
+    text: str
+    alarm: AlarmTransition | None = None
+    command: CommandView | None = None
+    event: EventView | None = None
+
+
+class Summary(_Body):
+    vehicle: VehicleId
+    since: UtcTime
+    until: UtcTime
+    since_source: Literal["query", "last_logout", "session_start"]
+    items: list[SummaryItem]  # oldest first

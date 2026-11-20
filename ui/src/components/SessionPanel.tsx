@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "
 import { getReport, listSessions, reportCsvUrl, startSession, stopSession, type MissionDb, type ReportResult, type SessionReport, type SessionResult, type SessionView } from "../server/api";
 import { eventText } from "../tools/eventText";
 import { formatValue, sortedEntries } from "../tools/format";
+import { SinceSummary } from "./SinceSummary";
 import { FilterBar, keep, NO_FILTER, vehiclesOf } from "./listFilter";
 import type { Store } from "../state/store";
 import { utcClock, utcIso } from "../tools/time";
@@ -96,6 +97,7 @@ export function SessionPanel({ store, mission }: { store: Store; mission: Missio
   const [busy, setBusy] = useState(false);
   const [view, setView] = useState<View | null>(null);
   const [filter, setFilter] = useState(NO_FILTER);
+  const [since, setSince] = useState(false);
   const inFlight = useRef(false);
   const target = vehicles.includes(vehicle) ? vehicle : "";
 
@@ -157,6 +159,8 @@ export function SessionPanel({ store, mission }: { store: Store; mission: Missio
         </label>
         <button type="submit" disabled={!canStart}>Start session</button>
       </form>
+      <button type="button" aria-expanded={since} onClick={() => setSince(!since)}>Since…</button>
+      {since && <SinceSummary store={store} />}
       {busyVehicle && <p className="desc">{target} already has an active session</p>}
       {error && <p role="alert">{error}</p>}
       {sessions === null ? (

@@ -301,6 +301,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/summary": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Summary */
+        get: operations["get_summary_api_summary_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/telemetry/{vehicle}/{param}": {
         parameters: {
             query?: never;
@@ -1290,6 +1307,52 @@ export interface components {
             vehicles: {
                 [key: string]: components["schemas"]["Tm"];
             };
+        };
+        /** Summary */
+        Summary: {
+            /** Items */
+            items: components["schemas"]["SummaryItem"][];
+            /**
+             * Since
+             * Format: date-time
+             */
+            since: string;
+            /**
+             * Since Source
+             * @enum {string}
+             */
+            since_source: "query" | "last_logout" | "session_start";
+            /**
+             * Until
+             * Format: date-time
+             */
+            until: string;
+            /** Vehicle */
+            vehicle: string;
+        };
+        /**
+         * SummaryItem
+         * @description One line of the "Since..." list (D-EXT-21): `source` says which of `alarm` / `command` /
+         *     `event` is set; `kind` is that row's own kind (RAISE... CLEAR, COMMAND, LOS... ).
+         */
+        SummaryItem: {
+            alarm?: components["schemas"]["AlarmTransition"] | null;
+            command?: components["schemas"]["CommandView"] | null;
+            event?: components["schemas"]["EventView"] | null;
+            /** Kind */
+            kind: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "alarm" | "command" | "event";
+            /**
+             * T
+             * Format: date-time
+             */
+            t: string;
+            /** Text */
+            text: string;
         };
         /** Tc */
         Tc: {
@@ -2576,6 +2639,74 @@ export interface operations {
             };
             /** @description Conflict */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unprocessable Content */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service Unavailable */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    get_summary_api_summary_get: {
+        parameters: {
+            query: {
+                vehicle: string;
+                since?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Summary"];
+                };
+            };
+            /** @description Bad Request */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Unauthorized */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Not Found */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

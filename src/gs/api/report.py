@@ -4,8 +4,9 @@ or after FREEZE_AFTER_S (D-DB-06, D-DB-10), plus its CSV form."""
 import csv
 import io
 import json
+from collections.abc import Sequence
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Any, Literal
 
 import psycopg
 from psycopg import sql
@@ -85,27 +86,36 @@ async def _stats(
     return int(row[0]), stats
 
 
-async def _transitions(
-    conn: psycopg.AsyncConnection, s: SessionView
-) -> tuple[list[AlarmTransition], AlarmQuality]:
+async def alarm_rows(
+    conn: psycopg.AsyncConnection, vehicle: str, start: datetime, end: datetime
+) -> list[list[Any]]:
+    """The vehicle's alarm_events with processed_at in [start, end), oldest first (also the
+    "Since..." summary, D-EXT-21)."""
     cur = await conn.execute(
         "SELECT alarm_id, param, key, kind, coalesce(trigger_t_onboard, processed_at), alert,"
         " by_user, note, check_kind, level, value, trigger_t_onboard FROM alarm_events"
         " WHERE vehicle = %s AND alarm_id IS NOT NULL AND processed_at >= %s AND processed_at < %s"
         " ORDER BY id",
-        (s.vehicle, s.started_at, _end(s)),
+        (vehicle, start, end),
     )
-    rows = list(map(utc, await cur.fetchall()))
-    alarms = [
-        AlarmTransition(
-            alarm_id=r[0], param=r[1],
-            transition=TransitionView(
-                key=r[2], kind=r[3], t=r[4], alert=r[5], by_user=r[6], note=r[7],
-                check_kind=r[8], level=r[9], value=r[10],
-            ),
-        )
-        for r in rows
-    ]  # fmt: skip
+    return list(map(utc, await cur.fetchall()))
+
+
+def alarm_transition(r: Sequence[Any]) -> AlarmTransition:
+    return AlarmTransition(
+        alarm_id=r[0], param=r[1],
+        transition=TransitionView(
+            key=r[2], kind=r[3], t=r[4], alert=r[5], by_user=r[6], note=r[7],
+            check_kind=r[8], level=r[9], value=r[10],
+        ),
+    )  # fmt: skip
+
+
+async def _transitions(
+    conn: psycopg.AsyncConnection, s: SessionView
+) -> tuple[list[AlarmTransition], AlarmQuality]:
+    rows = await alarm_rows(conn, s.vehicle, s.started_at, _end(s))
+    alarms = [alarm_transition(r) for r in rows]
     metrics = quality(
         [QEvent(s.vehicle, r[1], r[3], r[11], r[0]) for r in rows if r[11] is not None],
         fault_windows=None,
@@ -126,7 +136,7 @@ async def build_report(
     frames, parameters = await _stats(conn, s, mdb)
     window = {"vehicle": s.vehicle, "since": s.started_at, "until": end, "limit": None}
     # views are newest first; a report reads in time order
-    events = await event_views(conn, kinds=LINK_KINDS, **window)  # type: ignore[arg-type]
+    events = await event_views(conn, kinds=LINK_KINDS, **window)
     commands = await command_views(conn, **window)  # type: ignore[arg-type]
     alarms, alarm_quality = await _transitions(conn, s)
     return SessionReport(

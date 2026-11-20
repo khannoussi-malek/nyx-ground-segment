@@ -9,11 +9,13 @@ from uuid import uuid4
 import httpx
 import psycopg
 import pytest
+import yaml
 from psycopg.types.json import Jsonb
 from psycopg_pool import AsyncConnectionPool
 
 from gs.api import dbguard
 from gs.api.app import create_app
+from gs.api.auth import ACTOR_MAX, hash_password
 from gs.common.migrate import add_columns
 from gs.common.missiondb import load_dir
 from tests.support.env import vid
@@ -147,6 +149,20 @@ async def test_default_since_last_logout(summ: Client) -> None:
     assert [i["text"] for i in body["items"]] == [f"{v} GAP – 7 frames lost"]
 
 
+async def test_default_since_last_logout_of_a_long_username(tmp_path: Path) -> None:
+    name = "u" * (ACTOR_MAX + 6)
+    users = tmp_path / "users.yaml"
+    users.write_text(yaml.safe_dump({"users": {name: hash_password("long-name-password")}}))
+    v = vid()
+    app = create_app(dataclasses.replace(api_settings(users), vehicles=(v,)))
+    async with authed(app, name, "long-name-password") as c:
+        assert (await c.post("/api/logout", headers=H)).status_code == 204
+        assert (await login(c, name, "long-name-password")).status_code == 204
+        r = await c.get("/api/summary", params={"vehicle": v})
+    assert r.status_code == 200, r.text
+    assert r.json()["since_source"] == "last_logout"
+
+
 async def test_default_since_session_start(fresh: Client, empty_db: str) -> None:
     c, v = fresh
     started = datetime.now(UTC) - timedelta(hours=1)
@@ -165,8 +181,8 @@ async def test_since_required(fresh: Client) -> None:
     assert (r.status_code, r.json()["error"]) == (400, "SINCE_REQUIRED")
 
 
-async def test_window_too_large(summ: Client) -> None:
-    c, v = summ
+async def test_window_too_large(fresh: Client, empty_db: str) -> None:
+    c, v = fresh
     now = datetime.now(UTC)
     ok = await c.get("/api/summary", params={"vehicle": v, "since": _z(now - timedelta(days=6))})
     assert ok.status_code == 200
@@ -174,6 +190,12 @@ async def test_window_too_large(summ: Client) -> None:
         "/api/summary", params={"vehicle": v, "since": _z(now - timedelta(days=7, seconds=5))}
     )
     assert (r.status_code, r.json()["error"]) == (400, "WINDOW_TOO_LARGE")
+    old = now - timedelta(days=9)
+    _sql("INSERT INTO audit_log (actor, action, at) VALUES ('fc1', 'LOGOUT', %s)", old, db=empty_db)
+    r = await c.get("/api/summary", params={"vehicle": v})
+    assert (r.status_code, r.json()["error"]) == (400, "WINDOW_TOO_LARGE")
+    msg = r.json()["message"]
+    assert "last logout" in msg and "pass since" in msg and _z(old)[:19] in msg
 
 
 @pytest.mark.parametrize("since", ["yesterday", "2020-01-01T00:00:00+02:00", "2020-01-01"])

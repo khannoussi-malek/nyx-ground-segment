@@ -9,12 +9,14 @@ from typing import Any, Literal
 import psycopg
 from fastapi import APIRouter, Request
 
+from gs.api.auth import ACTOR_MAX
 from gs.api.bodies import AlarmTransition, Summary, SummaryItem
 from gs.api.dbguard import connect, db_503
 from gs.api.deps import ApiError, User, errors, vehicles
 from gs.api.report import alarm_rows, alarm_transition
 from gs.common.interfaces.base import UtcTime, VehicleId
 from gs.common.interfaces.sse import CommandView, EventView
+from gs.common.time import iso_z
 from gs.common.views import command_views, timed_event_views
 
 router = APIRouter()
@@ -115,7 +117,8 @@ async def _default_since(
 ) -> tuple[datetime, SinceSource] | None:
     """The caller's last LOGOUT, else the start of the vehicle's active session."""
     cur = await conn.execute(
-        "SELECT max(at) FROM audit_log WHERE actor = %s AND action = 'LOGOUT'", (user,)
+        "SELECT max(at) FROM audit_log WHERE actor = %s AND action = 'LOGOUT'",
+        (user[:ACTOR_MAX],),  # as auth.py writes it
     )
     row = await cur.fetchone()
     if row and row[0] is not None:
@@ -174,7 +177,18 @@ async def get_summary(
             else:
                 start, source = default
             if now - start > MAX_WINDOW:
-                raise _bad("WINDOW_TOO_LARGE", "the window is at most 7 days")
+                came = {
+                    "last_logout": "your last logout was",
+                    "session_start": "the session started",
+                }
+                what = (
+                    f"{came[source]} {iso_z(start)}, more than 7 days ago; "
+                    if source != "query"
+                    else ""
+                )
+                raise _bad(
+                    "WINDOW_TOO_LARGE", f"{what}the window is at most 7 days: pass since=<UTC Z>"
+                )
             alarms = await alarm_rows(conn, vehicle, start, now)
             commands = await command_views(
                 conn, vehicle=vehicle, since=start, until=now, limit=None

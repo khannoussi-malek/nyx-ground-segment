@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
+import { paramIds, paramMeta } from "../tools/params";
 import { getCompare, listSessions, vehicles as loadVehicles, type Compare, type MissionDb, type SessionView } from "../server/api";
 import { utcIso } from "../tools/time";
 import { CompareCharts } from "./CompareCharts";
@@ -52,9 +53,9 @@ export function ComparePage({ mission }: { mission: MissionDb | null }) {
     setError("");
     set((l) => toggle(l, k));
   };
-  const known = mission ? Object.keys(mission.parameters) : [];
+  const known = mission ? paramIds(mission) : [];
   const label = (p: string) => {
-    const m = mission?.parameters[p];
+    const m = paramMeta(mission, p);
     return `${m?.description || p}${m?.unit ? ` (${m.unit})` : ""}`;
   };
   const titles = Object.fromEntries(known.map((p) => [p, label(p)]));

@@ -50,7 +50,7 @@ test("values the mission db does not know are still shown, after the known ones;
 
 test("ids that are Object.prototype names are looked up as own keys only", () => {
   const m = {
-    parameters: { constructor: { unit: "V", type: "float", description: "Odd but legal name" } },
+    derived: {}, parameters: { constructor: { unit: "V", type: "float", description: "Odd but legal name" } },
     limits: {},
   } as unknown as MissionDb;
   const v = paramViews({ constructor: 1.5, toString: 2 }, m); // "constructor" has no limits entry

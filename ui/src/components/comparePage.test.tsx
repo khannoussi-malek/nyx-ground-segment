@@ -37,7 +37,7 @@ afterEach(() => {
 const json = (status: number, body: unknown, headers: Record<string, string> = {}) => new Response(JSON.stringify(body), { status, headers });
 const sess = (id: number, name: string, vehicle: string, at: string) => ({ id, name, vehicle, started_at: at, ended_at: null, ended_by: null, conductor: "c" });
 const SESSIONS = [sess(1, "burn A", "NYX-TA1", "2026-11-14T10:00:00Z"), sess(2, "burn B", "NYX-TA2", "2026-11-14T11:30:00Z")];
-const mission = { parameters: { cabin_pressure_kpa: { unit: "kPa", description: "Cabin pressure" }, temp_c: { unit: "C", description: "Cabin temperature" } } } as unknown as MissionDb;
+const mission = { derived: {}, parameters: { cabin_pressure_kpa: { unit: "kPa", description: "Cabin pressure" }, temp_c: { unit: "C", description: "Cabin temperature" } } } as unknown as MissionDb;
 const bucket = (t: number, v: number) => ({ t_rel_s: t, lo: v - 1, hi: v + 1, mean: v, n: 2 });
 const COMPARE = {
   bucket_s: 1,

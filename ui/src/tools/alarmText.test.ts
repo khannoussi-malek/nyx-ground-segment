@@ -5,7 +5,9 @@ import { alarmView } from "../test/fixtures";
 
 const MDB = {
   parameters: { cabin_pressure_kpa: { unit: "kPa", type: "float", description: "" }, suit_temp_c: { unit: "degC", type: "float", description: "" } },
+  derived: { power_w: { unit: "W", description: "Bus power" } },
   limits: {
+    power_w: { checks: [{ type: "limit", yellow_high: 250, red_high: 300 }] },
     cabin_pressure_kpa: { checks: [{ type: "limit", red_low: 95, red_high: 106 }, { type: "roc", direction: "both", limit_per_s: 0.15, severity: "YELLOW", window_s: 5 }] },
     suit_temp_c: { checks: [{ type: "limit", yellow_high: 28, red_high: 30, red_low: -5 }] },
   },
@@ -45,3 +47,6 @@ test("a limit alarm prints its reading, a rate alarm its slope: the two are neve
   expect(alarmText(slope, MDB)).toBe("YELLOW · RATE FALLING −0.40 kPa/s (limit 0.15)");
   expect(alarmText(alarmView({ level: "YELLOW_HIGH", severity: "YELLOW", value: 100.8 }), MDB)).toBe("YELLOW HIGH · 100.80 kPa"); // no yellow_high bound in this check: none invented
 });
+
+test("a derived parameter's alarm carries its unit", () =>
+  expect(alarmText(lim({ param: "power_w", value: 310 }), MDB)).toBe("RED HIGH · 310.00 W (limit 300)"));

@@ -4,7 +4,7 @@ import "uplot/dist/uPlot.min.css";
 import { fetchBuckets, type MissionDb } from "../server/api";
 import { bucketMsFor, clampWidth, limitLabels, refreshMs, toSeries, WINDOWS, type Series, type WindowKey } from "../tools/chartSeries";
 import { formatValue } from "../tools/format";
-import { paramViews } from "../tools/params";
+import { paramMeta, paramViews } from "../tools/params";
 import type { Limits } from "../tools/gauge";
 import type { Store } from "../state/store";
 import { MAX_SPAN, MIN_SPAN, pan, rangeOf, select, zoom, type View } from "../tools/chartView";
@@ -348,7 +348,7 @@ export function ChartPanel({ store, mission, value, onChange }: {
   const params = paramViews(store.vehicle(vehicle)?.values ?? {}, mission);
   const param = params.some((x) => x.id === value.param) ? value.param : (params[0]?.id ?? "");
   const check = mission && Object.hasOwn(mission.limits, param) ? mission.limits[param].checks.find((c) => c.type === "limit") : undefined;
-  const unit = mission && Object.hasOwn(mission.parameters, param) ? mission.parameters[param].unit : undefined;
+  const unit = paramMeta(mission, param)?.unit;
   return (
     <section className="chart-panel" aria-label="Chart">
       <h2>Chart</h2>

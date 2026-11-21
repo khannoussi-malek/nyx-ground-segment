@@ -1,4 +1,5 @@
 import type { MissionDb } from "../server/api";
+import { paramMeta } from "./params";
 import { formatValue } from "./format";
 import type { AlarmView } from "../state/store";
 
@@ -10,7 +11,7 @@ const minus = (n: number) => String(n).replaceAll("-", "−");
 export function alarmText(a: AlarmView, m: MissionDb | null): string {
   const [sev = "", side = ""] = a.level.split("_");
   if (a.state === "RTN_UNACK") return `RETURNED · was ${a.level.replace("_", " ")}`;
-  const unit = m && Object.hasOwn(m.parameters, a.param) ? m.parameters[a.param].unit : "";
+  const unit = paramMeta(m, a.param)?.unit ?? "";
   const checks = m && Object.hasOwn(m.limits, a.param) ? m.limits[a.param].checks : [];
   const num = (suffix: string) => (a.value === null ? formatValue(null) : `${formatValue(a.value)}${unit ? ` ${unit}${suffix}` : ""}`);
   if (a.trigger_check === "roc") {

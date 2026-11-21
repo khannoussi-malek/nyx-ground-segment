@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 const MDB = {
-  parameters: { cabin_pressure_kpa: { unit: "kPa", type: "float", description: "Cabin total pressure" } },
+  derived: {}, parameters: { cabin_pressure_kpa: { unit: "kPa", type: "float", description: "Cabin total pressure" } },
   limits: { cabin_pressure_kpa: { checks: [{ type: "limit", red_low: 95, red_high: 106 }] } },
 } as unknown as MissionDb;
 

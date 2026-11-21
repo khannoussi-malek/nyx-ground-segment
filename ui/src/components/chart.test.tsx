@@ -246,6 +246,7 @@ test("the panel lists the vehicle's parameters and charts the first; a change of
 test("the limits and unit come from the mission db; before telemetry the panel waits", async () => {
   const mission = {
     parameters: { a_param: { unit: "kPa", type: "float", description: "" } },
+    derived: { b_param: { unit: "W", description: "Bus power" } },
     limits: { a_param: { checks: [{ type: "limit", red_high: 106 }] } },
   } as unknown as MissionDb;
   stubBuckets();
@@ -253,6 +254,10 @@ test("the limits and unit come from the mission db; before telemetry the panel w
   FakeRO.all[0]!.resize(600);
   await flush();
   expect(made.plots[0]!.opts.axes[1].label).toBe("a_param (kPa)");
+  pick("Parameter", "b_param"); // a derived parameter: unit from the derived entries
+  FakeRO.all.at(-1)!.resize(600);
+  await flush();
+  expect(made.plots.at(-1)!.opts.axes[1].label).toBe("Bus power (W)");
   act(() => root.render(<Picked store={createStore()} mission={null} />));
   expect(host.textContent).toContain("Waiting for telemetry");
 });
@@ -306,7 +311,7 @@ test("the y range always includes the limits, with a margin; without data or lim
 
 test("the parameter picker names each parameter, in mission-db order; a choice from outside is shown", async () => {
   const mission = {
-    parameters: { b_param: { unit: "A", type: "float", description: "Bus current" }, a_param: { unit: "V", type: "float", description: "Bus voltage" } },
+    derived: {}, parameters: { b_param: { unit: "A", type: "float", description: "Bus current" }, a_param: { unit: "V", type: "float", description: "Bus voltage" } },
     limits: {},
   } as unknown as MissionDb;
   const f = stubBuckets();

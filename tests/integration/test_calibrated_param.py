@@ -48,8 +48,9 @@ async def test_raw_and_eng_stored_limits_on_eng_and_out_of_table_red(tmp_path: P
     with throwaway_db() as db:
         m, _ = setup(tmp_path, db)
         produce_values(v, {P: [3.0] * 3 + [25.0] * 3})  # raw 3 -> 6 nominal; 25 is off the table
-        async with worker([v], dsn=app_dsn(db), mission_dir=m):
+        async with worker([v], dsn=app_dsn(db), mission_dir=m) as w:
             await until(lambda: drained(v), 10)
+        assert w.ctx.counters[f"calibration_out_of_range:{P}"] == 3
         t = telemetry(db, v)
         assert [(r["eng"], r["raw"]) for r in (t[0], t[3])] == [(6.0, 3.0), (None, 25.0)]
         assert alarms(db, v) == [("RAISE", "RED_HIGH", "calibration_range", 25.0)]

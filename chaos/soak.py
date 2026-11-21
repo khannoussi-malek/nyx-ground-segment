@@ -231,7 +231,7 @@ def print_failure(seed: int, s: Sampler, sh: Shared) -> None:
         print("  " + json.dumps(e, default=str), file=sys.stderr)
 
 
-def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
+def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:  # noqa: C901  # one guarded branch per step, run in order
     os.environ["COMPOSE_FILE"] = COMPOSE_FILES
     if not LEDGER.exists():
         sys.exit(

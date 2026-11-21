@@ -89,7 +89,7 @@ class Restore:
         return [*self.repairs, *(f"FAILED {f}" for f in self.failures)]
 
 
-def restore_stack() -> Restore:
+def restore_stack() -> Restore:  # noqa: C901  # one guarded branch per step, run in order
     """Back to a known good state, whatever an earlier run left: every service up, ingest
     unpaused, ingest on both networks, Postgres writable. Every step runs; reports each repair
     made and each step that failed. Used at soak start (a crashed run must not poison the next)

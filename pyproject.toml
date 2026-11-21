@@ -50,6 +50,9 @@ max-complexity = 15  # NPR 7150.2D SWE-135 complexity metric; 15 is the proposed
 # local stack's http URLs (S310), seeded load-shape randomness (S311), table names from constants (S608)
 "scripts/**" = ["S603", "S607", "S608"]
 "perf/**" = ["S310", "S311", "S603", "S607"]
+# chaos soak harness (EXT-03, test tooling): docker/compose with fixed argument lists (S603, S607),
+# urlopen only on the local stack's /healthz (S310), seeded fault schedules, not secrets (S311)
+"chaos/**" = ["S310", "S311", "S603", "S607"]
 
 [tool.ruff.lint.isort]
 # the git-ignored redis/ dir (generated users.acl) made ruff call redis first-party locally only

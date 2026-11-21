@@ -26,3 +26,4 @@ test-results/
 .coverage
 coverage.json
 chaos/out/
+docs/chaos/*/trace/

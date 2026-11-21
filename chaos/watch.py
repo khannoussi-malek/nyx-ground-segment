@@ -5,16 +5,21 @@ import json
 import os
 import subprocess
 from pathlib import Path
+from typing import IO
 
 from tests.support.env import REPO
 
 STOP_WAIT_S = 90.0  # the spec polls the stop file every second, then writes its result
+MAX_BLIND_MS = 10_000  # longest stretch the console may show no OK row at all (a blank watcher)
 
 
 def i4_result(out_file: Path, rc: int | None) -> str:
     try:
         r = json.loads(out_file.read_text())
-        bad, rows, samples = list(r["bad"]), int(r["rows"]), int(r["samples"])
+        if not isinstance(r["bad"], list):
+            raise TypeError("bad is not a list")
+        bad, rows, samples = r["bad"], int(r["rows"]), int(r["samples"])
+        blind = float(r["blind_ms"])
     except OSError:
         return f"NOT RUN (the watcher wrote no result, exit {rc}; is `make e2e/node_modules` done?)"
     except ValueError, KeyError, TypeError:
@@ -24,7 +29,12 @@ def i4_result(out_file: Path, rc: int | None) -> str:
         return f"FAIL (reported, not gating): {bad[0]}{more}"
     if not rows:
         return "NOT RUN (the watcher saw no OK row: logged out or console down)"
-    return f"PASS ({samples} samples, {rows} OK rows)"
+    if blind > MAX_BLIND_MS:
+        return f"FAIL (reported, not gating): no OK row for {blind / 1000:.0f} s (limit 10 s)"
+    return (
+        f"PASS ({samples} samples, {rows} OK rows, longest stretch without an OK row "
+        f"{blind / 1000:.1f} s)"
+    )
 
 
 class Watcher:
@@ -37,9 +47,10 @@ class Watcher:
             "CHAOS_WATCH_STOP": str(self.stop_file),
             "CHAOS_WATCH_TRACE": str(out / "trace"),
         }
-        self.proc: subprocess.Popen[bytes] | None
-        self.log = (out / "watch.log").open("wb")
+        self.proc: subprocess.Popen[bytes] | None = None
+        self.log: IO[bytes] | None = None
         try:
+            self.log = (out / "watch.log").open("wb")
             self.proc = subprocess.Popen(  # noqa: S603
                 ["npx", "playwright", "test", "-c", "chaos.config.ts"],  # noqa: S607
                 cwd=REPO / "e2e",
@@ -58,5 +69,6 @@ class Watcher:
                 rc = self.proc.wait(timeout=STOP_WAIT_S)
             except subprocess.TimeoutExpired:
                 self.proc.kill()
-        self.log.close()
+        if self.log:
+            self.log.close()
         return i4_result(self.out_file, rc)

@@ -1,7 +1,7 @@
 """Derived expr parameters end to end (D-EXT-05): stored on every row, alarmed through the
 engine, a bad expression is a NULL plus a counter, never a DLQ."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import psycopg
@@ -66,13 +66,15 @@ async def test_leak_rate_during_leak(tmp_path: Path) -> None:  # EX-28
     with throwaway_db() as db:
         m, _ = setup(tmp_path, db)
         kpa = [101.3 - 0.4 * i / 10 for i in range(80)]  # 0.4 kPa/s at 10 Hz
-        # pinned whole-second start: epoch-seconds floats decide the 8th span (7 or 8 NULLs)
-        base = datetime(2026, 11, 21, 10, tzinfo=UTC)
+        # whole-second start (now, floored): the fraction of the epoch-seconds float decides the
+        # 8th span (7 or 8 NULLs); a fixed date would fall outside the D-ING-18 window
+        base = datetime.now(UTC).replace(microsecond=0) - timedelta(minutes=1)
         produce_values(v, {"cabin_pressure_kpa": kpa}, base=base)
         async with worker([v], dsn=app_dsn(db), mission_dir=m) as w:
             await until(lambda: drained(v), 10)
         q = "select seq, cabin_leak_rate_kpa_s as r from telemetry where vehicle=%s order by seq"
         r = rows(q, v, db=db)
+        assert len(r) == 80  # every frame stored, so the checks below are not vacuous
         assert all(x["r"] is None for x in r[:7])  # window under 80 % full: NULL
         assert all(x["r"] is not None and abs(x["r"] + 0.4) < 0.01 for x in r[10:])
         cold = sum(x["r"] is None for x in r)

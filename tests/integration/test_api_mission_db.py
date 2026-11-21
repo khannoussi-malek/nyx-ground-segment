@@ -21,7 +21,9 @@ async def test_vehicles_lists_vehicles_and_parameter_units(api_client: httpx.Asy
     await login(api_client, "fc1", FC1_PW)
     body = (await api_client.get("/api/vehicles")).json()
     assert body["vehicles"] == ["NYX-TA1"]  # api_settings configures one vehicle
-    assert list(body["parameters"]) == list(MISSION.param_names)  # file order kept
+    assert list(body["parameters"]) == list(
+        MISSION.parameters
+    )  # raw parameters, file order kept (derived are in /api/mission-db)
     assert body["parameters"]["cabin_pressure_kpa"] == {
         "unit": "kPa",
         "type": "float",

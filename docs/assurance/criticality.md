@@ -26,9 +26,11 @@ of the test article, not of crew.
   procedure and the bench's own interlocks, which Nyx does not control. **Assumption, not confirmed:** no bench
   ICD is on file (R26: not frozen), so the owner must confirm that such a procedure and interlocks exist. Nyx's own
   two-step dialog, typed ID, reason and audit row are software mitigations (section 5) and do not count here.
-- **Candidate: C.** It becomes B if the system hazard analysis rates the vent as category II with no
-  compensating provision. If no external provision is confirmed, the candidate becomes **category B**, which brings
-  MC/DC and the 100 % coverage slice (R25 F2(2-3)). The owner and the customer's safety team decide.
+- **Candidate: C.** It becomes **category B** if the system hazard analysis rates the vent as category II
+  and no external provision is confirmed (ECSS-Q-ST-80C Table D-1, as R25 quotes it). Category B requires 100 %
+  statement and decision coverage (E-40C §5.8.3.5b, R25 F2 table; MC/DC stays agreed with the customer). MC/DC
+  comes separately from NPR SWE-219 if the commanding path is safety-critical (section 4). The owner and the
+  customer's safety team decide.
 - Coverage consequence (ECSS-E-ST-40C §5.8.3.5b, p. 64): for C, statement, decision and MC/DC coverage are
   "agreed with the customer" (AM). Proposed value (A-R25-3): 80 % overall, 100 % on the safety-critical slice
   of section 4.

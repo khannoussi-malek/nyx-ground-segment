@@ -115,3 +115,18 @@ def test_calibration_row_too_short_rejected_at_load() -> None:
 def test_overflowing_output_is_none_not_inf() -> None:
     t = Table.from_pairs([[0, 0], [1, 1.7e308], [2, -1.7e308]])
     assert apply(t, 1.5) is None  # e1 - e0 overflows to -inf, so the output would be -inf
+
+
+def test_limits_on_a_raw_column_are_rejected() -> None:
+    # `<name>_raw` is a stored column, not a parameter: no limits key may name it (D-EXT-04)
+    p = SHIPPED_P.decode().replace(
+        "bus_current_a: {unit: A, type: float, description: Main bus current}",
+        "bus_current_a: {unit: A, type: float, description: Main bus current,"
+        " calibration: {table: [[0, 0], [10, 10]]}}",
+    )
+    lim = (
+        SHIPPED_L.decode()
+        + "  bus_current_a_raw: {checks: [{type: limit, red_high: 5.0, hysteresis_abs: 1}]}\n"
+    )
+    with pytest.raises(MissionDbError, match="unknown parameter.*bus_current_a_raw"):
+        ld(files(parameters=p.encode(), limits=lim.encode()))

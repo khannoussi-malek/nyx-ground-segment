@@ -566,6 +566,20 @@ Web documents and standards:
 - [CCSDS-131.0-B-5-TM-sync-channel-coding.pdf](papers/web/CCSDS-131.0-B-5-TM-sync-channel-coding.pdf) – saved copy of https://ccsds.org/Pubs/131x0b5.pdf
 - [RFC6298-computing-TCP-retransmission-timer.txt](papers/web/RFC6298-computing-TCP-retransmission-timer.txt) – saved copy of https://www.rfc-editor.org/rfc/rfc6298
 
+## [R24-command-verification-pus](R24-command-verification-pus.md)
+
+No papers from the library are cited in this note (PaperLab was down; the standards are the primary sources).
+
+Web documents and standards:
+
+- [ECSS-E-ST-70-41C-PUS-15April2016.pdf](papers/web/ECSS-E-ST-70-41C-PUS-15April2016.pdf) – saved copy of https://ecss.nl/wp-content/uploads/2016/06/ECSS-E-ST-70-41C15April2016.pdf
+- [ECSS-E-ST-70-11C-space-segment-operability-31July2008.pdf](papers/web/ECSS-E-ST-70-11C-space-segment-operability-31July2008.pdf) – saved copy of https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-70-11C31July2008.pdf
+- [NASA-STD-8739.8B-software-assurance-and-safety.pdf](papers/web/NASA-STD-8739.8B-software-assurance-and-safety.pdf) – saved copy of https://standards.nasa.gov/sites/default/files/standards/NASA/B/0/NASA-STD-87398-Revision-B.pdf
+- [CCSDS-232.1-B-2-COP-1.pdf](papers/web/CCSDS-232.1-B-2-COP-1.pdf) – saved copy of https://ccsds.org/Pubs/232x1b2e2c1.pdf
+- [Yamcs-server-manual-commanding.txt](papers/web/Yamcs-server-manual-commanding.txt) – saved copy of https://docs.yamcs.org/yamcs-server-manual/tc/
+- [Yamcs-server-manual.pdf](papers/web/Yamcs-server-manual.pdf) – saved copy of https://dl.yamcs.org/docs/yamcs-server-manual.pdf
+- [OpenC3-command-configuration.txt](papers/web/OpenC3-command-configuration.txt) – saved copy of https://docs.openc3.com/docs/configuration/command
+
 ## [S1-gate2-spikes](S1-gate2-spikes.md)
 
 No papers from the library are cited in this note.

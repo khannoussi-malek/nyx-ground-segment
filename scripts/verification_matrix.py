@@ -46,7 +46,7 @@ def _walk(suite: dict[str, Any]) -> list[Case]:
         for t in spec["tests"]:
             s = t["status"]
             why = " ".join(a.get("description", "") for a in t.get("annotations", []))
-            st = {"skipped": "skipped", "unexpected": "fail"}.get(s, "pass")  # expected, flaky
+            st = {"skipped": "skipped", "unexpected": "fail", "flaky": "flaky"}.get(s, "pass")
             out.append(Case(f, spec["title"], st, why.strip()))
     for sub in suite.get("suites", []):
         out += _walk(sub)
@@ -79,11 +79,13 @@ def status(ref: Ref, cases: list[Case]) -> tuple[str, str]:
         why = "; ".join(sorted({c.reason for c in hit}))
         # a skip is allowed only with a reason; a bare skip is drift
         return ("skipped", why) if all(c.reason for c in hit) else ("missing", "")
+    if any(c.status == "flaky" for c in hit):
+        return "pass (flaky)", ""
     return "pass", ""
 
 
 def render(requirements: str, cases: list[Case], run_id: str, commit: str) -> tuple[str, list[str]]:
-    rows, drift, skips = [], [], []
+    rows, drift, skips, flaky = [], [], [], []
     for rid, refs in evidence(requirements).items():
         for ref in dict.fromkeys(refs):
             label = ref.path + (f"::{ref.name}" if ref.name else "")
@@ -91,6 +93,8 @@ def render(requirements: str, cases: list[Case], run_id: str, commit: str) -> tu
             rows.append(f"| {rid} | `{label}` | {st} |")
             if st == "missing":
                 drift.append(f"{rid}: {label} missing")
+            if st == "pass (flaky)":
+                flaky.append(f"- {rid} `{label}`")
             if st == "skipped":
                 skips.append(f"- {rid} `{label}`: {why}")
     head = (
@@ -100,7 +104,10 @@ def render(requirements: str, cases: list[Case], run_id: str, commit: str) -> tu
         "fails); `not in run` = perf, script or UI evidence, outside these reporters.\n\n"
         "| Requirement | Named test | Result |\n| --- | --- | --- |\n"
     )
-    tail = "\n## Skipped, with reason\n\n" + ("\n".join(skips) or "none") + "\n"
+    tail = (
+        "\n## Skipped, with reason\n\n" + ("\n".join(skips) or "none") + "\n"
+        "\n## Flaky (passed on retry)\n\n" + ("\n".join(flaky) or "none") + "\n"
+    )
     return head + "\n".join(rows) + "\n" + tail, drift
 
 
@@ -111,11 +118,19 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--playwright", type=Path, nargs="*", default=[])
     ap.add_argument("--out", type=Path, default=Path("verification-matrix.md"))
     a = ap.parse_args(argv)
-    cases = [c for p in a.junit for c in read_junit(p)] + [
-        c for p in a.playwright for c in read_playwright(p)
-    ]
+    cases: list[Case] = []
+    for read, paths in ((read_junit, a.junit), (read_playwright, a.playwright)):
+        for p in paths:
+            try:
+                cases += read(p)
+            except FileNotFoundError:  # job skipped or crashed: its tests show as missing
+                print(f"no results for {p}")
+    reqs = a.requirements.read_text(encoding="utf-8")
+    if not evidence(reqs):
+        print(f"no requirements parsed from {a.requirements}")
+        return 1
     md, drift = render(
-        a.requirements.read_text(encoding="utf-8"),
+        reqs,
         cases,
         os.environ.get("GITHUB_RUN_ID", "local"),
         os.environ.get("GITHUB_SHA", "local"),

@@ -3,6 +3,8 @@
 import json
 from pathlib import Path
 
+import pytest
+
 from scripts import verification_matrix as vm
 from tests.meta.test_requirements_trace import Ref
 
@@ -109,3 +111,32 @@ def test_main_exits_1_on_drift_and_writes_matrix(tmp_path: Path) -> None:
     (tmp_path / "ok.md").write_text("\n".join(REQS.splitlines()[:3]) + "\n")
     argv = ["--requirements", str(tmp_path / "ok.md"), "--junit", str(tmp_path / "j.xml")]
     assert vm.main([*argv, "--out", str(out)]) == 0
+
+
+def test_flaky_is_shown_and_listed() -> None:
+    pw = {
+        "suites": [{"specs": [{"title": "t", "file": "f.spec.ts", "tests": [{"status": "flaky"}]}]}]
+    }
+    cases = vm._walk(pw)
+    assert vm.status(Ref("e2e/f.spec.ts", "t"), cases) == ("pass (flaky)", "")
+    reqs = "| AAA-01 | x | T | M | D | `e2e/f.spec.ts::t` | 01 | PASS |\n"
+    md, drift = vm.render(reqs, cases, "1", "c")
+    assert "| pass (flaky) |" in md and "## Flaky" in md and not drift
+
+
+def test_main_exits_1_on_no_requirements(tmp_path: Path) -> None:
+    (tmp_path / "r.md").write_text("no table here\n")
+    argv = ["--requirements", str(tmp_path / "r.md"), "--out", str(tmp_path / "m.md")]
+    assert vm.main(argv) == 1
+
+
+def test_missing_results_file_is_a_message_and_drift(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    (tmp_path / "r.md").write_text(
+        REQS.splitlines()[0] + "\n" + REQS.splitlines()[1] + "\n" + REQS.splitlines()[2] + "\n"
+    )
+    gone = tmp_path / "gone.xml"
+    argv = ["--requirements", str(tmp_path / "r.md"), "--junit", str(gone)]
+    assert vm.main([*argv, "--out", str(tmp_path / "m.md")]) == 1
+    assert f"no results for {gone}" in capsys.readouterr().out

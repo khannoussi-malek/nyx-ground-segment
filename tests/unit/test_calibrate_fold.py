@@ -9,7 +9,7 @@ from gs.common.missiondb import MissionDb
 from gs.ingest.compute import compute
 from gs.ingest.fold import VehicleState, fold
 from tests.support.mission import calibrated
-from tests.support.recompute import empty_state
+from tests.support.recompute import _frame, empty_state, recompute_columns
 
 T0 = datetime(2026, 11, 14, 10, tzinfo=UTC)
 P = "bus_current_a"
@@ -84,3 +84,13 @@ def test_out_of_table_sample_is_a_null_for_the_limit_check() -> None:
         Level.NOMINAL,
         Level.RED,
     )
+
+
+def test_recompute_frame_carries_the_stored_raw_for_a_calibrated_parameter() -> None:
+    row = {"vehicle": "NYX-TA1", "seq": 0, "t_onboard": T0, "mode": "TEST", "last_cmd_id": None}
+    row |= {p: 1.0 for p in MDB.raw_names} | {P: 50.0, f"{P}_raw": 5.0}  # stored eng 50, raw 5
+    f = _frame(row, MDB)
+    assert getattr(f, P) == 5.0 and compute(MDB, f).values[P] == 50.0  # calibrated once
+    old = row | {f"{P}_raw": None}  # history from before the column existed: the stored value
+    assert getattr(_frame(old, MDB), P) == 50.0
+    assert recompute_columns([MDB]) == [*MDB.param_names, f"{P}_raw"]

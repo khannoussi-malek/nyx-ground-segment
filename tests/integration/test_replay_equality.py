@@ -39,7 +39,7 @@ from tests.support.ingest import worker
 from tests.support.mission import MISSION_DIR
 from tests.support.missionfiles import edit, mission_copy, set_formula
 from tests.support.pg import admin_dsn, app_dsn, rows
-from tests.support.recompute import recompute_keys
+from tests.support.recompute import recompute_columns, recompute_keys
 from tests.support.redisx import aclient, client, drained
 from tests.support.s3 import s3_client
 
@@ -220,12 +220,12 @@ async def test_replay_equals_recorded(source: str, recording: Recording) -> None
     assert ts == sorted(ts)
 
 
-async def frames_of(rec: Recording) -> list[pa.Table]:
+async def frames_of(rec: Recording, cols: list[str]) -> list[pa.Table]:
     async with app_conn(rec.db) as c:
         return [
             t
             async for t in window_hours(
-                c, s3_client("archiver"), "archive", rec.vehicle, START, END, SHIPPED.param_names
+                c, s3_client("archiver"), "archive", rec.vehicle, START, END, cols
             )
         ]
 
@@ -258,7 +258,9 @@ async def test_recompute_reproduces_recorded_keys(recording: Recording) -> None:
     ]  # fmt: skip
     assert len(applied) == 2 and applied[0][0] == 0
     acks = rows("select * from alarm_events where vehicle=%s and kind='ACK' order by id", v, db=db)
-    keys, events = recompute_keys(await frames_of(recording), acks, sets, v, applied)
+    keys, events = recompute_keys(
+        await frames_of(recording, recompute_columns(list(sets.values()))), acks, sets, v, applied
+    )
     recorded = rows("select key from alarm_events where vehicle=%s order by id", v, db=db)
     assert keys == [r["key"] for r in recorded]  # incl. the ACK row, in order
     q = "select key, kind, t_onboard from events where vehicle=%s order by id"

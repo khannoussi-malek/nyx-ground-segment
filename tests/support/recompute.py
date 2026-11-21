@@ -22,9 +22,18 @@ def empty_state(cset: engine.CompiledSet) -> VehicleState:
     )
 
 
-def _frame(row: dict[str, Any]) -> FrameHeader:
+def recompute_columns(sets: Sequence[MissionDb]) -> list[str]:
+    """The stored columns the recompute reads: engineering plus `<name>_raw`, over every set."""
+    return list(dict.fromkeys(c for m in sets for c in (*m.param_names, *m.raw_columns)))
+
+
+def _frame(row: dict[str, Any], mdb: MissionDb) -> FrameHeader:
+    """The frame the vehicle sent: a calibrated parameter takes its stored `<name>_raw`, so fold
+    calibrates once (the stored engineering value stays for history written before the column
+    existed, where `_raw` is NULL)."""
     cmd = row["last_cmd_id"]
-    return FrameHeader.model_validate(row | {"last_cmd_id": UUID(cmd) if cmd else None})
+    raws = {n: row[f"{n}_raw"] for n in mdb.calibrations if row.get(f"{n}_raw") is not None}
+    return FrameHeader.model_validate(row | raws | {"last_cmd_id": UUID(cmd) if cmd else None})
 
 
 def recompute_keys(
@@ -46,8 +55,8 @@ def recompute_keys(
     events: list[str] = []
     for table in frames:
         for row in table.to_pylist():
-            f = _frame(row)
-            sha = switch.get(f.seq, vs.set_sha256)
+            sha = switch.get(row["seq"], vs.set_sha256)
+            f = _frame(row, sets[sha])
             old = compiled.get(vs.set_sha256)
             vs, out = fold(vs, vehicle, [f], sets[sha], compiled[sha], old)
             transitions += [t.key for t in out.transitions]

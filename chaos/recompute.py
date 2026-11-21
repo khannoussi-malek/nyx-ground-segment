@@ -11,11 +11,10 @@ import pyarrow as pa
 
 from chaos.collect import LIVE
 from gs.archiver.window import window_hours
-from gs.common.missiondb import load, load_dir
+from gs.common.missiondb import load
 from tests.support.archive import app_conn
-from tests.support.mission import MISSION_DIR
 from tests.support.pg import rows
-from tests.support.recompute import recompute_keys
+from tests.support.recompute import recompute_columns, recompute_keys
 from tests.support.s3 import s3_client
 
 
@@ -28,13 +27,13 @@ def first_frame(vehicle: str) -> datetime | None:
     return t
 
 
-async def _frames(vehicle: str, start: datetime, end: datetime) -> list[pa.Table]:
+async def _frames(vehicle: str, start: datetime, end: datetime, cols: list[str]) -> list[pa.Table]:
     async with app_conn() as c:
         return [
             t
             async for t in window_hours(
                 c, s3_client("archiver"), "archive", vehicle, start, end,
-                load_dir(MISSION_DIR).param_names,
+                cols,
             )
         ]  # fmt: skip
 
@@ -53,7 +52,9 @@ def recomputed_keys(vehicle: str) -> tuple[list[str], list[str]] | None:
     q = "select details from events where vehicle=%s and kind='LIMITS_APPLIED' order by id"
     applied = [(r["details"]["first_seq"], r["details"]["set_sha256"]) for r in rows(q, vehicle)]
     acks = rows("select * from alarm_events where vehicle=%s and kind='ACK' order by id", vehicle)
-    frames = asyncio.run(_frames(vehicle, start, datetime.now(UTC)))
+    frames = asyncio.run(
+        _frames(vehicle, start, datetime.now(UTC), recompute_columns([*sets.values()]))
+    )
     keys, _ = recompute_keys(frames, acks, sets, vehicle, applied)
     recorded = rows("select key from alarm_events where vehicle=%s order by id", vehicle)
     return keys, [r["key"] for r in recorded]

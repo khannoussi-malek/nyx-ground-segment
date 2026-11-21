@@ -266,6 +266,9 @@ def test_i4_result_from_the_watchers_file(tmp_path: Path) -> None:
     assert i4_result(out, 0).startswith("NOT RUN")  # the watcher never wrote its file
     out.write_text('{"samples": 4000, "rows": 90000, "bad": []}')
     assert i4_result(out, 0) == "PASS (4000 samples, 90000 OK rows)"
+    for junk in ("not json", '{"samples": 1}', '{"samples": 1, "rows": 1, "bad": 5}'):
+        out.write_text(junk)
+        assert i4_result(out, 0).startswith("NOT RUN (watch.json is malformed")
     out.write_text('{"samples": 10, "rows": 0, "bad": []}')
     assert i4_result(out, 0).startswith("NOT RUN")  # no OK row seen: nothing was judged
     out.write_text('{"samples": 10, "rows": 50, "bad": ["t NYX-TA1 p OK at 3100 ms"]}')

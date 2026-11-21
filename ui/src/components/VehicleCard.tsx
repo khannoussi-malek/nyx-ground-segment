@@ -9,6 +9,8 @@ export type VehicleCardProps = {
   mode: string;
   seq: number;
   tOnboard: string;
+  /** the vehicle's tm.stale_ms; shown on each value cell for the chaos watcher (I4) */
+  staleMs?: number;
   ageMs: number | null; // ageAt(...) from the parent's clock tick
   params: readonly ParamView[];
   banner?: Banner;
@@ -50,7 +52,7 @@ export function VehicleCard(c: VehicleCardProps) {
         </span>
       </caption>
       {c.params.map((p) => (
-        <ParamRow key={p.id} vehicle={c.vehicle} seq={c.seq} tOnboard={c.tOnboard} p={p} />
+        <ParamRow key={p.id} vehicle={c.vehicle} seq={c.seq} tOnboard={c.tOnboard} staleMs={c.staleMs} p={p} />
       ))}
     </table>
   );

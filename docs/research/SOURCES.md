@@ -596,6 +596,17 @@ Web documents and standards:
 
 - http://testserver/api/mission-db/frame-schema (link only, no saved copy)
 
+## [R25-software-assurance-gap](R25-software-assurance-gap.md)
+
+No papers from the library are cited in this note (PaperLab was down; the standards are the primary sources).
+
+Web documents and standards:
+
+- [ECSS-E-ST-40C-software-6March2009.pdf](papers/web/ECSS-E-ST-40C-software-6March2009.pdf) – saved copy of https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-40C6March2009.pdf
+- [ECSS-Q-ST-80C-Rev1-software-product-assurance-15February2017.pdf](papers/web/ECSS-Q-ST-80C-Rev1-software-product-assurance-15February2017.pdf) – saved copy of https://ecss.nl/wp-content/uploads/2017/04/ECSS-Q-ST-80C-Rev.1(15February2017).pdf
+- [ECSS-E-ST-70C-ground-systems-and-operations-31July2008.pdf](papers/web/ECSS-E-ST-70C-ground-systems-and-operations-31July2008.pdf) – saved copy of https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-70C31July2008.pdf
+- [NPR-7150.2D-NASA-software-engineering-requirements.pdf](papers/web/NPR-7150.2D-NASA-software-engineering-requirements.pdf) – saved copy of https://nodis3.gsfc.nasa.gov/npg_img/N_PR_7150_002D_/N_PR_7150_002D_.pdf
+
 ## Known gaps (checked 2026-11-19)
 
 - **Liang et al. 2022** (R9, grayscale vs colour situation map): cited through a Consensus link only; no DOI found on Crossref, not in PaperLab. Treat as unverified.

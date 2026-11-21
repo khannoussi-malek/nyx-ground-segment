@@ -347,7 +347,7 @@ export function ChartPanel({ store, mission, value, onChange }: {
   const vehicle = vehicles.includes(value.vehicle) ? value.vehicle : (vehicles[0] ?? "");
   const params = paramViews(store.vehicle(vehicle)?.values ?? {}, mission, store.vehicle(vehicle)?.mode);
   const param = params.some((x) => x.id === value.param) ? value.param : (params[0]?.id ?? "");
-  const check = mission && Object.hasOwn(mission.limits, param) ? mission.limits[param].checks.find((c) => c.type === "limit") : undefined;
+  const view = params.find((x) => x.id === param); // its limits are the current mode set's (paramViews)
   const unit = paramMeta(mission, param)?.unit;
   return (
     <section className="chart-panel" aria-label="Chart">
@@ -368,7 +368,7 @@ export function ChartPanel({ store, mission, value, onChange }: {
               </select>
             </label>
           </div>
-          <Chart key={`${vehicle}/${param}`} vehicle={vehicle} param={param} unit={unit} label={params.find((x) => x.id === param)?.label} limits={check?.type === "limit" ? check : undefined} />
+          <Chart key={`${vehicle}/${param}`} vehicle={vehicle} param={param} unit={unit} label={view?.label} limits={view?.limits} />
         </>
       ) : (
         <p className="empty">Waiting for telemetry…</p>

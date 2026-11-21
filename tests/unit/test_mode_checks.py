@@ -3,7 +3,15 @@
 import pytest
 
 from gs.alarms.contract import Level, Transition
-from gs.alarms.engine import CompiledSet, EngineState, active, compile_set, initial_state, step
+from gs.alarms.engine import (
+    CompiledSet,
+    EngineState,
+    active,
+    compile_set,
+    initial_state,
+    step,
+    switch_set,
+)
 from gs.alarms.state import dump, load
 from gs.common.missiondb import MissionDbError
 from tests.support.alarms import EPOCH, PERIOD_S, V, at
@@ -111,10 +119,18 @@ def test_check_set_on_rows_and_text() -> None:
 def test_mode_change_reload_and_restart_agree() -> None:  # Review Focus 4, unit level
     c = cs(f"SAFE: [{LIM % (25, 20)}]")
     pre, _ = run(initial_state(c), c, 0, [31.0] * 3, "TEST")
-    straight, t1 = run(pre, c, 3, [26.0, 26.0], "SAFE")
-    restarted = load(dump(pre), c)  # a restart before the mode change
-    again, t2 = run(restarted, c, 3, [26.0, 26.0], "SAFE")
-    assert again == straight and t1 == t2
+    straight, _ = run(pre, c, 3, [26.0] * 5, "SAFE")
+    # the same batch, but after the mode change: reload the same set, then restart from the snapshot
+    mid, _ = run(pre, c, 3, [26.0] * 3, "SAFE")
+    reloaded, _ = switch_set(mid, c, c, V, EPOCH, 6, at(6 * PERIOD_S))
+    restarted = load(dump(reloaded), c)
+    end, _ = run(restarted, c, 6, [26.0] * 2, "SAFE")
+
+    def view(s: EngineState) -> object:  # the ring is reset by a reload, so it is not compared
+        return s.mode, {k: (x.level, x.side) for k, x in s.slots.items()}, s.alarms
+
+    assert straight.mode == "SAFE" and straight.slots[(T, "limit")].level == Level.RED and T in straight.alarms
+    assert view(end) == view(straight)
 
 
 def test_deadband_floor_every_set() -> None:

@@ -223,15 +223,27 @@ export function restoreParameters(): void {
  * Start a dropout on `vehicle`, then XADD `n` copies of its newest tm frame with t_onboard 10 min ahead
  * (the DLQ rejects them as t_onboard_range). One Python process does both, so process start-up never
  * eats into the 2 s between the last good frame and the LOS.
+ * The simulator's send buffer can still XADD a frame built before the dropout after the fault call
+ * returns; landing after the bad frames, that good frame would end the rejections and the LOS would
+ * read LOSS OF SIGNAL (main CI flake, 2026-11-21). So the stream must be quiet for 0.3 s (3 frame
+ * periods) first, which leaves ~1.7 s for the DLQ before the LOS.
  */
 export function dropoutWithBadFrames(vehicle: string, n: number, durationS: number): void {
-  const code =
-    "import json,sys,urllib.request as u;from datetime import datetime,timedelta;from tests.support.redisx import client;" +
-    "r=client('admin');v=sys.argv[1];" +
-    "u.urlopen(u.Request(sys.argv[3]+'/sim/fault',json.dumps({'vehicle':v,'fault':'dropout','params':{'duration_s':float(sys.argv[4])}}).encode(),{'Content-Type':'application/json'}));" +
-    "last=r.xrevrange('tm:'+v,count=1)[0][1];f=json.loads(last['data']);" +
-    "t=datetime.fromisoformat(f['t_onboard'].replace('Z','+00:00'))+timedelta(minutes=10);" +
-    "[r.xadd('tm:'+v,{'data':json.dumps({**f,'t_onboard':t.isoformat(),'seq':f['seq']+1+i})}) for i in range(int(sys.argv[2]))]";
+  const code = [
+    "import json,sys,time,urllib.request as u",
+    "from datetime import datetime,timedelta",
+    "from tests.support.redisx import client",
+    "r=client('admin');v=sys.argv[1]",
+    "u.urlopen(u.Request(sys.argv[3]+'/sim/fault',json.dumps({'vehicle':v,'fault':'dropout','params':{'duration_s':float(sys.argv[4])}}).encode(),{'Content-Type':'application/json'}))",
+    "newest=lambda: r.xrevrange('tm:'+v,count=1)[0]",
+    "e,quiet,deadline=newest(),0,time.monotonic()+3",
+    "while quiet<3:",
+    "  assert time.monotonic()<deadline,'tm:'+v+' still growing 3 s into the dropout'",
+    "  time.sleep(0.1);n=newest();quiet=quiet+1 if n[0]==e[0] else 0;e=n",
+    "f=json.loads(e[1]['data'])",
+    "t=datetime.fromisoformat(f['t_onboard'].replace('Z','+00:00'))+timedelta(minutes=10)",
+    "[r.xadd('tm:'+v,{'data':json.dumps({**f,'t_onboard':t.isoformat(),'seq':f['seq']+1+i})}) for i in range(int(sys.argv[2]))]",
+  ].join("\n");
   execFileSync("uv", ["run", "-q", "python", "-c", code, vehicle, String(n), SIM, String(durationS)], {
     cwd: REPO,
     env: { ...process.env, PYTHONPATH: REPO },

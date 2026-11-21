@@ -317,7 +317,7 @@ async def test_report_csv_route(rep: tuple[httpx.AsyncClient, str]) -> None:
         js["parameters"][P1]["avg"], js["parameters"][P1]["n"],
     )  # fmt: skip
     assert [x for x in rows if x["section"] == "summary"][0]["n"] == "100"
-    assert [x["key"] for x in rows if x["section"] == "parameter"] == list(SET.parameters)
+    assert [x["key"] for x in rows if x["section"] == "parameter"] == list(SET.param_names)
 
 
 async def test_silent_session_report(

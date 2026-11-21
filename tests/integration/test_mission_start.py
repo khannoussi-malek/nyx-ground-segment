@@ -12,15 +12,14 @@ from gs.ingest import mission
 from gs.ingest.events import GroundEvent, insert_set
 from gs.ingest.mission import MissionWatcher, start_set
 from tests.support.mission import MISSION_DIR
-from tests.support.missionfiles import edit, mission_copy
+from tests.support.missionfiles import add_raw_parameter, edit, mission_copy
 from tests.support.pg import app_dsn, owner_dsn, throwaway_db
 
 SHIPPED = load_dir(MISSION_DIR)
 
 
 def add_param(m: Path, name: str = "cabin_humidity_pct") -> None:
-    with (m / "parameters.yaml").open("a") as f:
-        f.write(f"  {name}: {{unit: pct, type: float}}\n")
+    add_raw_parameter(m, f"  {name}: {{unit: pct, type: float}}")
 
 
 def migrate(db: str, mdb: MissionDb) -> None:

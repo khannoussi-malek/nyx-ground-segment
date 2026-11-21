@@ -12,7 +12,7 @@ from gs.ingest.errors import OperationalDbError
 from gs.ingest.events import rejected_key
 from tests.support.env import vid, wait_until
 from tests.support.ingest import start_ingest
-from tests.support.missionfiles import edit, mission_copy, set_formula
+from tests.support.missionfiles import add_raw_parameter, edit, mission_copy, set_formula
 from tests.support.pg import rows
 from tests.support.redisx import stream_entries, validate_ui_event
 
@@ -83,8 +83,7 @@ def test_ingest_health_reports_used_memory() -> None:
 def test_main_starts_on_a_fallback_set_and_watches_mission(tmp_path: Path) -> None:  # D-ALM-12
     m, token = mission_copy(tmp_path), vid()  # set keys are content hashes: make them new
     edit(m / "commands.yaml", "Close the cabin isolation valve", f"Close valve {token}")
-    with (m / "parameters.yaml").open("a") as f:  # no telemetry column: start falls back
-        f.write("  cabin_humidity_pct: {unit: pct, type: float}\n")
+    add_raw_parameter(m, "  cabin_humidity_pct: {unit: pct, type: float}")  # no column: fall back
     rejected = rejected_key(set_formula(m))
     p, _ = start_ingest(MISSION_DB=str(m))
     try:
@@ -115,8 +114,7 @@ def _healthy(port: int) -> bool:  # serves health only after the start set and i
 def test_start_rejection_publishes_link_once(tmp_path: Path) -> None:  # P-pf9, Task 27b
     m, token = mission_copy(tmp_path), vid()
     edit(m / "commands.yaml", "Close the cabin isolation valve", f"Close valve {token}")
-    with (m / "parameters.yaml").open("a") as f:  # no telemetry column: start falls back
-        f.write("  cabin_humidity_pct: {unit: pct, type: float}\n")
+    add_raw_parameter(m, "  cabin_humidity_pct: {unit: pct, type: float}")  # no column: fall back
     rejected = rejected_key(set_formula(m))
     for _ in range(2):  # the second start finds the row: its insert lost, so no second link
         p, port = start_ingest(MISSION_DB=str(m))

@@ -24,7 +24,7 @@ from gs.ingest.main import publish_events
 from gs.simulator.frames import make_frame
 from tests.support.env import now, until, vid
 from tests.support.http import api_settings, authed, get_json
-from tests.support.missionfiles import edit, mission_copy, set_formula
+from tests.support.missionfiles import add_raw_parameter, edit, mission_copy, set_formula
 from tests.support.pg import app_dsn, audit_rows, events_for, owner_dsn, rows, throwaway_db
 from tests.support.redisx import aclient, stream_entries
 
@@ -167,8 +167,7 @@ async def test_api_start_rejection_reaches_consoles_in_the_snapshot(
 ) -> None:  # P-pf9, Task 27b: no console is connected while the lifespan starts
     m, token = mission_copy(tmp_path), vid()
     edit(m / "commands.yaml", "Close the cabin isolation valve", f"Close valve {token}")
-    with (m / "parameters.yaml").open("a") as f:  # no telemetry column: start falls back
-        f.write("  cabin_humidity_pct: {unit: pct, type: float}\n")
+    add_raw_parameter(m, "  cabin_humidity_pct: {unit: pct, type: float}")  # no column: fall back
     key = rejected_key(set_formula(m))
     app = api_on(users_file, m)
     async with authed(app):

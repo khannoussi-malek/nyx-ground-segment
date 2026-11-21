@@ -3,7 +3,7 @@
 action + 60 s); a command is due by max(QUEUED + 20 s, that same action end + 60 s) (EX-04)."""
 
 from collections import Counter
-from collections.abc import Collection, Iterable, Sequence
+from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -73,7 +73,7 @@ def _expected_gaps(ledger: Sequence[LedgerLine], due: datetime) -> Counter[Gap]:
     """Each dropout run that the next frame follows in the same count (seq + 1) is one GAP."""
     out: Counter[Gap] = Counter()
     run: dict[str, list[LedgerLine]] = {}
-    for ln in ledger:
+    for ln in sorted(ledger, key=lambda x: x.t):  # `sent` lines come later than the tick's
         if ln.fate == "dropout":
             run.setdefault(ln.vehicle, []).append(ln)
         elif ln.fate == "sent" and (r := run.pop(ln.vehicle, [])):
@@ -113,6 +113,30 @@ def check_i2(ledger: Sequence[LedgerLine], stored: Sequence[Key], due: datetime)
     if extra or dupes:
         return Result("I2", False, f"{len(extra)} rows not sent ({_sample(extra)}), {dupes} twice")
     return Result("I2", True, f"{len(rows)} rows")
+
+
+def check_i3_recompute(
+    recorded: Mapping[str, Sequence[str]], recomputed: Mapping[str, Sequence[str]]
+) -> Result:
+    """The end-of-run determinism check (D-REP-05 b): per vehicle, the transition keys step()
+    derives from the stored frames equal the recorded ones, same order. I3 passes only when this
+    and the continuous path check both do."""
+    for v in sorted(recorded):
+        a, b = list(recorded[v]), list(recomputed.get(v, []))
+        if a != b:
+            i = next(
+                (i for i, (x, y) in enumerate(zip(a, b, strict=False)) if x != y),
+                min(len(a), len(b)),
+            )
+            return Result(
+                "I3",
+                False,
+                f"recompute differs for {v}: {len(a)} recorded, {len(b)} recomputed, first "
+                f"difference at index {i} (recorded {a[i : i + 1]}, recomputed {b[i : i + 1]})",
+            )
+    return Result(
+        "I3", True, f"recompute equals recorded ({sum(map(len, recorded.values()))} keys)"
+    )
 
 
 # kind -> {state before: states after}; None = no open alarm (D-ALM-07/08, as P5)

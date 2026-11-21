@@ -2,9 +2,13 @@
 when the hold is interrupted. Plus the compose overlay's network topology."""
 
 import json
+import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Any
 
+import psycopg
 import pytest
 import yaml
 
@@ -27,7 +31,7 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> Calls:
         return Done()
 
     monkeypatch.setattr(actions, "compose", compose)
-    monkeypatch.setattr(actions, "_docker", lambda *a: seen.append(("docker", *a)))
+    monkeypatch.setattr(actions, "_docker", lambda *a, **_: seen.append(("docker", *a)))
     monkeypatch.setattr(actions, "set_read_only", lambda on: seen.append(("ro", str(on))))
     monkeypatch.setattr(
         actions,
@@ -84,6 +88,44 @@ def test_the_undo_runs_when_the_hold_is_interrupted(calls: Calls) -> None:
     with pytest.raises(KeyboardInterrupt):
         actions.run_action(Action(0, "partition_db", "ingest-2", 20), boom)
     assert calls[-1][:3] == ("docker", "network", "connect")
+
+
+def test_a_stop_ends_the_hold_and_the_undo_runs(calls: Calls) -> None:
+    stop = threading.Event()
+    stop.set()  # the soak ended mid-action: wait() returns at once
+    t0 = time.monotonic()
+    actions.run_action(Action(0, "pg_readonly", "", 600), stop.wait)
+    assert time.monotonic() - t0 < 5 and calls == [("ro", "True"), ("ro", "False")]
+
+
+def test_restore_runs_every_step_even_when_one_fails(
+    calls: Calls, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    compose_orig = vars(actions)["compose"]  # the recording fake
+
+    def compose(*a: str, check: bool = True) -> Any:
+        if a[0] == "up":
+            raise subprocess.CalledProcessError(1, "docker compose up")
+        return compose_orig(*a, check=check)
+
+    monkeypatch.setattr(actions, "compose", compose)
+    failures = actions.restore_stack()
+    assert len(failures) == 1 and failures[0].startswith("up:")
+    assert ("compose", "unpause", "ingest-1", "ingest-2") in calls
+    assert ("docker", "network", "connect", "proj_redisnet", "cid123") in calls
+    assert ("docker", "network", "connect", "proj_dbnet", "cid123") in calls
+    assert calls[-1] == ("ro", "False")
+
+
+def test_restore_reports_a_failed_read_only_reset(
+    calls: Calls, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def down(on: bool) -> None:
+        raise psycopg.OperationalError("db down")
+
+    monkeypatch.setattr(actions, "set_read_only", down)
+    (failure,) = actions.restore_stack()
+    assert failure.startswith("read-only reset:")
 
 
 def test_unknown_action_and_worker_action_without_a_worker_are_refused(calls: Calls) -> None:

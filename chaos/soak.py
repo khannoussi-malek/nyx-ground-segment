@@ -13,6 +13,7 @@ import json
 import os
 import queue
 import random
+import signal
 import subprocess
 import sys
 import threading
@@ -27,13 +28,14 @@ import psycopg
 import redis
 
 from chaos import collect
-from chaos.actions import api_ok, run_action, wait_recovered
+from chaos.actions import RECOVERY_S, restore_stack, run_action, wait_recovered
 from chaos.collect import LEDGER
 from chaos.invariants import (
     Result,
     check_i1,
     check_i2,
     check_i3_paths,
+    check_i3_recompute,
     check_i6,
     check_i7,
     check_i8,
@@ -41,6 +43,7 @@ from chaos.invariants import (
     fault_window,
 )
 from chaos.operator import Operator
+from chaos.recompute import recompute_all
 from chaos.report import Tally, render
 from chaos.schedule import QUIET_S, VEHICLES, Action, Fault, fault_schedule, infra_schedule
 from gs.alarms.quality import FaultWindow, Quality
@@ -97,11 +100,13 @@ def infra_loop(acts: list[Action], t0: float, sh: Shared, out: Path) -> None:
             sh.in_flight = True
             sh.counts["actions"][a.kind] += 1
         try:
-            run_action(a)
+            run_action(a, sleep=sh.stop.wait)  # a stop ends the wait; the undo still runs
         except (subprocess.CalledProcessError, psycopg.Error, OSError, AssertionError) as e:
             sh.results.put(Result("I5", False, f"action {a.kind} {a.target} failed: {e}"))
             return
         end = now()
+        if sh.stop.is_set():  # undone; the soak is over, nobody reads a recovery time
+            return
         with sh.lock:
             sh.in_flight, sh.infra_end = False, end
         took = wait_recovered()
@@ -195,10 +200,15 @@ def print_failure(seed: int, s: Sampler, sh: Shared) -> None:
 
 def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
     os.environ["COMPOSE_FILE"] = COMPOSE_FILES
-    if not LEDGER.exists() or not api_ok():
+    if not LEDGER.exists():
         sys.exit(
             "stack not up with the chaos overlay: run `make chaos` (see docker-compose.chaos.yml)"
         )
+    # a crashed earlier run may have left Redis stopped, a network cut or Postgres read-only
+    for f in restore_stack():
+        print(f"restore at start: {f}", file=sys.stderr)
+    if wait_recovered() is None:
+        sys.exit("stack not healthy after restore: check `docker compose ps`")
     started = now()
     out = out_root / f"{started:%Y-%m-%d}-{seed}"
     out.mkdir(parents=True, exist_ok=True)
@@ -210,10 +220,10 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
     faults, acts = fault_schedule(seed, minutes), infra_schedule(seed, minutes)
     t0, total = time.monotonic(), minutes * 60
     thread = threading.Thread(target=infra_loop, args=(acts, t0, sh, out), daemon=True)
-    thread.start()
     op = Operator()
     fi, next_sample, next_ack, next_iso, minute = 0, SAMPLE_S, ACK_S, ISOLATE_S / 2, 0
     try:
+        thread.start()
         while s.violation is None and (time.monotonic() - t0 < total or thread.is_alive()):
             el = time.monotonic() - t0
             while fi < len(faults) and faults[fi].at_s <= el:
@@ -241,6 +251,9 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
             final(s, sh)
     finally:
         sh.stop.set()
+        thread.join(timeout=RECOVERY_S + 30)  # its action ends and undoes itself
+        for f in restore_stack():  # whatever is still pending (idempotent, also after a PASS)
+            print(f"restore at end: {f}", file=sys.stderr)
         s.csv.close()
     counts = {k: dict(v) for k, v in sh.counts.items()}
     counts["operator"] = {"isolate_valve sent": op.sent, "acks": op.acked, "failed": op.failed}
@@ -265,9 +278,18 @@ def final(s: Sampler, sh: Shared) -> None:
         time.sleep(2)
     s.drain_i5()
     s.sample()
+    if s.violation is None:  # I3 end of run (D-REP-05 b): the whole history, from the initial state
+        try:
+            s.record(check_i3_recompute(*recompute_all()))
+        except (psycopg.Error, OSError, AssertionError, KeyError) as e:
+            s.record(Result("I3", False, f"recompute failed: {type(e).__name__}: {e}"))
 
 
 def main() -> None:
+    def term(*_: object) -> None:
+        raise KeyboardInterrupt  # SIGTERM runs the `finally` that undoes the pending action
+
+    signal.signal(signal.SIGTERM, term)
     ap = argparse.ArgumentParser()
     ap.add_argument("--seed", type=int, default=int(os.environ.get("CHAOS_SEED") or 0) or None)
     ap.add_argument("--minutes", type=float, default=float(os.environ.get("CHAOS_MINUTES") or 30))

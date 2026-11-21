@@ -129,10 +129,13 @@ def tick_pairs(
     act: Callable[[int, FaultBoard, float], None] = lambda *_: None,
     box: CommandBox | None = None,
     ledger: Callable[[str, int, datetime, str], object] | None = None,
+    buf: FrameBuffer | None = None,
 ) -> list[tuple[str, str]]:
     """Run tick_loop for `n` ticks on a fake clock; `act(k, board, mono)` runs just before tick k.
-    The (stream, data) pairs the loop appended, in buffer order; `ledger` is passed through."""
-    clock, buf, stop, board, ticks = [0.0], FrameBuffer(), asyncio.Event(), FaultBoard(), [0]
+    The (stream, data) pairs the loop appended, in buffer order; `ledger`, `buf`
+    are passed through."""
+    clock, stop, board, ticks = [0.0], asyncio.Event(), FaultBoard(), [0]
+    buf = FrameBuffer() if buf is None else buf
 
     async def sleep(d: float) -> None:
         clock[0] += d

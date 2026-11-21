@@ -79,11 +79,18 @@ async def tick_loop(
 
     With a `box`, each tick runs <= 1 command after its frame; the frame carries the command
     executed in an earlier tick (D-SIM-06) and its acks follow the frame in the same buffer.
-    `ledger(vehicle, seq, t, fate)` is told what became of each frame: sent, dropout, overflow
-    (the buffer was full) and, per extra entry, duplicate or malformed (D-EXT-15).
+    `ledger(vehicle, seq, t, fate)` is told what became of each frame: sent (once it is in Redis),
+    dropout, overflow (the buffer was full) and, per extra entry, duplicate or malformed (D-EXT-15).
     """
     board = faults or FaultBoard()
     note = ledger or (lambda *_: None)
+
+    def put(vehicle: str, seq: int, t: datetime, data: str, fate: str) -> None:
+        # the fate is written when the XADD succeeded (send_loop), so a frame still in the buffer
+        # at shutdown never reads as sent; a full buffer is told at once
+        if not buf.append(stream, data, lambda: note(vehicle, seq, t, fate)):
+            note(vehicle, seq, t, "overflow")
+
     start, seq, n = monotonic(), 0, 0
     last: dict[str, float] = {}  # values of the previous frame, what a freeze repeats
     frozen: dict[str, float] | None = None
@@ -110,12 +117,11 @@ async def tick_loop(
             note(vehicle, seq, t, "dropout")
         else:  # dropout: seq advances, nothing sent
             data = build_frame(vehicle, seq, t, values, box.last_cmd_id if box else None)
-            note(vehicle, seq, t, "sent" if buf.append(stream, data) else "overflow")
+            put(vehicle, seq, t, data, "sent")
             for _ in range(int(str(dup.params["count"])) if dup else 0):
-                note(vehicle, seq, t, "duplicate" if buf.append(stream, data) else "overflow")
+                put(vehicle, seq, t, data, "duplicate")
             if bad:
-                extra = malformed_entry(vehicle, str(bad.params["kind"]))
-                note(vehicle, seq, t, "malformed" if buf.append(stream, extra) else "overflow")
+                put(vehicle, seq, t, malformed_entry(vehicle, str(bad.params["kind"])), "malformed")
         if box:
             hold = _find(active, "hold_exec")
             hold_s = float(str(hold.params["duration_s"])) if hold else None

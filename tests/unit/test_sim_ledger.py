@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from gs.simulator.buffer import BUFFER_MAX, FrameBuffer
+from gs.simulator.buffer import BUFFER_MAX, FrameBuffer, send_loop
 from gs.simulator.frames import tick_loop
 from gs.simulator.ledger import Ledger
 from gs.simulator.main import SimSettings, _ledger_path
@@ -26,12 +26,43 @@ def fates(n: int = N, *reqs: object) -> list[Line]:
         assert vehicle == "NYX-TA1" and t.tzinfo is not None
         out.append((seq, fate))
 
-    tick_pairs(n, at_tick(2, *reqs) if reqs else lambda *_: None, ledger=note)  # type: ignore[arg-type]
-    return out
+    buf = FrameBuffer()
+    tick_pairs(n, at_tick(2, *reqs) if reqs else lambda *_: None, ledger=note, buf=buf)  # type: ignore[arg-type]
+    while buf.head():  # the send path: a frame reads as sent once it is out
+        if on_sent := buf.pop():
+            on_sent()
+    return sorted(out, key=lambda x: x[0])  # dropouts are told at the tick, sent at the send
 
 
 def test_clean_run_is_one_sent_line_per_frame() -> None:
     assert fates() == [(i, "sent") for i in range(N)]
+
+
+def test_frames_still_buffered_are_never_written_as_sent() -> None:
+    out: list[Line] = []
+    buf = FrameBuffer()
+    tick_pairs(N, ledger=lambda v, s, t, f: out.append((s, f)), buf=buf)
+    assert out == []  # nothing left the buffer: no `sent` line
+    for _ in range(3):  # the sender got three out before the simulator stopped
+        on_sent = buf.pop()
+        assert on_sent
+        on_sent()
+    assert out == [(i, "sent") for i in range(3)]
+
+
+def test_send_loop_notes_sent_after_the_xadd_succeeds() -> None:
+    buf = FrameBuffer()
+    out: list[tuple[str, int]] = []
+    calls: list[str] = []
+    buf.append("tm:x", "a", lambda: out.append(("a", len(calls))))
+    stop = asyncio.Event()
+
+    async def xadd(stream: str, data: str) -> None:
+        calls.append(data)
+        stop.set()
+
+    asyncio.run(send_loop(buf, xadd, stop))
+    assert out == [("a", 1)] and len(buf) == 0
 
 
 def test_dropout_lines_keep_the_seq_running() -> None:

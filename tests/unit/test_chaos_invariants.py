@@ -12,6 +12,7 @@ from chaos.invariants import (
     check_i1,
     check_i2,
     check_i3_paths,
+    check_i3_recompute,
     check_i6,
     check_i7,
     check_i8,
@@ -201,3 +202,29 @@ def test_fault_window_only_for_faults_that_move_a_parameter() -> None:
     assert (
         w is not None and w.params == {"cabin_pressure_kpa"} and w.start < t(10) and w.end > t(50)
     )
+
+
+def test_i3_recompute_equal_keys_pass() -> None:
+    keys = {V: ["a", "b", "c"], "NYX-TA2": []}
+    assert check_i3_recompute(keys, {V: ["a", "b", "c"], "NYX-TA2": []}).ok
+
+
+def test_i3_recompute_fails_on_missing_extra_and_reordered_keys() -> None:
+    rec = {V: ["a", "b", "c"]}
+    missing = check_i3_recompute(rec, {V: ["a", "c"]})
+    extra = check_i3_recompute(rec, {V: ["a", "b", "c", "d"]})
+    swapped = check_i3_recompute(rec, {V: ["a", "c", "b"]})
+    assert not missing.ok and "b" in missing.detail and "3 recorded, 2 recomputed" in missing.detail
+    assert not extra.ok and "d" in extra.detail
+    assert not swapped.ok and "index 1" in swapped.detail
+
+
+def test_i1_expected_gap_does_not_depend_on_the_order_of_the_lines() -> None:
+    # `sent` lines are written when the XADD succeeded, after the tick's dropout lines
+    lines = [LedgerLine(V, 1, T0 + timedelta(seconds=1), "dropout"),
+             LedgerLine(V, 2, T0 + timedelta(seconds=2), "dropout"),
+             LedgerLine(V, 0, T0, "sent"),
+             LedgerLine(V, 3, T0 + timedelta(seconds=3), "sent")]  # fmt: skip
+    stored = [(V, T0, 0), (V, T0 + timedelta(seconds=3), 3)]
+    assert check_i1(lines, stored, [Gap(V, 1, 2)], DUE).ok
+    assert not check_i1(lines, stored, [], DUE).ok  # the dropout run is still seen

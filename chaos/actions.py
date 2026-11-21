@@ -50,7 +50,7 @@ def wait_recovered(timeout: float = RECOVERY_S) -> float | None:
 
 def _networks(service: str, suffix: str) -> tuple[str, str]:
     """(container id, this project's network ending in `suffix`) of `service`."""
-    cid = compose("ps", "-q", service).stdout.strip()
+    cid = compose("ps", "-aq", service).stdout.strip()
     out = subprocess.run(
         ["docker", "inspect", "-f", "{{json .NetworkSettings.Networks}}", cid],
         capture_output=True,
@@ -61,13 +61,40 @@ def _networks(service: str, suffix: str) -> tuple[str, str]:
     return cid, net
 
 
-def _docker(*args: str) -> None:
-    subprocess.run(["docker", *args], capture_output=True, text=True, check=True)
+def _docker(*args: str, check: bool = True) -> None:
+    subprocess.run(["docker", *args], capture_output=True, text=True, check=check)
 
 
-def run_action(a: Action, sleep: Callable[[float], None] = time.sleep) -> None:
-    """Blocks for the action and its undo. Worker kill and the two partitions name an ingest
-    worker; the others act on the one service."""
+def restore_stack() -> list[str]:
+    """Back to a known good state, whatever an earlier run left: every service up, ingest
+    unpaused, ingest on both networks, Postgres writable. Every step runs; returns the failures.
+    Used at soak start (a crashed run must not poison the next) and when it ends."""
+    failures: list[str] = []
+
+    def step(name: str, fn: Callable[[], object]) -> None:
+        try:
+            fn()
+        except (subprocess.CalledProcessError, psycopg.Error, OSError, ValueError) as e:
+            failures.append(f"{name}: {type(e).__name__}: {e}")
+
+    def reconnect() -> None:
+        nets = [_networks("redis", "redisnet")[1], _networks("db", "dbnet")[1]]
+        for t in INGEST:
+            cid = compose("ps", "-aq", t).stdout.strip()
+            for net in nets:  # already connected: docker says so, which is fine
+                _docker("network", "connect", net, cid, check=False)
+
+    step("up", lambda: compose("up", "-d"))
+    step("unpause", lambda: compose("unpause", *INGEST, check=False))
+    step("networks", reconnect)
+    step("read-only reset", lambda: set_read_only(False))
+    return failures
+
+
+def run_action(a: Action, sleep: Callable[[float], object] = time.sleep) -> None:
+    """Blocks for the action and its undo; `sleep` is the soak's stop event's wait, so a stop ends
+    the action early and the undo (the `finally`) still runs. Worker kill and the two partitions
+    name an ingest worker; the others act on the one service."""
     t = a.target
     assert t in INGEST or a.kind not in (
         "worker_kill",
@@ -104,7 +131,7 @@ def run_action(a: Action, sleep: Callable[[float], None] = time.sleep) -> None:
                 _docker("network", "disconnect", net, cid)
                 sleep(a.duration_s)
             finally:
-                _docker("network", "connect", net, cid)
+                _docker("network", "connect", net, cid, check=False)  # recreated meanwhile: ok
         case "pg_readonly":
             try:
                 set_read_only(True)

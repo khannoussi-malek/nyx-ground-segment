@@ -127,9 +127,10 @@ async def test_frame_schema_served(users_file: Path) -> None:  # D-EXT-19
     app = create_app(api_settings(users_file))
     async with authed(app) as c:
         schema = await get_json(c, "/api/mission-db/frame-schema")
-    params = app.state.watcher.current.param_names
+    mdb = app.state.watcher.current
     assert schema["$schema"] == "https://json-schema.org/draft/2020-12/schema"
-    assert set(params) <= set(schema["properties"])
+    assert set(mdb.raw_names) <= set(schema["properties"])  # a frame carries raw values only
+    assert not set(mdb.derived_names) & set(schema["properties"])  # derived: computed on ground
     frame = json.loads(make_frame("NYX-TA1", 7, datetime.now(UTC), random.Random(7)))
     jsonschema.Draft202012Validator(schema).validate(frame)
     del frame["seq"]

@@ -621,6 +621,19 @@ Web documents and standards:
 - [ECSS-E-ST-70C-ground-systems-and-operations-31July2008.pdf](papers/web/ECSS-E-ST-70C-ground-systems-and-operations-31July2008.pdf) – saved copy of https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-70C31July2008.pdf
 - [NPR-7150.2D-NASA-software-engineering-requirements.pdf](papers/web/NPR-7150.2D-NASA-software-engineering-requirements.pdf) – saved copy of https://nodis3.gsfc.nasa.gov/npg_img/N_PR_7150_002D_/N_PR_7150_002D_.pdf
 
+## [R26-time-handling](R26-time-handling.md)
+
+No papers from the library are cited in this note (the standards and tool documentation are the primary sources). ECSS-E-ST-70-41C is listed under R24.
+
+Web documents and standards:
+
+- [IERS-Bulletin-C-72-2026-07-06.txt](papers/web/IERS-Bulletin-C-72-2026-07-06.txt) – saved copy of https://datacenter.iers.org/data/latestVersion/16_BULLETIN_C16.txt
+- [CGPM-2022-Resolution-4-UTC.txt](papers/web/CGPM-2022-Resolution-4-UTC.txt) – saved copy of https://www.bipm.org/en/cgpm-2022/resolution-4
+- [CCSDS-301.0-B-4-time-code-formats.pdf](papers/web/CCSDS-301.0-B-4-time-code-formats.pdf) – saved copy of https://ccsds.org/Pubs/301x0b4e1.pdf
+- [Google-leap-smear.txt](papers/web/Google-leap-smear.txt) – saved copy of https://developers.google.com/time/smear
+- [Python-datetime-docs.txt](papers/web/Python-datetime-docs.txt) – saved copy of https://docs.python.org/3/library/datetime.html
+- [PostgreSQL-17-datetime-functions.txt](papers/web/PostgreSQL-17-datetime-functions.txt) – saved copy of https://www.postgresql.org/docs/17/functions-datetime.html
+
 ## Known gaps (checked 2026-11-19)
 
 - **Liang et al. 2022** (R9, grayscale vs colour situation map): cited through a Consensus link only; no DOI found on Crossref, not in PaperLab. Treat as unverified.

@@ -102,7 +102,7 @@ async def test_recompute_over_stored_rows_reproduces_recorded_keys(tmp_path: Pat
     v = vid()
     with throwaway_db() as db:
         m, mdb = setup(tmp_path, db)
-        produce_values(v, {P: [3.0] * 4 + [25.0] * 3 + [3.0] * 4})
+        produce_values(v, {P: [3.0] * 30 + [25.0] * 3 + [3.0] * 4})  # 3 s of constant raw: FROZEN
         async with worker([v], dsn=app_dsn(db), mission_dir=m):
             await until(lambda: drained(v), 10)
         t0 = time_base()
@@ -114,7 +114,11 @@ async def test_recompute_over_stored_rows_reproduces_recorded_keys(tmp_path: Pat
                     t0 + timedelta(hours=1), recompute_columns([mdb]),
                 )
             ]  # fmt: skip
-        keys, _ = recompute_keys(frames, [], {mdb.set_sha256: mdb}, v, [(0, mdb.set_sha256)])
+        keys, events = recompute_keys(frames, [], {mdb.set_sha256: mdb}, v, [(0, mdb.set_sha256)])
         q = "select key from alarm_events where vehicle=%s order by id"
         recorded = [r["key"] for r in rows(q, v, db=db)]
         assert recorded and keys == recorded
+        q = "select key, kind from events where vehicle=%s order by id"
+        frame_events = {r["key"]: r["kind"] for r in rows(q, v, db=db)}
+        assert "FROZEN" in frame_events.values()  # FROZEN judged over the raw column
+        assert set(events) >= set(frame_events)  # same check as test_replay_equality

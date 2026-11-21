@@ -44,7 +44,7 @@ from gs.api.workers import new_pool
 from gs.common.audit import audit
 from gs.common.interfaces import frame_schema as build_frame_schema
 from gs.common.interfaces.missiondb import MissionDbView, Vehicles
-from gs.common.missiondb import MissionDb, MissionDbError, load_dir
+from gs.common.missiondb import MissionDb, MissionDbError, changed_parameters, load_dir
 from gs.ingest.events import GroundEvent, insert_events, to_link
 from gs.ingest.mission import MissionWatcher, start_set
 
@@ -109,7 +109,7 @@ async def _reloaded(conn: psycopg.AsyncConnection, old: MissionDb, new: MissionD
     """LIMITS_RELOADED with every command whose hazardous flag changed (D-EXT-02, EX-25)."""
     was = {n: c.hazardous for n, c in old.commands.items()}
     changed = sorted(n for n, c in new.commands.items() if was.get(n, c.hazardous) != c.hazardous)
-    details = {
+    details: dict[str, Any] = {
         "set_sha256": new.set_sha256,
         "limits_sha256": new.limits_sha256,
         "commands_sha256": new.commands_sha256,
@@ -117,6 +117,8 @@ async def _reloaded(conn: psycopg.AsyncConnection, old: MissionDb, new: MissionD
         "hazardous_changed": changed,
         "previous_set_sha256": old.set_sha256,
     }
+    if moved := changed_parameters(old, new):  # R23 M1
+        details["parameters_changed"] = moved
     await audit(conn, "system", "LIMITS_RELOADED", None, details)
 
 

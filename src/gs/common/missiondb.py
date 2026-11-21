@@ -251,6 +251,28 @@ class MissionDb:
     parameters_yaml: str
 
 
+def changed_parameters(old: MissionDb, new: MissionDb) -> dict[str, list[str]]:
+    """Parameters in both sets whose calibration table or unit differs, with what changed
+    (R23 M1, A-R23-1: stored engineering values are not recomputed, so the change is audited)."""
+
+    def units(m: MissionDb) -> dict[str, str]:
+        return {
+            **{n: p.unit for n, p in m.parameters.items()},
+            **{n: d.unit for n, d in m.derived.items()},
+        }
+
+    ou, nu = units(old), units(new)
+    out: dict[str, list[str]] = {}
+    for n in nu.keys() & ou.keys():
+        what = [
+            *(["calibration"] if old.calibrations.get(n) != new.calibrations.get(n) else []),
+            *(["unit"] if ou.get(n) != nu.get(n) else []),
+        ]
+        if what:
+            out[n] = what
+    return dict(sorted(out.items()))
+
+
 # ---- reading
 class _NoDupLoader(yaml.SafeLoader):
     def construct_mapping(self, node: yaml.MappingNode, deep: bool = False) -> dict[Hashable, Any]:

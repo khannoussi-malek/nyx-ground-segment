@@ -10,19 +10,22 @@ from typing import Any
 
 import httpx
 import jsonschema
+import psycopg
 import redis.asyncio
 from redis.asyncio.retry import Retry
 from redis.backoff import NoBackoff
 
 from gs.api.app import create_app
 from gs.common.interfaces import Link
+from gs.common.migrate import add_columns
+from gs.common.missiondb import load_dir
 from gs.ingest.events import GroundEvent, rejected_key
 from gs.ingest.main import publish_events
 from gs.simulator.frames import make_frame
 from tests.support.env import now, until, vid
 from tests.support.http import api_settings, authed, get_json
 from tests.support.missionfiles import edit, mission_copy, set_formula
-from tests.support.pg import audit_rows, events_for
+from tests.support.pg import app_dsn, audit_rows, events_for, owner_dsn, rows, throwaway_db
 from tests.support.redisx import aclient, stream_entries
 
 RELOAD_S = 5  # two equal polls 1 s apart, plus margin
@@ -171,3 +174,34 @@ async def test_api_start_rejection_reaches_consoles_in_the_snapshot(
     async with authed(app):
         snap = await app.state.hub.snapshot()
     assert [e.kind for e in snap.events if e.key == key] == ["LIMITS_REJECTED"]
+
+
+async def test_calibration_and_unit_change_audited(users_file: Path, tmp_path: Path) -> None:
+    """R23 M1. A throwaway database takes the new tank_pressure_bar_raw column."""
+    m, shipped = mission_copy(tmp_path / "new"), mission_copy(tmp_path / "start")
+    cal = "calibration: {table: [[0, 0], [9, 90]]}, "
+    edit(m / "parameters.yaml", "bus_current_a: {unit: A,", "bus_current_a: {unit: mA,")
+    edit(
+        m / "parameters.yaml",
+        "tank_pressure_bar: {unit: bar, ",
+        f"tank_pressure_bar: {{unit: bar, {cal}",
+    )
+    with throwaway_db() as db:
+        with psycopg.connect(owner_dsn(db), autocommit=True) as c:
+            add_columns(c, load_dir(m))
+        cfg = dataclasses.replace(
+            api_settings(users_file, database_url=app_dsn(db)), mission_db=shipped
+        )
+
+        def reloaded() -> list[dict[str, Any]]:
+            return rows("select * from audit_log where action='LIMITS_RELOADED' order by id", db=db)
+
+        async with authed(create_app(cfg)):
+            (shipped / "parameters.yaml").write_bytes((m / "parameters.yaml").read_bytes())
+            await until(lambda: len(reloaded()) >= 1, RELOAD_S)
+            assert reloaded()[-1]["details"]["parameters_changed"] == {
+                "bus_current_a": ["unit"], "tank_pressure_bar": ["calibration"],
+            }  # fmt: skip
+            edit(shipped / "limits.yaml", "yellow_high: 27.0", "yellow_high: 26.0")  # limits only
+            await until(lambda: len(reloaded()) >= 2, RELOAD_S)
+        assert "parameters_changed" not in reloaded()[-1]["details"]

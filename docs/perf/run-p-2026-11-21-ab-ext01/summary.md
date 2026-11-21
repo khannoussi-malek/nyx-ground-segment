@@ -1,4 +1,4 @@
-# Run P, run-p-2026-11-21
+# A/B run P on EXT-01 c7dc345 (run-p-2026-11-21-ab-ext01)
 
 2 vehicles x 100 Hz, 300 s, `step` faults of cabin_temp_c alongside.
 

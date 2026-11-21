@@ -1,4 +1,4 @@
-# Run P, run-p-2026-11-21
+# A/B run P on main 79e6ce6 (run-p-2026-11-21-ab-main)
 
 2 vehicles x 100 Hz, 300 s, `step` faults of cabin_temp_c alongside.
 

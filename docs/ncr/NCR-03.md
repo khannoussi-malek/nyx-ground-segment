@@ -8,4 +8,5 @@
   4. The ATP psql commands failed from a script (no TTY for `docker compose exec`). Fix `2416a7c` (`exec -T`); no automated test pins it.
 - **Impact on the user:** a newcomer following the README would have failed at step one; none of the four touched stored data, alarms or commanding.
 - **Severity:** minor.
+- **Status:** CLOSED
 - **Decision:** fix now. All four are fixed on branch `gate5-acceptance` and in the 1.0.0 release.

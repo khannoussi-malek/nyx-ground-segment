@@ -129,7 +129,8 @@ def test_mode_change_reload_and_restart_agree() -> None:  # Review Focus 4, unit
     def view(s: EngineState) -> object:  # the ring is reset by a reload, so it is not compared
         return s.mode, {k: (x.level, x.side) for k, x in s.slots.items()}, s.alarms
 
-    assert straight.mode == "SAFE" and straight.slots[(T, "limit")].level == Level.RED and T in straight.alarms
+    assert straight.mode == "SAFE" and straight.slots[(T, "limit")].level == Level.RED
+    assert T in straight.alarms
     assert view(end) == view(straight)
 
 

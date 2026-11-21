@@ -77,7 +77,7 @@ async def mission_db(request: Request, _user: User) -> MissionDbView:
 
 @ROUTER.get("/api/mission-db/frame-schema", responses=errors(401, 503))
 async def frame_schema(request: Request, _user: User) -> dict[str, Any]:  # D-EXT-19
-    return build_frame_schema(deps.mission(request).param_names)
+    return build_frame_schema(deps.mission(request).raw_names)  # frame fields, not computed columns
 
 
 def _hazardous(mdb: MissionDb) -> frozenset[str]:

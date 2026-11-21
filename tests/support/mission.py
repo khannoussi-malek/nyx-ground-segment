@@ -16,3 +16,14 @@ def files(**over: bytes) -> dict[str, bytes]:
 
 def ld(f: dict[str, bytes]) -> MissionDb:
     return load(f["limits"], f["commands"], f["parameters"])
+
+
+def calibrated(table: str = "[[0, 0], [10, 100]]", param: str = "bus_current_a") -> MissionDb:
+    """The shipped mission with a calibration table on one raw parameter (tmp, never mission/)."""
+    p = files()["parameters"].decode()
+    line = next(x for x in p.splitlines() if x.lstrip().startswith(f"{param}:"))
+    return ld(
+        files(
+            parameters=p.replace(line, line[:-1] + f", calibration: {{table: {table}}}}}").encode()
+        )
+    )

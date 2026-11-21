@@ -88,7 +88,7 @@ def test_statuses(tmp_path: Path) -> None:
     )
     assert vm.status(Ref("tests/unit/test_b.py", "test_skip_bare"), cases)[0] == "missing"
     assert vm.status(Ref("tests/unit/test_b.py", "test_skip_unconditional"), cases)[0] == "missing"
-    assert vm.status(Ref("tests/unit/test_b.py", "test_xfailed"), cases)[0] == "fail"
+    assert vm.status(Ref("tests/unit/test_b.py", "test_xfailed"), cases)[0] == "xfail"
     assert vm.status(Ref("tests/unit/test_gone.py", "test_x"), cases)[0] == "missing"
     assert vm.status(Ref("e2e/x.spec.ts", "shows alarm"), cases)[0] == "pass"
     assert vm.status(Ref("e2e/x.spec.ts", "skipped one"), cases) == ("skipped", "no gpu")
@@ -146,3 +146,13 @@ def test_missing_results_file_is_a_message_and_drift(
     argv = ["--requirements", str(tmp_path / "r.md"), "--junit", str(gone)]
     assert vm.main([*argv, "--out", str(tmp_path / "m.md")]) == 1
     assert f"no results for {gone}" in capsys.readouterr().out
+
+
+def test_xfailed_required_test_is_drift(tmp_path: Path) -> None:
+    # an xfail does not fail its pytest job, so the matrix is the only gate that sees it
+    reqs = REQS.splitlines()[:2] + [
+        "| AAA-06 | x | T | M | D | `unit/test_b.py::test_xfailed` | 01 | PASS |"
+    ]
+    md, drift = vm.render("\n".join(reqs) + "\n", _cases(tmp_path), run_id="1", commit="c")
+    assert "| AAA-06 | `tests/unit/test_b.py::test_xfailed` | xfail |" in md
+    assert drift == ["AAA-06: tests/unit/test_b.py::test_xfailed xfail (not passing evidence)"]

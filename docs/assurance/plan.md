@@ -32,8 +32,9 @@ requirement.
 - `docs/requirements.md` names the planned test for each requirement. CI runs the tests and writes their
   results as JUnit XML (pytest) and JSON (Playwright).
 - `scripts/verification_matrix.py` joins the two into `verification-matrix.md`: each named test is `pass`,
-  `fail`, `skipped` (with its reason, listed) or `missing`. CI fails on `missing` (drift) and on a skip without a
-  reason (a bare `@pytest.mark.skip` counts as no reason) and treats an xfail as `fail`. Evidence outside these reporters (perf runs, scripts, UI unit tests) shows as `not in run`.
+  `fail`, `xfail`, `skipped` (with its reason, listed) or `missing`. CI fails on `missing` (drift), on an `xfail`
+  (an expected failure is not passing evidence) and on a skip without a reason (a bare `@pytest.mark.skip` counts as
+  no reason). Evidence outside these reporters (perf runs, scripts, UI unit tests) shows as `not in run`.
 - On a `v*` tag the `release-record` job adds the configuration and the open NCRs to the matrix.
 
 ## Not covered here

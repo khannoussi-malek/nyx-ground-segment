@@ -36,6 +36,11 @@ Nyx is a single-site test-campaign tool, run on one workstation or CI runner.
 - No roles and no second-person approval: any logged-in user may command and run sessions (D-CMD-10).
 - Secrets live in `.env`, not in a secret store; MinIO root credentials are used by the archive path.
 - No account lockout or password rotation.
-- Dependency scans run against known-vulnerability databases only; they do not prove absence of defects. Findings
-  at high or critical level fail CI; lower ones are read from the job log.
+- Dependency scans run against known-vulnerability databases only; they do not prove absence of defects. pip-audit
+  fails CI on any known vulnerability; npm audit fails at high or critical. A new advisory blocks `lint`
+  until the dependency is bumped or the ID is ignored with a written reason (`pip-audit --ignore-vuln ID`).
+- The container images (python:3.14-slim, nginx, redis, timescaledb, minio) are neither audited nor in the SBOM.
+  They are the largest OSS set under SWE-156.
+- The Python SBOM is runtime only (`--no-dev`); the npm SBOMs include dev dependencies and the e2e SBOM is test
+  tooling only.
 - Test controls are on by default locally: a user of the stack can inject faults. Acceptable on loopback only.

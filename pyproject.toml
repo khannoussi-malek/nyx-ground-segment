@@ -40,7 +40,7 @@ select = ["E", "F", "I", "UP", "B", "BLE001", "S", "C901", "FIX"]
 ignore = ["S101"]
 
 [tool.ruff.lint.mccabe]
-max-complexity = 15  # NPR 7150.2D SWE-135 complexity metric; 15 is the agreed ceiling (the 10 default flags 12 working functions)
+max-complexity = 15  # NPR 7150.2D SWE-135 complexity metric; 15 is the proposed ceiling, not agreed (the 10 default flags 12 working functions)
 
 [tool.ruff.lint.per-file-ignores]
 # tests: assert is the test idiom (S101); fixed-argument docker/redis-cli calls, seeded random

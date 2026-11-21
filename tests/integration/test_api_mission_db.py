@@ -28,6 +28,7 @@ async def test_vehicles_lists_vehicles_and_parameter_units(api_client: httpx.Asy
         "unit": "kPa",
         "type": "float",
         "description": "Cabin total pressure",
+        "calibration": None,
     }
     assert Vehicles.model_validate(body, strict=False)
 

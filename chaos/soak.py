@@ -155,6 +155,7 @@ class Sampler:
         # the window starts where the tail does: frames between `started` and here are unread
         self.tail = collect.LedgerTail(LEDGER, now())
         self.started = self.tail.since
+        self.before = collect.alarm_ids_before(self.started)
         self.csv = (out / "invariants.csv").open("w", newline="")
         self.writer = csv.writer(self.csv)
         self.writer.writerow(["time", "invariant", "value", "ok"])
@@ -195,7 +196,7 @@ class Sampler:
             if due is not None:
                 rec(check_i1(ledger, stored, collect.gap_events(self.started), due))
                 rec(check_i2(ledger, stored, due))
-            rec(check_i3_paths(collect.alarm_rows(self.started)))
+            rec(check_i3_paths(collect.alarm_rows(self.started), self.before))
             rec(check_i7(collect.commands(self.started), t, edge))
             with self.sh.lock:
                 windows = list(self.sh.windows)

@@ -105,11 +105,20 @@ def check_i1(
 
 
 def check_i2(ledger: Sequence[LedgerLine], stored: Sequence[Key], due: datetime) -> Result:
-    """Stored rows of due frames = the distinct frames the simulator sent, none twice."""
-    expected = {(x.vehicle, x.t, x.seq) for x in ledger if x.fate == "sent" and x.t <= due}
+    """Stored rows of due frames = the distinct frames the simulator sent, at most one row per
+    (vehicle, epoch, seq). The epoch comes from the ledger: it starts anew when a seq goes down."""
+    sent = sorted((x for x in ledger if x.fate == "sent" and x.t <= due), key=lambda x: x.t)
+    epoch: dict[Key, int] = {}
+    cur: dict[str, tuple[int, int]] = {}  # vehicle -> (epoch, last seq)
+    for x in sent:
+        n, last = cur.get(x.vehicle, (0, x.seq))
+        n += x.seq < last
+        cur[x.vehicle] = (n, x.seq)
+        epoch[(x.vehicle, x.t, x.seq)] = n
     rows = [k for k in stored if k[1] <= due]
-    extra = [k for k in rows if k not in expected]
-    dupes = len(rows) - len(set(rows))
+    extra = [k for k in rows if k not in epoch]
+    per = Counter((k[0], epoch[k], k[2]) for k in rows if k in epoch)
+    dupes = sum(n - 1 for n in per.values())
     if extra or dupes:
         return Result("I2", False, f"{len(extra)} rows not sent ({_sample(extra)}), {dupes} twice")
     return Result("I2", True, f"{len(rows)} rows")
@@ -150,20 +159,29 @@ _PATHS: dict[str, dict[str | None, tuple[str, ...]]] = {
 }
 
 
-def check_i3_paths(rows: Sequence[AlarmRow]) -> Result:
+def check_i3_paths(rows: Sequence[AlarmRow], before: Collection[str] = ()) -> Result:
     """`rows` in insertion order. Each alarm follows a valid D-ALM-07/08 path and a
     (vehicle, param) never has two open alarms. After an ESCALATE from ACKED the state is
-    either one, so the model tracks the set of states it may be in."""
+    either one, so the model tracks the set of states it may be in. `before`: alarm ids that
+    were already open when the soak started (an earlier run, a person in the console): their first
+    row here may start from any state its kind allows."""
     state: dict[str, set[str | None]] = {}
     open_of: dict[tuple[str, str], str] = {}
+    seen: set[str] = set()
     for r in rows:
-        before = state.get(r.alarm_id, {None})
         rules = _PATHS.get(r.kind, {})
-        if not all(b in rules for b in before):
+        if r.alarm_id in state:
+            were = state[r.alarm_id]
+        elif r.alarm_id in before and r.alarm_id not in seen:
+            were = {b for b in rules if b is not None}  # unknown: whatever the kind allows
+        else:
+            were = {None}
+        seen.add(r.alarm_id)
+        if not all(b in rules for b in were) or not were:
             return Result(
-                "I3", False, f"{r.kind} on {r.vehicle}/{r.param} from {sorted(map(str, before))}"
+                "I3", False, f"{r.kind} on {r.vehicle}/{r.param} from {sorted(map(str, were))}"
             )
-        after = {a for b in before for a in rules[b]}
+        after = {a for b in were for a in rules[b]}
         key = (r.vehicle, r.param)
         if after == {"CLEARED"}:
             open_of.pop(key, None)

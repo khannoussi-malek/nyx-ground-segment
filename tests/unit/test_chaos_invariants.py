@@ -94,7 +94,14 @@ def test_i2_clean_passes_extra_and_duplicate_rows_fail() -> None:
     ghost = (V, t(0.05), 999)
     r = check_i2(led, [*keys(led), ghost], DUE)
     assert not r.ok and "1 rows not sent" in r.detail
-    assert not check_i2(led, [*keys(led), keys(led)[7]], DUE).ok  # the same row twice
+
+
+def test_i2_one_row_per_vehicle_epoch_seq() -> None:
+    led = clean(10)
+    led.append(LedgerLine(V, 7, t(0.75), "sent"))  # seq 7 again, no reset in between
+    assert not check_i2(led, keys(led), DUE).ok  # two rows for (vehicle, epoch, seq 7)
+    reset = [*clean(10), *(LedgerLine(V, i, t(2 + i * 0.1), "sent") for i in range(10))]
+    assert check_i2(reset, keys(reset), DUE).ok  # the same seqs after a reset: a new epoch
 
 
 def row(alarm: str, kind: str, param: str = "cabin_temp_c") -> AlarmRow:
@@ -115,6 +122,12 @@ def test_i3_fails_on_two_open_alarms_for_one_param() -> None:
     r = check_i3_paths([row("a", "RAISE"), row("b", "RAISE")])
     assert not r.ok and "two open alarms" in r.detail
     assert check_i3_paths([row("a", "RAISE"), row("b", "RAISE", "bus_voltage_v")]).ok
+
+
+def test_i3_an_alarm_open_before_the_soak_may_ack_rtn_or_clear() -> None:
+    assert check_i3_paths([row("a", "CLEAR")], before={"a"}).ok
+    assert check_i3_paths([row("a", "RTN"), row("a", "ACK")], before={"a"}).ok
+    assert not check_i3_paths([row("b", "CLEAR")], before={"a"}).ok  # b is not one of them
 
 
 def test_i3_fails_on_a_clear_without_a_raise() -> None:

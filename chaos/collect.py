@@ -73,6 +73,15 @@ def alarm_rows(since: datetime) -> list[AlarmRow]:
     ]
 
 
+def alarm_ids_before(since: datetime) -> set[str]:
+    """Alarms with a recorded transition before the soak: they may already be open."""
+    q = (
+        "select distinct alarm_id from alarm_events where alarm_id is not null"
+        " and processed_at < %s and vehicle = any(%s)"
+    )
+    return {str(r["alarm_id"]) for r in rows(q, since, LIVE)}
+
+
 def alarm_qevents(since: datetime) -> list[QEvent]:
     q = (
         "select vehicle, param, kind, coalesce(trigger_t_onboard, processed_at) as t, alarm_id"

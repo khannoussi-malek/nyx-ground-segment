@@ -87,7 +87,7 @@ def test_skipped_sample_records_every_table_invariant(
     monkeypatch.setattr(collect, "stored_keys", down)
     t = Tally()
     sam = object.__new__(soak.Sampler)
-    sam.sh, sam.tally, sam.started = soak.Shared(), t, T
+    sam.sh, sam.tally, sam.started, sam.before = soak.Shared(), t, T, set()
     sam.csv = (tmp_path / "i.csv").open("w")
     sam.writer, sam.quality, sam.violation = csv.writer(sam.csv), None, None
     sam.last_skipped = False

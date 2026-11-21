@@ -25,8 +25,8 @@ Nyx is a single-site test-campaign tool, run on one workstation or CI runner.
 | ruff `S` (bandit rules) and `C901` (complexity, max 15) | CI `lint`, `uv run ruff check` | every suppression is in `pyproject.toml` (with the reason) or a `# noqa: Sxxx <reason>` on its line |
 | `mypy --strict` | CI `lint` | types for defects |
 | Branch coverage, gate 80 % | CI `test` | `[tool.coverage.run] branch = true` |
-| `pip-audit` on the locked Python dependencies | CI `lint` (needs the network) | local: `uv export --frozen --no-emit-project --no-hashes -o /tmp/req.txt && uv run pip-audit --no-deps --disable-pip -r /tmp/req.txt` |
-| `npm audit --audit-level=high` for `ui/` and `e2e/` | CI `lint` (needs the network) | local: `cd ui && npm audit --audit-level=high` (same in `e2e/`) |
+| `pip-audit` on the locked Python dependencies (fails on any known vulnerability) | CI `lint` (needs the network) | local: `uv export --frozen --no-emit-project --no-hashes -o /tmp/req.txt && uv run pip-audit --no-deps --disable-pip -r /tmp/req.txt` |
+| `npm audit --audit-level=high` for `ui/` and `e2e/` (fails at high or above) | CI `lint` (needs the network) | local: `cd ui && npm audit --audit-level=high` (same in `e2e/`) |
 | SBOM, CycloneDX JSON for the Python lock and both npm locks | workflow `sbom.yml` on `v*` tags, uploaded as an artifact | local: see the workflow steps |
 | Pinned versions | exact versions in `pyproject.toml`, `uv.lock`, `package-lock.json`; new releases held 14 days (`[tool.uv]` constraints) | OSS risk control |
 

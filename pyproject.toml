@@ -35,7 +35,8 @@ extend-exclude = ["docs", "graphify-out", ".superpowers"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "BLE001", "S", "C901", "FIX"]
 # S101: every assert outside tests narrows a type for mypy or states an internal invariant
-# (none validates input; input is validated by pydantic and the command checks)
+# (none validates input; input is validated by pydantic and the command checks); the two
+# autocommit guards in archiver/job.py are explicit raises, not asserts
 ignore = ["S101"]
 
 [tool.ruff.lint.mccabe]

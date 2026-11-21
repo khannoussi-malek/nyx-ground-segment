@@ -234,7 +234,7 @@ async def _delete_window(
 ) -> tuple[int, datetime | None, datetime | None, str]:
     """DELETE the window's rows; what was deleted: count, min, max, fingerprint."""
     cur = await conn.execute(
-        "with d as (delete from telemetry where " + HourWindow.SQL + " returning t_onboard, seq)"  # noqa: S608 identifier from a module constant, values bound
+        "with d as (delete from telemetry where " + HourWindow.SQL + " returning t_onboard, seq)"  # noqa: S608 interpolates only the constant HourWindow.SQL fragment, values bound
         " select count(*), min(t_onboard), max(t_onboard), " + FINGERPRINT_SQL + " from d",
         w.params(),
     )
@@ -250,7 +250,8 @@ async def delete_hot(
     still hash right, and inside the delete transaction the deleted rows' count, min, max AND
     (t_onboard, seq) fingerprint must equal the archive row and the archived object. Else roll
     back, log, refuse."""
-    assert conn.autocommit, "delete_hot needs an autocommit connection (top-level transaction)"
+    if not conn.autocommit:
+        raise RuntimeError("delete_hot needs an autocommit connection (top-level transaction)")
     key = (row.vehicle, row.hour)
     if (w.vehicle, w.start) != key:
         return _refuse(ctx, *key, f"window {w.vehicle} {w.start} is not the archived hour")
@@ -318,7 +319,8 @@ async def merge_late(
     late rows become version + 1; the row update and the delete of the late rows commit together,
     and only if exactly those late rows go. Any doubt: None, the late rows stay hot, and a later
     pass retries."""
-    assert conn.autocommit, "merge_late needs an autocommit connection (top-level transaction)"
+    if not conn.autocommit:
+        raise RuntimeError("merge_late needs an autocommit connection (top-level transaction)")
     prev = await _recorded_table(ctx, conn, row)
     if prev is None:
         return None

@@ -17,6 +17,7 @@ import chaos.soak as soak
 from chaos.invariants import Result
 from chaos.report import Tally, render
 from chaos.schedule import Action
+from tests.support.env import REPO
 
 T = datetime(2026, 11, 20, 10, tzinfo=UTC)
 
@@ -94,3 +95,9 @@ def test_skipped_sample_records_every_table_invariant(
     sam._tables(T, None, T, [])
     assert {k for k, v in t.skipped.items() if v} == {"I1", "I2", "I3", "I7", "I8"}
     assert sam.last_skipped
+
+
+def test_seed_is_quoted_in_the_makefile_and_validated_in_the_workflow() -> None:
+    assert "--seed '$(SEED)'" in (REPO / "Makefile").read_text()
+    wf = (REPO / ".github" / "workflows" / "chaos-nightly.yml").read_text()
+    assert "^[0-9]*$" in wf

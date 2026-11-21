@@ -48,4 +48,4 @@ chaos: env
 	# the acceptance steal/reclaim thresholds pinned, whatever .env says
 	COMPOSE_FILE=docker-compose.yml:docker-compose.chaos.yml docker compose build migrate
 	COMPOSE_FILE=docker-compose.yml:docker-compose.chaos.yml STEAL_IDLE_MS=30000 RECLAIM_IDLE_MS=30000 docker compose up -d --build --wait
-	uv run python -m chaos.soak --minutes $(MINUTES) $(if $(SEED),--seed $(SEED))
+	uv run python -m chaos.soak --minutes '$(MINUTES)' $(if $(SEED),--seed '$(SEED)')

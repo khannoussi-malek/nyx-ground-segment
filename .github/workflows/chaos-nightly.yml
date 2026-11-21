@@ -30,6 +30,10 @@ jobs:
           node-version: 24
           cache: npm
           cache-dependency-path: e2e/package-lock.json
+      - name: Validate inputs
+        env:
+          SEED: ${{ inputs.seed }}
+        run: '[[ "$SEED" =~ ^[0-9]*$ ]] || { echo "seed must be an integer"; exit 1; }'
       - run: uv sync --frozen
       - run: cd e2e && npm ci && npx playwright install --with-deps chromium
       # I1-I3 and I5-I8 are what makes the night green; I4 is in summary.md for information (EX-27)

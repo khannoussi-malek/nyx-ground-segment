@@ -566,6 +566,18 @@ Web documents and standards:
 - [CCSDS-131.0-B-5-TM-sync-channel-coding.pdf](papers/web/CCSDS-131.0-B-5-TM-sync-channel-coding.pdf) – saved copy of https://ccsds.org/Pubs/131x0b5.pdf
 - [RFC6298-computing-TCP-retransmission-timer.txt](papers/web/RFC6298-computing-TCP-retransmission-timer.txt) – saved copy of https://www.rfc-editor.org/rfc/rfc6298
 
+## [R23-mission-database-standards](R23-mission-database-standards.md)
+
+No papers from the library are cited in this note (PaperLab was not reachable; the documents below were read from the web on 2026-11-21).
+
+Web documents and standards:
+
+- https://ccsds.org/Pubs/660x0b2.pdf (CCSDS 660.0-B-2, XTCE v1.2, February 2020; link only, no saved copy)
+- https://www.omg.org/spec/XTCE/20180204/SpaceSystem.xsd (OMG XTCE 1.2 schema; link only, no saved copy)
+- https://ecss.nl/standard/ecss-e-st-70-31c-ground-systems-and-operations-monitoring-and-control-data-definition/ (ECSS-E-ST-70-31C, 31 July 2008; PDF linked from that page; link only, no saved copy)
+- https://docs.yamcs.org/yamcs-server-manual/mdb/ (Yamcs Mission Database; also /mdb/data-types/, /mdb/alarm-definitions/, /mdb/algorithm-definitions/, /mdb/command-definitions/, /mdb/loaders/xtce/, /mdb/loaders/sheet/alarms/, /processors/command-processing/, /data-management/parameter-archive/; link only, no saved copy)
+- https://docs.openc3.com/docs/configuration/telemetry (OpenC3 COSMOS; also /configuration/command, /configuration/conversions; link only, no saved copy)
+
 ## [R24-command-verification-pus](R24-command-verification-pus.md)
 
 No papers from the library are cited in this note (PaperLab was down; the standards are the primary sources).

@@ -46,8 +46,11 @@ file is stale or when `src/` cites a D-ID that `docs/design.md` does not define.
 | D-ENG-18 | `src/gs/common/audit.py`, `src/gs/ingest/events.py` |
 | D-EXT-01 | `src/gs/alarms/checks/__init__.py`, `src/gs/common/interfaces/missiondb.py`, `src/gs/common/missiondb.py` |
 | D-EXT-02 | `src/gs/api/app.py` |
-| D-EXT-06 | `src/gs/alarms/engine.py` |
+| D-EXT-04 | `src/gs/alarms/checks/calibration_range.py`, `src/gs/common/calibration.py`, `src/gs/common/missiondb.py`, `src/gs/ingest/compute.py`, `src/gs/ingest/store.py`, `src/gs/ingest/worker.py` |
+| D-EXT-05 | `src/gs/alarms/checks/roc.py`, `src/gs/common/expr.py`, `src/gs/common/missiondb.py`, `src/gs/ingest/compute.py` |
+| D-EXT-06 | `src/gs/alarms/engine.py`, `src/gs/common/missiondb.py` |
 | D-EXT-07 | `src/gs/commanding/args.py` |
+| D-EXT-09 | `src/gs/common/missiondb.py`, `src/gs/ingest/fold.py` |
 | D-EXT-11 | `src/gs/api/app.py`, `src/gs/api/bodies.py`, `src/gs/api/compare.py`, `src/gs/api/compare_calc.py` |
 | D-EXT-13 | `src/gs/api/app.py`, `src/gs/api/export.py`, `src/gs/api/export_calc.py` |
 | D-EXT-15 | `src/gs/simulator/frames.py`, `src/gs/simulator/ledger.py`, `src/gs/simulator/main.py` |
@@ -69,7 +72,7 @@ file is stale or when `src/` cites a D-ID that `docs/design.md` does not define.
 | D-ING-16 | `src/gs/ingest/fold.py` |
 | D-ING-18 | `src/gs/common/interfaces/frame.py` |
 | D-ING-19 | `src/gs/ingest/validate.py` |
-| D-ING-20 | `src/gs/common/interfaces/frame.py` |
+| D-ING-20 | `src/gs/common/interfaces/frame.py`, `src/gs/ingest/compute.py` |
 | D-ING-21 | `src/gs/ingest/link.py`, `src/gs/ingest/worker.py` |
 | D-ING-22 | `src/gs/ingest/worker.py` |
 | D-ING-24 | `src/gs/commanding/tracker.py`, `src/gs/ingest/acks.py`, `src/gs/ingest/errors.py`, `src/gs/ingest/main.py`, `src/gs/ingest/worker.py` |
@@ -102,4 +105,4 @@ Informative, not an error: defined in `docs/design.md`, cited nowhere in `src/`.
 test, perf or process decisions (built outside `src/`); a few are designed and not built. Check
 before reading a gap into it.
 
-D-ALM-06, D-ALM-13, D-ALM-16, D-ARC-01, D-ARC-03, D-ARC-04, D-ARC-05, D-ARC-07, D-ARC-08, D-CMD-03, D-CMD-04, D-CMD-10, D-DB-01, D-DB-02, D-DB-05, D-DB-08, D-DB-09, D-DB-11, D-ENG-01, D-ENG-02, D-ENG-03, D-ENG-04, D-ENG-05, D-ENG-06, D-ENG-08, D-ENG-09, D-ENG-10, D-ENG-11, D-ENG-12, D-ENG-13, D-ENG-14, D-ENG-15, D-ENG-19, D-ENG-20, D-ENG-21, D-EXT-03, D-EXT-04, D-EXT-05, D-EXT-08, D-EXT-09, D-EXT-10, D-EXT-12, D-EXT-14, D-EXT-17, D-EXT-18, D-EXT-20, D-ING-02, D-ING-09, D-ING-14, D-ING-17, D-ING-23, D-PERF-01, D-PERF-02, D-PERF-03, D-PERF-04, D-PERF-06, D-PERF-07, D-PERF-08, D-PERF-09, D-PERF-10, D-REP-02, D-REP-05, D-REP-06, D-SIM-02, D-SIM-03, D-SIM-04, D-SIM-08, D-SIM-11, D-UI-03, D-UI-05, D-UI-06, D-UI-07, D-UI-08, D-UI-09, D-UI-10, D-UI-11, D-UI-12, D-UI-13, D-UI-14, D-UI-17, D-UI-20, D-UI-21, D-UI-22, D-UI-23, D-UI-24
+D-ALM-06, D-ALM-13, D-ALM-16, D-ARC-01, D-ARC-03, D-ARC-04, D-ARC-05, D-ARC-07, D-ARC-08, D-CMD-03, D-CMD-04, D-CMD-10, D-DB-01, D-DB-02, D-DB-05, D-DB-08, D-DB-09, D-DB-11, D-ENG-01, D-ENG-02, D-ENG-03, D-ENG-04, D-ENG-05, D-ENG-06, D-ENG-08, D-ENG-09, D-ENG-10, D-ENG-11, D-ENG-12, D-ENG-13, D-ENG-14, D-ENG-15, D-ENG-19, D-ENG-20, D-ENG-21, D-EXT-03, D-EXT-08, D-EXT-10, D-EXT-12, D-EXT-14, D-EXT-17, D-EXT-18, D-EXT-20, D-ING-02, D-ING-09, D-ING-14, D-ING-17, D-ING-23, D-PERF-01, D-PERF-02, D-PERF-03, D-PERF-04, D-PERF-06, D-PERF-07, D-PERF-08, D-PERF-09, D-PERF-10, D-REP-02, D-REP-05, D-REP-06, D-SIM-02, D-SIM-03, D-SIM-04, D-SIM-08, D-SIM-11, D-UI-03, D-UI-05, D-UI-06, D-UI-07, D-UI-08, D-UI-09, D-UI-10, D-UI-11, D-UI-12, D-UI-13, D-UI-14, D-UI-17, D-UI-20, D-UI-21, D-UI-22, D-UI-23, D-UI-24

@@ -44,9 +44,8 @@ def chaos_stack() -> Iterator[None]:
 
 
 def cut_and_check(kind: str) -> None:
-    since = now()
-    time.sleep(1)  # the ledger tail starts at the last line boundary
-    tail = collect.LedgerTail(collect.LEDGER, since)
+    tail = collect.LedgerTail(collect.LEDGER, now())
+    since = tail.since  # frames before the tail's start are not in the ledger it reads
     run_action(Action(0, kind, "ingest-1", CUT_S))
     end = now()
     assert wait_recovered() is not None, f"{kind}: not recovered within 60 s"

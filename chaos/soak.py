@@ -132,9 +132,11 @@ def fire(f: Fault, sh: Shared, out: Path) -> None:
 
 
 class Sampler:
-    def __init__(self, started: datetime, sh: Shared, out: Path, tally: Tally) -> None:
-        self.started, self.sh, self.tally = started, sh, tally
-        self.tail = collect.LedgerTail(LEDGER, started)
+    def __init__(self, sh: Shared, out: Path, tally: Tally) -> None:
+        self.sh, self.tally = sh, tally
+        # the window starts where the tail does: frames between `started` and here are unread
+        self.tail = collect.LedgerTail(LEDGER, now())
+        self.started = self.tail.since
         self.csv = (out / "invariants.csv").open("w", newline="")
         self.writer = csv.writer(self.csv)
         self.writer.writerow(["time", "invariant", "value", "ok"])
@@ -204,7 +206,7 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
     print(f"chaos soak seed={seed} minutes={minutes:g} out={out}", flush=True)
 
     sh, tally = Shared(), Tally()
-    s = Sampler(started, sh, out, tally)
+    s = Sampler(sh, out, tally)
     faults, acts = fault_schedule(seed, minutes), infra_schedule(seed, minutes)
     t0, total = time.monotonic(), minutes * 60
     thread = threading.Thread(target=infra_loop, args=(acts, t0, sh, out), daemon=True)

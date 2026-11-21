@@ -9,4 +9,4 @@ parameters:
   rate_y_dps: {unit: deg/s, type: float, description: Attitude rate Y}
   rate_z_dps: {unit: deg/s, type: float, description: Attitude rate Z}
 derived:
-  power_w: {unit: W, expr: bus_voltage_v * bus_current_a}
+  power_w: {unit: W, description: Bus power (voltage × current), expr: bus_voltage_v * bus_current_a}

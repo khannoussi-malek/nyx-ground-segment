@@ -10,7 +10,7 @@ ones R25 read and cited; a row marked "Annex" cites the annex, not a numbered re
 | Practice (where it lives) | ECSS-E-ST-40C / Q-ST-80C | NPR 7150.2D |
 | --- | --- | --- |
 | Test first, a test in the same commit as the change (D-ENG-14/15, `docs/requirements.md`) | E-40C 5.8 verification; Annex M (SVR) | SWE-052 requirements to verification |
-| One review per task, a final whole-branch review (`.superpowers/sdd/`) | E-40C reviews, Annex P (SRevP) | NPR review practice (SRR/PDR/CDR) |
+| One review per task, a final whole-branch review (`.superpowers/sdd/`) | E-40C reviews, Annex P (SRevP) | no clause cited in R25 |
 | Design and requirement reviews (`docs/reviews/*`) | SRR / PDR / CDR / QR / AR records, Annex P | SRR / PDR / CDR |
 | CI gates: ruff (incl. bandit `S`, `C901`), `mypy --strict`, generated-code check (`.github/workflows/ci.yml`) | E-40C 5.8 (static analysis) | SWE-135 static analysis |
 | Dependency audit, SBOM, pinned locks ([security.md](security.md)) | Q-80C supplier and reused software | SWE-156 cybersecurity assessment |
@@ -21,7 +21,7 @@ ones R25 read and cited; a row marked "Annex" cites the annex, not a numbered re
 | Hazard list and criticality ([hazards.md](hazards.md), [criticality.md](criticality.md)) | Q-80C Annex D.1, Table D-1 | SWE-205, SWE-052 requirements to hazards |
 | NCRs with an owner decision and a Status line (`docs/ncr/`, `docs/bug-log.md`) | Q-80C non-conformance handling | SWE-052 requirements to non-conformances |
 | As-run verification matrix per CI run (`scripts/verification_matrix.py`, artifact `verification-matrix`) | E-40C Annex M (SVR) | SWE-052 requirements to verification |
-| Release record on `v*` tags (`scripts/release_record.py`, artifact `release-record-<tag>`: commit, image IDs and digests, lockfile hashes, open NCRs, matrix) | E-40C Annex G (SRelD, p. 116) | configuration and release records |
+| Release record on `v*` tags (`scripts/release_record.py`, artifact `release-record-<tag>`: commit, image IDs of a local rebuild, lockfile hashes, open NCRs, matrix) | E-40C Annex G (SRelD, p. 116) | no clause cited in R25 |
 | Operator guide, dev guide (`docs/operator-guide.md`, `docs/dev-guide.md`) | E-40C Annex H (SUM, p. 119) | user documentation |
 | CHANGELOG with tags (`CHANGELOG.md`) | E-40C Annex G, release history | release history |
 

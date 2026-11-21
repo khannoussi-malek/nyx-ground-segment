@@ -8,11 +8,12 @@ export function paramViews(values: Readonly<Record<string, number | null>>, m: M
   if (!m) return sortedEntries(values).map(([id, value]) => ({ id, value }));
   // own keys only: a legal id like "constructor" must not resolve through Object.prototype
   const own = Object.hasOwn;
-  const known = Object.keys(m.parameters).filter((id) => own(values, id));
-  const unknown = sortedEntries(values).filter(([id]) => !own(m.parameters, id));
+  const metas: Record<string, { unit: string; description?: string }> = { ...m.parameters, ...m.derived };
+  const known = Object.keys(metas).filter((id) => own(values, id));
+  const unknown = sortedEntries(values).filter(([id]) => !own(metas, id));
   return [
     ...known.map((id): ParamView => {
-      const meta = m.parameters[id];
+      const meta = metas[id];
       const checks = own(m.limits, id) ? m.limits[id].checks : [];
       const limits: Limits | undefined = checks.find((c) => c.type === "limit");
       return {

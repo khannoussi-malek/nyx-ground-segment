@@ -39,6 +39,7 @@ async def test_mission_db_returns_the_loaded_set(api_client: httpx.AsyncClient) 
     assert body["parameters_sha256"] == MISSION.parameters_sha256
     assert set(body["parameters"]) == set(MISSION.parameters)
     assert body["commands"]["vent_cabin"]["hazardous"] is True
+    assert body["derived"]["power_w"]["unit"] == "W"  # derived values are labelled too (I1)
 
 
 async def test_mission_db_keeps_every_check_field(api_client: httpx.AsyncClient) -> None:

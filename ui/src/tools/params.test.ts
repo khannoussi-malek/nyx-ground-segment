@@ -8,7 +8,9 @@ const mission = {
     bus_current_a: { unit: "A", type: "float", description: "" },
     tank_pressure_bar: { unit: "bar", type: "float", description: "Propellant tank pressure" },
   },
+  derived: { power_w: { unit: "W", description: "Bus power" } },
   limits: {
+    power_w: { checks: [{ type: "limit", yellow_high: 250, red_high: 300 }] },
     cabin_pressure_kpa: {
       checks: [
         { type: "roc", limit_per_s: 0.15, window_s: 1, direction: "falling", severity: "YELLOW" },
@@ -56,4 +58,11 @@ test("ids that are Object.prototype names are looked up as own keys only", () =>
   expect(v[0]).toMatchObject({ label: "Odd but legal name", unit: "V" });
   expect(v[0].limits).toBeUndefined();
   expect(v[1]).toEqual({ id: "toString", value: 2 }); // unknown to the set, not mistaken for known
+});
+
+test("a derived parameter shows like a raw one: unit, description, gauge, after the raw rows", () => {
+  const v = paramViews({ power_w: 120, bus_current_a: 5, other: 1 }, mission);
+  expect(v.map((p) => p.id)).toEqual(["bus_current_a", "power_w", "other"]);
+  expect(v[1]).toMatchObject({ unit: "W", label: "Bus power", value: 120 });
+  expect(v[1].limits).toMatchObject({ yellow_high: 250, red_high: 300 });
 });

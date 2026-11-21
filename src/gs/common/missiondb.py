@@ -227,6 +227,7 @@ class DerivedSpec:
     expr: Expr | None
     rate_of: str | None
     window_s: float | None
+    description: str = ""
 
 
 @dataclass(frozen=True)
@@ -397,7 +398,7 @@ def _check_derived(p: ParametersFile) -> dict[str, DerivedSpec]:
                     f"{name}: input {i!r} is not a raw parameter or a derived one defined earlier",
                 )
         known.add(name)
-        out[name] = DerivedSpec(d.unit, expr, d.rate_of, d.window_s)
+        out[name] = DerivedSpec(d.unit, expr, d.rate_of, d.window_s, d.description)
     return out
 
 

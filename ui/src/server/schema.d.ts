@@ -785,6 +785,13 @@ export interface components {
             /** Vehicle */
             vehicle: string;
         };
+        /** DerivedView */
+        DerivedView: {
+            /** Description */
+            description: string;
+            /** Unit */
+            unit: string;
+        };
         /** DlqRecord */
         DlqRecord: {
             /** Deliveries */
@@ -1004,6 +1011,10 @@ export interface components {
             };
             /** Commands Sha256 */
             commands_sha256: string;
+            /** Derived */
+            derived: {
+                [key: string]: components["schemas"]["DerivedView"];
+            };
             /** Limits */
             limits: {
                 [key: string]: components["schemas"]["LimitView"];

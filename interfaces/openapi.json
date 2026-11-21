@@ -1017,6 +1017,25 @@
         "title": "CompareSession",
         "type": "object"
       },
+      "DerivedView": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unit",
+          "description"
+        ],
+        "title": "DerivedView",
+        "type": "object"
+      },
       "DlqRecord": {
         "additionalProperties": false,
         "properties": {
@@ -1589,6 +1608,13 @@
             "title": "Commands Sha256",
             "type": "string"
           },
+          "derived": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DerivedView"
+            },
+            "title": "Derived",
+            "type": "object"
+          },
           "limits": {
             "additionalProperties": {
               "$ref": "#/components/schemas/LimitView"
@@ -1622,6 +1648,7 @@
           "commands_sha256",
           "parameters_sha256",
           "parameters",
+          "derived",
           "limits",
           "commands"
         ],

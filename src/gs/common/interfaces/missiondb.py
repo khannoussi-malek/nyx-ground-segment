@@ -19,12 +19,18 @@ class LimitView(_Resp):
     checks: list[CheckItem]  # CheckItem dumps as its own kind (G21)
 
 
+class DerivedView(_Resp):
+    unit: str
+    description: str
+
+
 class MissionDbView(_Resp):
     set_sha256: str
     limits_sha256: str
     commands_sha256: str
     parameters_sha256: str
     parameters: dict[str, ParameterEntry]
+    derived: dict[str, DerivedView]  # computed values, in parameters.yaml order
     limits: dict[str, LimitView]
     commands: dict[str, Command]
 
@@ -36,6 +42,9 @@ class MissionDbView(_Resp):
             commands_sha256=m.commands_sha256,
             parameters_sha256=m.parameters_sha256,
             parameters=m.parameters,
+            derived={
+                n: DerivedView(unit=d.unit, description=d.description) for n, d in m.derived.items()
+            },
             limits={p: LimitView(checks=list(e.checks)) for p, e in m.limits.items()},
             commands=m.commands,
         )

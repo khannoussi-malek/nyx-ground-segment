@@ -42,9 +42,14 @@ Severity is the effect on the test article or the test, not on crew. It is a can
 - Controls built: red needs no persistence count of its own (D-ALM-03); rate-of-change check (D-ALM-05, ALM-04);
   only RED alerts audibly and once (D-ALM-09, D-ALM-08, UI-05); engine state survives a worker kill (D-ALM-11,
   ING-07); latency measured, p95 under 300 ms (ALM-05); every classification is a pure function (D-ALM-10).
-  Planned, not built here: EXT-03 property tests P3/P4 (branch ext03-property-chaos, not merged).
+  Property tests (EXT-03, 200 examples per push): the same frames, ACKs and mission-db timeline give the same
+  transitions whatever the batch split (P3), a snapshot and reload at any batch boundary loses nothing (P4, the
+  takeover case), and every alarm follows a valid transition path (P5). Their derived-value and mode parts wait
+  for EXT-01.
 - Tests: `tests/unit/test_alarm_lifecycle.py`, `tests/unit/test_checks_roc.py::test_leak_alarms_before_yellow`,
-  `tests/integration/test_limits_reload.py`.
+  `tests/integration/test_limits_reload.py`, `tests/property/test_engine_props.py::test_p3_same_input_same_keys`,
+  `tests/property/test_engine_props.py::test_p4_snapshot_any_split`,
+  `tests/property/test_engine_props.py::test_p5_transition_paths_valid`.
 - Gaps: none known to the author, but not analysed. The 300 ms figure is a requirement measured on the reference
   machine, not a guarantee under overload (ING-10 covers 100 Hz for 5 min only); persistence and hysteresis
   settings were tuned on the simulator's faults, not on a real vehicle; a lost alert on takeover is covered by
@@ -168,7 +173,7 @@ Severity is the effect on the test article or the test, not on crew. It is a can
 | Hazard | Requirements that control it |
 | --- | --- |
 | H-1 | CMD-03, CMD-05, CMD-04, CMD-01 |
-| H-2 | ALM-01, ALM-03, ALM-04, ALM-05, ALM-06, UI-05, EXT-03 (planned, no property test on this branch) |
+| H-2 | ALM-01, ALM-03, ALM-04, ALM-05, ALM-06, UI-05, EXT-03 |
 | H-3 | UI-02, ING-04, ING-05, UI-07 |
 | H-4 | CMD-01, CMD-02, CMD-04, UI-06 |
 | H-5 | ING-01, ING-02, ING-03, ING-04, ING-07, ING-08, ENG-02 |

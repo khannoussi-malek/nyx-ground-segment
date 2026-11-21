@@ -14,7 +14,6 @@ import os
 import queue
 import random
 import signal
-import subprocess
 import sys
 import threading
 import time
@@ -44,7 +43,7 @@ from chaos.invariants import (
 )
 from chaos.operator import Operator
 from chaos.recompute import recompute_all
-from chaos.report import Tally, render
+from chaos.report import INVARIANTS, Tally, render
 from chaos.schedule import QUIET_S, VEHICLES, Action, Fault, fault_schedule, infra_schedule
 from chaos.watch import Watcher
 from gs.alarms.quality import FaultWindow, Quality
@@ -55,6 +54,16 @@ OUT_ROOT = REPO / "chaos" / "out"
 COMPOSE_FILES = "docker-compose.yml:docker-compose.chaos.yml"
 SAMPLE_S, ACK_S, ISOLATE_S = 5.0, 2.0, 60.0
 FINAL_WAIT_S = 150.0
+MIN_ACTIONS, MIN_FAULTS, MIN_RUN_MIN = 15, 30, 30  # GS-EXT-03 (b), counted from what ran
+
+
+def shortfall(minutes: float, counts: dict[str, Counter[str]]) -> list[str]:
+    """Why a GS-EXT-03 length run did less chaos than the spec asks (shorter runs: no minimum)."""
+    if minutes < MIN_RUN_MIN:
+        return []
+    got = {"actions": sum(counts["actions"].values()), "faults": sum(counts["faults"].values())}
+    need = {"actions": MIN_ACTIONS, "faults": MIN_FAULTS}
+    return [f"only {got[k]} {k} ran, {need[k]} required" for k in need if got[k] < need[k]]
 
 
 def now() -> datetime:
@@ -99,11 +108,12 @@ def infra_loop(acts: list[Action], t0: float, sh: Shared, out: Path) -> None:
         start = now()
         with sh.lock:
             sh.in_flight = True
-            sh.counts["actions"][a.kind] += 1
         try:
             run_action(a, sleep=sh.stop.wait)  # a stop ends the wait; the undo still runs
-        except (subprocess.CalledProcessError, psycopg.Error, OSError, AssertionError) as e:
-            sh.results.put(Result("I5", False, f"action {a.kind} {a.target} failed: {e}"))
+        except Exception as e:  # noqa: BLE001  # whatever it is, a dead thread must not read as PASS
+            sh.results.put(
+                Result("I5", False, f"action {a.kind} {a.target} failed: {type(e).__name__}: {e}")
+            )
             return
         end = now()
         if sh.stop.is_set():  # undone; the soak is over, nobody reads a recovery time
@@ -117,6 +127,8 @@ def infra_loop(acts: list[Action], t0: float, sh: Shared, out: Path) -> None:
             sh.results.put(Result("I5", False, f"{a.kind} {a.target}: not recovered in 60 s"))
             return
         sh.recoveries.append(took)
+        with sh.lock:
+            sh.counts["actions"][a.kind] += 1  # only what ran and recovered counts
         sh.results.put(Result("I5", True, f"{a.kind} {took:.1f} s"))
         ready = time.monotonic() + QUIET_S
 
@@ -148,6 +160,7 @@ class Sampler:
         self.writer.writerow(["time", "invariant", "value", "ok"])
         self.quality: Quality | None = None
         self.violation: str | None = None
+        self.last_skipped = False  # the latest sample could not read a source
 
     def record(self, r: Result, skipped: bool = False) -> None:
         self.tally.add(r, skipped)
@@ -158,30 +171,41 @@ class Sampler:
 
     def sample(self) -> None:
         t, edge = now(), self.sh.infra_edge()
+        self.last_skipped = False
         due = cutoff(t, edge)
         ledger = self.tail.read()
         self._tables(t, edge, due, ledger)
         try:
             self._dlq(due, ledger)
         except redis.RedisError as e:  # the broker is down: nothing to read, not a violation
+            self.last_skipped = True
             self.record(Result("I6", True, type(e).__name__), skipped=True)
 
     def _tables(
         self, t: datetime, edge: datetime | None, due: datetime | None, ledger: Any
     ) -> None:
+        done: set[str] = set()
+
+        def rec(r: Result) -> None:
+            self.record(r)
+            done.add(r.name)
+
         try:
             stored = collect.stored_keys(self.started)
             if due is not None:
-                self.record(check_i1(ledger, stored, collect.gap_events(self.started), due))
-                self.record(check_i2(ledger, stored, due))
-            self.record(check_i3_paths(collect.alarm_rows(self.started)))
-            self.record(check_i7(collect.commands(self.started), t, edge))
+                rec(check_i1(ledger, stored, collect.gap_events(self.started), due))
+                rec(check_i2(ledger, stored, due))
+            rec(check_i3_paths(collect.alarm_rows(self.started)))
+            rec(check_i7(collect.commands(self.started), t, edge))
             with self.sh.lock:
                 windows = list(self.sh.windows)
             r8, self.quality = check_i8(collect.alarm_qevents(self.started), windows)
-            self.record(r8)
-        except psycopg.Error as e:  # a probe that fails is a skipped sample
-            self.record(Result("I1", True, type(e).__name__), skipped=True)
+            rec(r8)
+        except psycopg.Error as e:  # a probe that fails skips every table invariant not yet taken
+            self.last_skipped = True
+            for name in ("I1", "I2", "I3", "I7", "I8"):
+                if name not in done:
+                    self.record(Result(name, True, type(e).__name__), skipped=True)
 
     def _dlq(self, due: datetime | None, ledger: Any) -> None:
         if due is not None:
@@ -226,6 +250,7 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
     thread = threading.Thread(target=infra_loop, args=(acts, t0, sh, out), daemon=True)
     op = Operator()
     watcher = Watcher(out)
+    finished = False
     fi, next_sample, next_ack, next_iso, minute = 0, SAMPLE_S, ACK_S, ISOLATE_S / 2, 0
     try:
         thread.start()
@@ -254,6 +279,7 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
             time.sleep(0.25)
         if s.violation is None:
             final(s, sh)
+            finished = True
     finally:
         sh.stop.set()
         thread.join(timeout=RECOVERY_S + 30)  # its action ends and undoes itself
@@ -263,27 +289,35 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
             print(f"restore at end: {line}", file=sys.stderr)
             sh.note(out, kind="end repair", detail=line)
         s.csv.close()
-    counts = {k: dict(v) for k, v in sh.counts.items()}
-    counts["operator"] = {"isolate_valve sent": op.sent, "acks": op.acked, "failed": op.failed}
-    (out / "summary.md").write_text(
-        render(
-            seed,
-            minutes,
-            started,
-            tally,
-            counts,
-            s.quality,
-            s.violation,
-            sh.recoveries,
-            (start.lines(), end.lines(), bool(end.failures)),
-            i4,
+        # rendered here so a SIGTERM, a timeout or an unexpected error still leaves summary.md
+        counts = {k: dict(v) for k, v in sh.counts.items()}
+        counts["operator"] = {"isolate_valve sent": op.sent, "acks": op.acked, "failed": op.failed}
+        incomplete = shortfall(minutes, sh.counts) if finished else ["the run was interrupted"]
+        if finished and s.last_skipped:
+            incomplete.append("the final pass could not read a source")
+        (out / "summary.md").write_text(
+            render(
+                seed,
+                minutes,
+                started,
+                tally,
+                counts,
+                s.quality,
+                s.violation,
+                sh.recoveries,
+                (start.lines(), end.lines(), bool(end.failures)),
+                i4,
+                incomplete if not s.violation else [],
+            )
         )
-    )
     if end.failures:
         print(f"chaos soak NOT CLEAN: end restore failed: {end.failures}", file=sys.stderr)
         return 1
     if s.violation:
         print_failure(seed, s, sh)
+        return 1
+    if reasons := [*incomplete, *(f"{i} never judged" for i in INVARIANTS if not tally.taken[i])]:
+        print(f"chaos soak FAIL seed={seed}: {'; '.join(reasons)}", file=sys.stderr)
         return 1
     print(f"I4: {i4}")
     print(f"chaos soak PASS seed={seed}: summary in {out / 'summary.md'}")

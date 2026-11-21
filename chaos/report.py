@@ -50,8 +50,10 @@ def render(
     recoveries: Sequence[float],
     restores: tuple[Sequence[str], Sequence[str], bool] = ((), (), False),
     i4: str = "NOT RUN (no watcher)",
+    incomplete: Sequence[str] = (),
 ) -> str:
-    """`restores`: start-up repair lines, end repair lines, whether the end restore failed."""
+    """`restores`: start-up repair lines, end repair lines, whether the end restore failed.
+    `incomplete`: why the run did not do what it set out to (a FAIL, not a PASS)."""
     start, end, end_failed = restores
     repairs = "".join(
         f"\n## {title}\n\n" + ("".join(f"- {ln}\n" for ln in lines) or "- none\n")
@@ -67,7 +69,10 @@ def render(
         f"| {tally.taken[i]} | {tally.skipped[i]} | {tally.failed.get(i, '')} |\n"
         for i in INVARIANTS
     )
-    verdict = "FAIL" if tally.failed or violation or end_failed else "PASS"
+    unjudged = [i for i in INVARIANTS if not tally.taken[i]]  # NOT RUN proves nothing
+    reasons = [*incomplete, *(f"{i} was never judged" for i in unjudged)]
+    verdict = "FAIL" if tally.failed or violation or end_failed or reasons else "PASS"
+    why = "".join(f"**INCOMPLETE: {r}.**\n\n" for r in reasons)
     q = (
         f"- RAISEs {quality.raises}, false raises {quality.false_raises}, "
         f"chattering: {', '.join(quality.chattering) or 'none'}\n"
@@ -81,7 +86,9 @@ def render(
     return (
         f"# Chaos soak, seed {seed}, {minutes:g} min, started {started:%Y-%m-%d %H:%M:%S}Z\n\n"
         f"**{verdict}**{f' (stopped: {violation})' if violation else ''}\n\n"
-        f"{not_clean}"
+        f"{not_clean}{why}"
+        f"Properties: P1-P5 and P7 run in `tests/property`; P6 skipped (the derived evaluator, "
+        f"EXT-01 later parts, is not built): this evidence does not claim P6.\n\n"
         f"I4 (console watcher): {i4}\n\n"
         "| Invariant | Result | Samples | Skipped | First failure |\n|---|---|---|---|---|\n"
         f"{rows}\n"

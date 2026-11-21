@@ -1,6 +1,7 @@
 import { formatValue } from "../tools/format";
 import { gaugeOf, type Gauge, type Limits } from "../tools/gauge";
 import { Glyph } from "./Glyph";
+import { STALE_MS } from "../state/states";
 import { acqMark, limitBadge, NOMINAL_OK, type ParamState } from "../tools/status";
 
 export type ParamView = {
@@ -49,7 +50,7 @@ function GaugeBar({ g, live }: { g: Gauge; live: ParamState | null }) {
   );
 }
 
-export function ParamRow({ vehicle, seq, tOnboard, p }: { vehicle: string; seq: number; tOnboard: string; p: ParamView }) {
+export function ParamRow({ vehicle, seq, tOnboard, staleMs = 0, p }: { vehicle: string; seq: number; tOnboard: string; staleMs?: number; p: ParamView }) {
   const state = p.state ?? NOMINAL_OK;
   const acq = acqMark(state.acq);
   const badge = limitBadge(state);
@@ -81,7 +82,7 @@ export function ParamRow({ vehicle, seq, tOnboard, p }: { vehicle: string; seq: 
             </span>
           )}
         </th>
-        <td className="value" data-vehicle={vehicle} data-param={p.id} data-seq={seq} data-t-onboard={tOnboard}>
+        <td className="value" data-vehicle={vehicle} data-param={p.id} data-seq={seq} data-t-onboard={tOnboard} data-stale-ms={Math.max(STALE_MS, staleMs)}>
           <span className="num">{formatValue(p.value)}</span>
           {p.unit && <span className="unit">{p.unit}</span>}
         </td>

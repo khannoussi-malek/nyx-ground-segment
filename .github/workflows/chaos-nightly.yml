@@ -1,0 +1,72 @@
+name: chaos-nightly
+
+# Not a push gate (A-EXT-11, D-EXT-15). A manual run counts like a scheduled one: GitHub may delay
+# scheduled runs and disables them after 60 days without repository activity.
+on:
+  schedule:
+    - cron: "0 2 * * *"
+  workflow_dispatch:
+    inputs:
+      seed:
+        description: "Chaos seed (empty: random) and Hypothesis seed"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  chaos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # no floating major tag upstream
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: e2e/package-lock.json
+      - name: Validate inputs
+        env:
+          SEED: ${{ inputs.seed }}
+        run: '[[ "$SEED" =~ ^[0-9]*$ ]] || { echo "seed must be an integer"; exit 1; }'
+      - run: uv sync --frozen
+      - run: cd e2e && npm ci && npx playwright install --with-deps chromium
+      # I1-I3 and I5-I8 are what makes the night green; I4 is in summary.md for information (EX-27)
+      - name: Property suite, nightly profile
+        timeout-minutes: 40
+        env:
+          HYPOTHESIS_PROFILE: nightly
+          HYPOTHESIS_SEED: ${{ inputs.seed }}
+        run: uv run pytest --no-cov tests/property # no -q: the header prints the hypothesis seed
+      - name: Chaos soak, 30 min
+        if: ${{ !cancelled() }} # a property failure must not hide the soak
+        env:
+          SEED: ${{ inputs.seed }}
+        run: make chaos MINUTES=30
+      - name: Summary
+        if: always()
+        run: cat chaos/out/20*/summary.md >> "$GITHUB_STEP_SUMMARY" || true
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: chaos-${{ github.run_id }}
+          path: |
+            chaos/out/20*/
+            !chaos/out/20*/trace
+          retention-days: 30
+          if-no-files-found: warn
+      - if: failure()
+        env:
+          COMPOSE_FILE: docker-compose.yml:docker-compose.chaos.yml
+        run: docker compose logs --no-color > compose.log
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: chaos-compose-log-${{ github.run_id }}
+          path: compose.log
+          retention-days: 30

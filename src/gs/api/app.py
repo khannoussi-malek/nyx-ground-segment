@@ -42,7 +42,7 @@ from gs.api.openapi import build_openapi
 from gs.api.settings import Settings
 from gs.api.workers import new_pool
 from gs.common.audit import audit
-from gs.common.interfaces import build_frame_model
+from gs.common.interfaces import frame_schema as build_frame_schema
 from gs.common.interfaces.missiondb import MissionDbView, Vehicles
 from gs.common.missiondb import MissionDb, MissionDbError, load_dir
 from gs.ingest.events import GroundEvent, insert_events, to_link
@@ -52,7 +52,6 @@ CLIENT_HEADER = "X-GS-Client"
 SOCKET_TIMEOUT_S = 5
 CHECK_TIMEOUT_S = 2
 DB_CONNECT_S = 5  # the start-set connection; then the load_dir fallback
-JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"  # pydantic v2 emits 2020-12
 ROUTER = APIRouter()
 log = logging.getLogger(__name__)
 
@@ -78,8 +77,7 @@ async def mission_db(request: Request, _user: User) -> MissionDbView:
 
 @ROUTER.get("/api/mission-db/frame-schema", responses=errors(401, 503))
 async def frame_schema(request: Request, _user: User) -> dict[str, Any]:  # D-EXT-19
-    schema = build_frame_model(deps.mission(request).param_names).model_json_schema()
-    return {"$schema": JSON_SCHEMA_DIALECT, **schema}
+    return build_frame_schema(deps.mission(request).param_names)
 
 
 def _hazardous(mdb: MissionDb) -> frozenset[str]:

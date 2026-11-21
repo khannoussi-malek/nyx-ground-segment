@@ -1,12 +1,18 @@
 """Calibration in the frame path: compute() (D-EXT-04)."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
+from gs.alarms.contract import Level
+from gs.alarms.engine import compile_set
 from gs.common.interfaces import FrameHeader, build_frame_model
+from gs.common.missiondb import MissionDb
 from gs.ingest.compute import compute
+from gs.ingest.fold import VehicleState, fold
 from tests.support.mission import calibrated
+from tests.support.recompute import empty_state
 
 T0 = datetime(2026, 11, 14, 10, tzinfo=UTC)
+P = "bus_current_a"
 MDB = calibrated()  # bus_current_a: raw 0..10 -> eng 0..100
 
 
@@ -48,3 +54,33 @@ def test_calibration_exception_is_null_error(monkeypatch) -> None:  # type: igno
     monkeypatch.setattr("gs.ingest.compute.calibration.apply", boom)
     c = compute(MDB, frame(5.0))
     assert c.values["bus_current_a"] is None and c.nulls == (("bus_current_a", "error"),)
+
+
+def _fold(mdb: MissionDb, raws: list[float], vs: VehicleState | None = None) -> VehicleState:
+    cset = compile_set(mdb)
+    model = build_frame_model(mdb.raw_names)
+    first = 0 if vs is None or vs.seq is None else vs.seq.last_seq + 1
+    frames = [
+        model(
+            vehicle="NYX-TA1", seq=first + i, t_onboard=T0 + timedelta(seconds=(first + i) / 10),
+            mode="TEST", last_cmd_id=None, **({p: 1.0 for p in mdb.raw_names} | {P: r}),
+        )
+        for i, r in enumerate(raws)
+    ]  # fmt: skip
+    return fold(vs or empty_state(cset), "NYX-TA1", frames, mdb, cset)[0]
+
+
+def test_engine_sees_engineering_not_raw() -> None:
+    vs = _fold(MDB, [5.0] * 4)  # raw 5 is nominal (limit red_high 10); engineering 50 is RED
+    (a,) = [a for p, a in vs.engine.alarms.items() if p == P]
+    assert a.severity == Level.RED and a.trigger_check == "limit"
+
+
+def test_out_of_table_sample_is_a_null_for_the_limit_check() -> None:
+    vs = _fold(MDB, [3.0, 3.0, 11.0])  # eng 30 twice (ring 2), then NULL: ring restarts
+    assert vs.engine.slots[(P, "limit")].ring == ()
+    assert vs.engine.slots[(P, "calibration_range")].ring == (
+        Level.NOMINAL,
+        Level.NOMINAL,
+        Level.RED,
+    )

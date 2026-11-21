@@ -14,6 +14,7 @@ from gs.common.interfaces import FrameHeader
 from gs.common.missiondb import MissionDb
 from gs.common.time import iso_z
 from gs.ingest import link, seq
+from gs.ingest.compute import compute
 from gs.ingest.events import GroundEvent, applied_key
 from gs.ingest.link import FrozenState, LinkState
 from gs.ingest.seq import SeqState
@@ -72,7 +73,6 @@ def fold(
     classified: switch_set (LIMITS_CHANGED transitions) + LIMITS_APPLIED (D-ALM-12)."""
     if vs.set_sha256 not in ("", cset.set_sha256) and old is None:
         raise ValueError(f"fold needs the set {vs.set_sha256} the engine was built with")
-    params = mdb.param_names
     s, ls, fs, es, applied = vs.seq, vs.link, vs.frozen, vs.engine, vs.set_sha256
     new: list[FrameHeader] = []
     events: list[GroundEvent] = []
@@ -91,8 +91,8 @@ def fold(
         events += lev
         if k in ("SEQ_RESET", "SEQ_ANOMALY"):
             fs = FrozenState()  # G11: no FROZEN run spans epochs
-        values = {p: getattr(f, p) for p in params}
-        fs, fev = link.frozen_step(fs, vehicle, s.epoch, f.seq, f.t_onboard, tuple(values.values()))
+        c = compute(mdb, f)  # FROZEN runs over the raw values, in raw_names order (D-EXT-09)
+        fs, fev = link.frozen_step(fs, vehicle, s.epoch, f.seq, f.t_onboard, tuple(c.raws.values()))
         if fev is not None:
             events.append(fev)
         if applied != cset.set_sha256:  # first new frame of a set: apply it, then classify
@@ -106,7 +106,7 @@ def fold(
         # D-ALM-04: GAP, SEQ_RESET and data-STALE restart rings and ROC windows
         reset = stale or any(e.kind in ("GAP", "SEQ_RESET") for e in ev)
         es, trs = engine.step(
-            es, cset, vehicle, s.epoch, f.seq, f.t_onboard, s.period_s, values, reset
+            es, cset, vehicle, s.epoch, f.seq, f.t_onboard, s.period_s, c.values, reset, c.raws
         )
         transitions += trs
         new.append(f)

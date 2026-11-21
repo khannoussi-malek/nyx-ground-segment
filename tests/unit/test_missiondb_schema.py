@@ -328,7 +328,9 @@ def test_derived_cycle_rejected() -> None:
 @pytest.mark.parametrize("body", [
     "{unit: x}", "{unit: x, expr: bus_voltage_v, rate_of: bus_current_a, window_s: 1}",
     "{unit: x, rate_of: bus_current_a}", "{unit: x, expr: bus_voltage_v, window_s: 1}",
-    "{unit: x, rate_of: bus_current_a, window_s: 0}", "{expr: bus_voltage_v}",
+    "{unit: x, rate_of: bus_current_a, window_s: 0}",
+    "{unit: x, rate_of: bus_current_a, window_s: 3601}",
+    "{expr: bus_voltage_v}",
     "{unit: x, expr: 'bus_voltage_v +'}", "{unit: x, expr: nope + 1}",
     "{unit: x, rate_of: nope, window_s: 1}", "{unit: x, expr: 'ａ + 1'}",
 ])  # fmt: skip

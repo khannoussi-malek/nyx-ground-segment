@@ -1,6 +1,7 @@
 """Raw frame values -> engineering values (D-EXT-04): calibrate, pass uncalibrated through,
 then `expr` derived parameters (D-EXT-05). Pure; never raises into the frame path."""
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
@@ -50,6 +51,10 @@ def _rate(
         v = slope(w, spec.window_s, period_s)
     except Exception:  # noqa: BLE001  EX-11: a derived value never raises into the frame path
         return None, "error", w
+    if v is not None and not math.isfinite(
+        v
+    ):  # D-EXT-05: a non-finite result is NULL, never stored
+        return None, "nonfinite", w
     return v, None if v is not None else "samples", w
 
 

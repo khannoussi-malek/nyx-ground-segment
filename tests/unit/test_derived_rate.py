@@ -93,6 +93,12 @@ def test_slope_error_is_null_and_window_advances(monkeypatch: pytest.MonkeyPatch
     assert got is not None and want is not None and abs(got - want) < 1e-9
 
 
+def test_nonfinite_slope_is_null(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("gs.ingest.compute.slope", lambda *_a: float("inf"))
+    cs, _ = feed([1.0, 2.0, 3.0])
+    assert all(c.values[L] is None and c.nulls == ((L, "nonfinite"),) for c in cs)
+
+
 def test_input_window_untouched() -> None:
     _, w = feed([1.0, 2.0])
     before = dict(w)

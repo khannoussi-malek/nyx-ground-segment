@@ -84,7 +84,7 @@ class DerivedEntry(_M):
     description: str = ""
     expr: str | None = None
     rate_of: str | None = None
-    window_s: float | None = Field(None, gt=0)
+    window_s: float | None = Field(None, gt=0, le=3600)
 
     @model_validator(mode="after")
     def _one_form(self) -> Self:

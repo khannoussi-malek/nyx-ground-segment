@@ -232,6 +232,7 @@
         },
         "window_s": {
           "exclusiveMinimum": 0,
+          "maximum": 3600,
           "title": "Window S",
           "type": "number"
         }

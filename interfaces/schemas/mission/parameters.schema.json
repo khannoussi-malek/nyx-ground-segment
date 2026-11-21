@@ -61,6 +61,7 @@
           "anyOf": [
             {
               "exclusiveMinimum": 0,
+              "maximum": 3600,
               "type": "number"
             },
             {

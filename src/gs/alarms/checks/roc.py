@@ -16,7 +16,7 @@ _EPS = 1e-9  # 0.8 * 1.0 / 0.1 is 8.000000000000002 in floats; 8 samples must co
 class RocCheck(CheckConfig):
     type: Literal["roc"]
     limit_per_s: float = Field(gt=0)
-    window_s: float = Field(gt=0)
+    window_s: float = Field(gt=0, le=3600)
     direction: Literal["rising", "falling", "both"] = "both"
     severity: Literal["YELLOW", "RED"]
 

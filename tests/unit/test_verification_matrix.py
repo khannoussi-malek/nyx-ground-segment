@@ -16,6 +16,10 @@ JUNIT = """<testsuites><testsuite name="pytest">
 <testcase classname="tests.unit.test_b" name="test_skip_why">
 <skipped message="needs docker"/></testcase>
 <testcase classname="tests.unit.test_b" name="test_skip_bare"><skipped message=""/></testcase>
+<testcase classname="tests.unit.test_b" name="test_skip_unconditional">
+<skipped type="pytest.skip" message="unconditional skip"/></testcase>
+<testcase classname="tests.unit.test_b" name="test_xfailed">
+<skipped type="pytest.xfail" message="known bug"/></testcase>
 </testsuite></testsuites>"""
 
 PW = {
@@ -83,6 +87,8 @@ def test_statuses(tmp_path: Path) -> None:
         "needs docker",
     )
     assert vm.status(Ref("tests/unit/test_b.py", "test_skip_bare"), cases)[0] == "missing"
+    assert vm.status(Ref("tests/unit/test_b.py", "test_skip_unconditional"), cases)[0] == "missing"
+    assert vm.status(Ref("tests/unit/test_b.py", "test_xfailed"), cases)[0] == "fail"
     assert vm.status(Ref("tests/unit/test_gone.py", "test_x"), cases)[0] == "missing"
     assert vm.status(Ref("e2e/x.spec.ts", "shows alarm"), cases)[0] == "pass"
     assert vm.status(Ref("e2e/x.spec.ts", "skipped one"), cases) == ("skipped", "no gpu")

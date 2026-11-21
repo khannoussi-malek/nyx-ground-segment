@@ -29,8 +29,12 @@ def read_junit(path: Path) -> list[Case]:
     out = []
     for tc in ET.parse(path).getroot().iter("testcase"):  # noqa: S314 see import
         sk = tc.find("skipped")
-        if sk is not None:
-            st, why = "skipped", sk.get("message", "")
+        if sk is not None and sk.get("type") == "pytest.xfail":
+            st, why = "fail", ""  # an xfail is not passing evidence
+        elif sk is not None:
+            msg = sk.get("message", "")
+            # a bare @pytest.mark.skip has no reason
+            st, why = "skipped", "" if msg == "unconditional skip" else msg
         elif tc.find("failure") is not None or tc.find("error") is not None:
             st, why = "fail", ""
         else:

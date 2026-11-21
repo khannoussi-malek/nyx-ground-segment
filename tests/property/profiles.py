@@ -1,4 +1,5 @@
-"""Hypothesis profiles (D-EXT-14): `ci` is derandomised, `nightly` searches wider (seed printed)."""
+"""Hypothesis profiles (D-EXT-14): `nyx-ci` is derandomised, `nightly` searches wider (seed
+printed)."""
 
 import os
 import random
@@ -10,14 +11,16 @@ CI_EXAMPLES = 200
 NIGHTLY_EXAMPLES = 10_000
 CI_DEADLINE_MS = 500
 
+# not named "ci": Hypothesis loads a profile of that name globally whenever CI=true, which
+# gave every Hypothesis test in the run (the REST fuzz too) this 500 ms deadline
 settings.register_profile(
-    "ci", max_examples=CI_EXAMPLES, derandomize=True, deadline=CI_DEADLINE_MS, print_blob=True
+    "nyx-ci", max_examples=CI_EXAMPLES, derandomize=True, deadline=CI_DEADLINE_MS, print_blob=True
 )
 settings.register_profile(
     "nightly", max_examples=NIGHTLY_EXAMPLES, derandomize=False, deadline=None, print_blob=True
 )
 
-NAME = os.environ.get("HYPOTHESIS_PROFILE", "ci")
+NAME = os.environ.get("HYPOTHESIS_PROFILE", "nyx-ci")
 SEED: int | None = None
 if NAME == "nightly":
     # the plugin's --hypothesis-seed sets the same global; an env seed replays a night

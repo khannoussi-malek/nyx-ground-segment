@@ -79,6 +79,21 @@ def test_infra_loop_turns_any_error_into_an_i5_failure(
     assert r.name == "I5" and not r.ok and type(exc).__name__ in r.detail
 
 
+def test_infra_loop_error_after_the_action_is_an_i5_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def boom() -> None:
+        raise ValueError("health probe")
+
+    monkeypatch.setattr(soak, "run_action", lambda *_a, **_k: None)
+    monkeypatch.setattr(soak, "wait_recovered", boom)
+    s = Sh(tmp_path)
+    act = Action(at_s=0, kind="redis_stop", target="", duration_s=1)
+    soak.infra_loop([act], time.monotonic(), s.sh, tmp_path)
+    r = s.sh.results.get_nowait()
+    assert r.name == "I5" and not r.ok and "ValueError" in r.detail
+
+
 def test_skipped_sample_records_every_table_invariant(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

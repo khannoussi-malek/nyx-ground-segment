@@ -100,6 +100,13 @@ class Shared:
 
 
 def infra_loop(acts: list[Action], t0: float, sh: Shared, out: Path) -> None:
+    try:
+        _infra_loop(acts, t0, sh, out)
+    except Exception as e:  # noqa: BLE001  # a dead thread must not read as PASS (I-1)
+        sh.results.put(Result("I5", False, f"infra thread died: {type(e).__name__}: {e}"))
+
+
+def _infra_loop(acts: list[Action], t0: float, sh: Shared, out: Path) -> None:
     ready = t0
     for a in acts:
         while time.monotonic() < max(t0 + a.at_s, ready):  # the schedule, then the quiet period

@@ -27,11 +27,13 @@ def compose_config() -> dict[str, Any]:
     return cfg
 
 
-def compose(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+def compose(
+    *args: str, check: bool = True, env: Mapping[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["docker", "compose", *args],
         cwd=REPO,
-        env=os.environ,
+        env={**os.environ, **(env or {})},
         capture_output=True,
         text=True,
         check=check,

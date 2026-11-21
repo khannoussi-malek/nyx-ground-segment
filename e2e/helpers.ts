@@ -3,7 +3,9 @@
 import { execFile, execFileSync } from "node:child_process";
 import { cpSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { expect, type Page } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+export { expect, test }; // the chaos watcher lives outside e2e/ and cannot resolve the package itself
 
 const REPO = new URL("..", import.meta.url).pathname;
 const LIMITS = `${REPO}mission/limits.yaml`;

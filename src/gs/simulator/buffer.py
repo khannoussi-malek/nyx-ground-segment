@@ -15,25 +15,29 @@ log = logging.getLogger(__name__)
 class FrameBuffer:
     def __init__(self) -> None:
         self._q: deque[tuple[str, str]] = deque()
+        self._sent: deque[Callable[[], object] | None] = deque()  # told once the XADD succeeded
         self.overflow = 0
 
     def __len__(self) -> int:
         return len(self._q)
 
-    def append(self, stream: str, data: str) -> bool:
+    def append(self, stream: str, data: str, on_sent: Callable[[], object] | None = None) -> bool:
         """Full: drop the NEW frame so downstream sees a GAP, not reordering."""
         if len(self._q) >= BUFFER_MAX:
             self.overflow += 1
             log.warning("buffer full, dropped frame for %s (overflow=%d)", stream, self.overflow)
             return False
         self._q.append((stream, data))
+        self._sent.append(on_sent)
         return True
 
     def head(self) -> tuple[str, str] | None:
         return self._q[0] if self._q else None
 
-    def pop(self) -> None:
+    def pop(self) -> Callable[[], object] | None:
+        """Removes the head and returns its `on_sent` (the caller calls it: the frame is out)."""
         self._q.popleft()
+        return self._sent.popleft()
 
 
 async def send_loop(
@@ -57,5 +61,6 @@ async def send_loop(
             await sleep(delay)
             delay = min(delay * 2, BACKOFF_CAP_S)
             continue
-        buf.pop()
+        if on_sent := buf.pop():
+            on_sent()
         delay = BACKOFF_FIRST_S

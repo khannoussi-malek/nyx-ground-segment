@@ -67,7 +67,7 @@ ignore_missing_imports = true
 branch = true  # statement and decision coverage (ECSS-E-ST-40C 5.8.3.5, R25 F2)
 
 [tool.pytest.ini_options]
-testpaths = ["tests/unit", "tests/integration", "tests/meta"]
+testpaths = ["tests/unit", "tests/integration", "tests/meta", "tests/property"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
 addopts = "--import-mode=importlib -m 'not spike and not after_coverage'"  # on demand: pytest -m spike / -m after_coverage
@@ -80,6 +80,7 @@ pythonpath = ["."]
 [dependency-groups]
 dev = [
     "cyclonedx-bom==8.0.1",  # SBOM per tag (sbom.yml); 8.0.1 is from 2026-11-04, 9.0.0 from 2026-11-19
+    "hypothesis-jsonschema==0.23.2",  # 0.23.2 is from 2026-10-27 (P7, D-EXT-14)
     "jsonschema==4.26.0",
     "mypy==2.4.1",
     "pip-audit==2.10.1",  # dependency vulnerability scan (CI lint job)

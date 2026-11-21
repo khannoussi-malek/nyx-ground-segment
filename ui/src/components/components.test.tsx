@@ -38,6 +38,14 @@ test("the value cell keeps the attributes the latency probe and smoke test read 
   );
 });
 
+test("the value cell carries the vehicle's stale threshold for the chaos watcher (I4), 2 s floor by default", () => {
+  expect(row(cabin)).toContain('data-stale-ms="2000"');
+  const slow = renderToStaticMarkup(
+    <table><ParamRow vehicle="NYX-TA1" seq={7} tOnboard={T} staleMs={5000} p={cabin} /></table>,
+  );
+  expect(slow).toContain('data-stale-ms="5000"');
+});
+
 test("a live RED shows a filled badge with the design's words", () => {
   const html = row({ ...cabin, state: { acq: "OK", level: "RED", side: "LOW" } });
   expect(html).toContain('data-level="RED"');

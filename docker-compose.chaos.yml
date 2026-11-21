@@ -1,0 +1,18 @@
+# Chaos overlay (D-EXT-15, A-R14-3): Redis and Postgres on separate networks, so `docker network
+# disconnect` can cut an ingest worker from only one of them, and the simulator's frame ledger on
+# a host folder. Core compose untouched. Use both files:
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.chaos.yml docker compose up -d --wait
+# (make chaos does). Service names, healthchecks and ports are the core's.
+services:
+  redis: {networks: [redisnet]}
+  db: {networks: [dbnet]}
+  migrate: {networks: [dbnet]}
+  simulator:
+    networks: [redisnet]
+    environment: {GS_TEST_HOOKS: "1", SIM_LEDGER: /ledger/sim.jsonl}
+    volumes: ["${CHAOS_LEDGER_DIR:-./chaos/out/ledger}:/ledger"]
+  ingest-1: {networks: [redisnet, dbnet]}
+  ingest-2: {networks: [redisnet, dbnet]}
+  api: {networks: [default, redisnet, dbnet]}   # minio is on default
+  archiver: {networks: [default, redisnet, dbnet]}
+networks: {redisnet: {}, dbnet: {}}

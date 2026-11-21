@@ -40,6 +40,7 @@ function Vehicle({ store, v, mission, clock, probe }: { store: Store; v: string;
       mode={tm.mode}
       seq={tm.seq}
       tOnboard={tm.t_onboard}
+      staleMs={tm.stale_ms}
       ageMs={ageMs}
       params={params}
       banner={banner}

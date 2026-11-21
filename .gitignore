@@ -29,3 +29,5 @@ playwright-results.json
 junit-*.xml
 verification-matrix.md
 release-record.md
+chaos/out/
+docs/chaos/*/trace/

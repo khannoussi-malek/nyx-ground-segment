@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from datetime import datetime, timedelta
+from typing import Any
 from uuid import UUID
 
 from pydantic import ConfigDict, ValidationInfo, create_model, field_validator
@@ -7,6 +8,7 @@ from pydantic_core import PydanticCustomError
 
 from gs.common.interfaces.base import U32, Mode, StrictModel, UtcTime, VehicleId
 
+JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"  # pydantic v2 emits 2020-12
 T_ONBOARD_PAST = timedelta(days=7)
 T_ONBOARD_FUTURE = timedelta(minutes=5)
 
@@ -51,3 +53,8 @@ def build_frame_model(params: Sequence[str]) -> type[FrameHeader]:
     """Frame model with one nullable float per mission parameter (missing -> NULL, D-ING-20)."""
     fields = {p: (float | None, None) for p in params}
     return create_model("Frame", __base__=FrameHeader, **fields)  # type: ignore[call-overload,no-any-return]
+
+
+def frame_schema(params: Sequence[str]) -> dict[str, Any]:
+    """The per-mission frame JSON Schema GET /api/mission-db/frame-schema serves (D-EXT-19)."""
+    return {"$schema": JSON_SCHEMA_DIALECT, **build_frame_model(params).model_json_schema()}

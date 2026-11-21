@@ -73,13 +73,24 @@ async def tick_loop(
     faults: FaultBoard | None = None,
     box: CommandBox | None = None,
     period_s: float = PERIOD_S,
+    ledger: Callable[[str, int, datetime, str], object] | None = None,
 ) -> None:
     """Tick n fires at start + n*period_s; stalls are caught up, grid fixed (D-SIM-01).
 
     With a `box`, each tick runs <= 1 command after its frame; the frame carries the command
     executed in an earlier tick (D-SIM-06) and its acks follow the frame in the same buffer.
+    `ledger(vehicle, seq, t, fate)` is told what became of each frame: sent (once it is in Redis),
+    dropout, overflow (the buffer was full) and, per extra entry, duplicate or malformed (D-EXT-15).
     """
     board = faults or FaultBoard()
+    note = ledger or (lambda *_: None)
+
+    def put(vehicle: str, seq: int, t: datetime, data: str, fate: str) -> None:
+        # the fate is written when the XADD succeeded (send_loop), so a frame still in the buffer
+        # at shutdown never reads as sent; a full buffer is told at once
+        if not buf.append(stream, data, lambda: note(vehicle, seq, t, fate)):
+            note(vehicle, seq, t, "overflow")
+
     start, seq, n = monotonic(), 0, 0
     last: dict[str, float] = {}  # values of the previous frame, what a freeze repeats
     frozen: dict[str, float] | None = None
@@ -102,13 +113,15 @@ async def tick_loop(
             seq = (seq + int(str(jump.params["by"]))) % 2**32
         dup, bad = board.take_once(vehicle, "duplicate"), board.take_once(vehicle, "malformed")
         dropout = _find(active, "dropout") is not None
-        if not dropout:  # dropout: seq advances, nothing sent
+        if dropout:
+            note(vehicle, seq, t, "dropout")
+        else:  # dropout: seq advances, nothing sent
             data = build_frame(vehicle, seq, t, values, box.last_cmd_id if box else None)
-            buf.append(stream, data)
+            put(vehicle, seq, t, data, "sent")
             for _ in range(int(str(dup.params["count"])) if dup else 0):
-                buf.append(stream, data)
+                put(vehicle, seq, t, data, "duplicate")
             if bad:
-                buf.append(stream, malformed_entry(vehicle, str(bad.params["kind"])))
+                put(vehicle, seq, t, malformed_entry(vehicle, str(bad.params["kind"])), "malformed")
         if box:
             hold = _find(active, "hold_exec")
             hold_s = float(str(hold.params["duration_s"])) if hold else None

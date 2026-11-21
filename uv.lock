@@ -501,6 +501,7 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "cyclonedx-bom" },
+    { name = "hypothesis-jsonschema" },
     { name = "jsonschema" },
     { name = "mypy" },
     { name = "pip-audit" },
@@ -531,6 +532,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "cyclonedx-bom", specifier = "==8.0.1" },
+    { name = "hypothesis-jsonschema", specifier = "==0.23.2" },
     { name = "jsonschema", specifier = "==4.26.0" },
     { name = "mypy", specifier = "==2.4.1" },
     { name = "pip-audit", specifier = "==2.10.1" },
@@ -662,6 +664,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0d/b2/12fcce1eb8aec4a3e75097079da23729f38d9858a3ba9dc387036569a526/hypothesis_graphql-0.13.6.tar.gz", hash = "sha256:8902f9ca57752466bf53d46cb1a9ab7bc45769838dd668c18379b867cc688435", size = 753097, upload-time = "2026-10-28T08:07:43.773Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/be/43/32ee05ec1ded367240875dcab9ab7b4c14c7fba2462bf3367c5f2165b942/hypothesis_graphql-0.13.6-py3-none-any.whl", hash = "sha256:64e2425a0ed64fcf0610aeb2a23f61e6fa568249c646313f3926e22ed846c269", size = 24121, upload-time = "2026-10-28T08:07:44.993Z" },
+]
+
+[[package]]
+name = "hypothesis-jsonschema"
+version = "0.23.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "hypothesis" },
+    { name = "jsonschema" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/b9/26/9b380c6b31e2d493c7148668bde3cdbbcaaf2b6cdd0bd2ca09405bed8e63/hypothesis_jsonschema-0.23.2.tar.gz", hash = "sha256:43a5f21c67f7cdccd6e3e0d1300cb5261bede6c046e3eff8a73c094b4afdf761", size = 43983, upload-time = "2026-10-27T20:08:58.707Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/8f/5e7d1a9d99eccebcb67a6e1f83faaf921f23bc1c474af7e0ac33f2f47739/hypothesis_jsonschema-0.23.2-py3-none-any.whl", hash = "sha256:7f591c2534830919342474c4adebb03c19879cdad9a7cb44d4c9d9da45dcdae3", size = 29558, upload-time = "2026-10-27T20:08:57.504Z" },
 ]
 
 [[package]]

@@ -8,7 +8,12 @@ from hypothesis import settings
 
 from tests.property import profiles
 
-MODULES = ["test_seq_tracker_props", "test_engine_props", "test_frame_schema_props"]
+MODULES = [
+    "test_seq_tracker_props",
+    "test_engine_props",
+    "test_frame_schema_props",
+    "test_derived_props",
+]
 
 
 def test_the_global_default_is_untouched() -> None:
@@ -25,7 +30,7 @@ def test_every_property_test_carries_the_profile() -> None:
         for _, fn in inspect.getmembers(importlib.import_module(f"tests.property.{m}"))
         if hasattr(fn, "hypothesis")
     ]
-    assert len(tests) == 7
+    assert len(tests) == 11
     for fn in tests:
         s = fn._hypothesis_internal_use_settings
         assert s.max_examples == profiles.PROFILE.max_examples, fn.__name__

@@ -46,8 +46,10 @@ def test_verdict_fails_when_the_run_is_incomplete() -> None:
     assert summary(tally(), ("final pass skipped",)).startswith("**FAIL**")
 
 
-def test_summary_states_p6_is_skipped() -> None:
-    assert "P6 skipped" in render(1, 5, T, tally(), {}, None, None, [])
+def test_summary_claims_p6() -> None:
+    text = render(1, 5, T, tally(), {}, None, None, [])
+    assert "P1-P7" in text
+    assert "skipped (the derived" not in text
 
 
 def test_shortfall_needs_15_actions_and_30_faults_from_30_min() -> None:

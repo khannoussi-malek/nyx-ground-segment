@@ -1,19 +1,27 @@
 """P5 (design 11.5, D-EXT-14): every alarm's transitions form a valid D-ALM-07/08 path.
 
-P3 and P4 (D-EXT-14) run the real `fold` over batches; their derived-value and mode parts wait
-for EXT-01 after the 47.
+P3 and P4 (D-EXT-14) run the real `fold` over batches, each in a raw-only form and in a form with
+derived parameters, calibration and a mode per frame (D-EXT-05, D-EXT-06).
 """
 
 from hypothesis import event, given
 from hypothesis import strategies as st
 
 from gs.alarms.contract import AlarmState, Level, Transition
-from gs.alarms.engine import ack, compile_set, initial_state, step
+from gs.alarms.engine import MODE_CHANGED, ack, compile_set, initial_state, step
 from gs.common.missiondb import MissionDb
 from gs.ingest.fold import dump_vehicle
 from tests.property import profiles
-from tests.property.folding import headers, play
-from tests.property.strategies import Run, Tuning, mission_for, runs, tunings
+from tests.property.folding import Played, headers, play
+from tests.property.strategies import (
+    LEAK,
+    Run,
+    Tuning,
+    mission_for,
+    mode_schedule,
+    runs,
+    tunings,
+)
 from tests.support.alarms import EPOCH, PERIOD_S, V, at
 
 # (kind, state before) -> states allowed after; None = no open alarm. D-ALM-07/08.
@@ -110,14 +118,17 @@ def test_p5_transition_paths_valid(data: st.DataObject) -> None:
 
 
 @st.composite
-def _timelines(draw: st.DrawFn) -> tuple[Tuning, Run, tuple[MissionDb, MissionDb | None], int]:
+def _timelines(
+    draw: st.DrawFn, derived: bool = False
+) -> tuple[Tuning, Run, tuple[MissionDb, MissionDb | None], int]:
     """Frames, a mission-db timeline (a second tuning from some real frame on, or none)."""
     tuning = draw(tunings())
     run = draw(runs(tuning.faults))
     other = draw(st.none() | tunings())
     n = len(run.frames)
     switch = draw(st.integers(1, max(1, n - 1)))
-    return tuning, run, (mission_for(tuning), None if other is None else mission_for(other)), switch
+    second = None if other is None else mission_for(other, derived)
+    return tuning, run, (mission_for(tuning, derived), second), switch
 
 
 def _cuts(n: int) -> st.SearchStrategy[frozenset[int]]:
@@ -131,8 +142,7 @@ def test_p3_same_input_same_keys(data: st.DataObject) -> None:
     batch split; a late frame (re-delivery with other values) changes nothing: it is not
     classified and leaves every ROC window and the state as it was (EX-13). The "one batch" run
     is itself cut at ACK frames and at the mission-db switch (D-ALM-14), so the split only moves
-    the other boundaries. Left out (not built, EXT-01 after the 47): derived values (D-EXT-05),
-    including rate_of NULL on a late frame (EX-13), and the mode switch (D-EXT-06)."""
+    the other boundaries. Raw values only; derived values and modes are in the next test."""
     _, run, mdbs, switch = data.draw(_timelines())
     n = len(run.frames)  # an empty run has nothing to re-deliver
     late = data.draw(
@@ -141,12 +151,12 @@ def test_p3_same_input_same_keys(data: st.DataObject) -> None:
         )
     )
     base = headers(run)
-    whole, end = play(base, mdbs, switch, run.acks, frozenset())
+    whole = play(base, mdbs, switch, run.acks, frozenset())
     stream = headers(run, late)
-    split, end2 = play(stream, mdbs, switch, run.acks, data.draw(_cuts(len(stream))))
-    assert split == whole
-    assert dump_vehicle(end2) == dump_vehicle(end)
-    event(f"transitions>0={bool(whole)}")
+    split = play(stream, mdbs, switch, run.acks, data.draw(_cuts(len(stream))))
+    assert split.transitions == whole.transitions
+    assert dump_vehicle(split.end) == dump_vehicle(whole.end)
+    event(f"transitions>0={bool(whole.transitions)}")
     event(f"late={bool(late)}")
     event(f"switched={mdbs[1] is not None and mdbs[0].set_sha256 != mdbs[1].set_sha256}")
 
@@ -155,13 +165,71 @@ def test_p3_same_input_same_keys(data: st.DataObject) -> None:
 @given(st.data())
 def test_p4_snapshot_any_split(data: st.DataObject) -> None:
     """Dump to JSON and load at random batch boundaries (with a mission-db change between) =>
-    the same transitions and end state as the uninterrupted run. The mode switch is not built
-    (D-EXT-06, EXT-01 after the 47): left out."""
+    the same transitions and end state as the uninterrupted run. Raw values only; derived values
+    and modes are in the next test."""
     _, run, mdbs, switch = data.draw(_timelines())
     stream = headers(run)
     cuts = data.draw(_cuts(len(stream)))
-    whole, end = play(stream, mdbs, switch, run.acks, cuts)
-    again, end2 = play(stream, mdbs, switch, run.acks, cuts, restore=True)
-    assert again == whole
-    assert dump_vehicle(end2) == dump_vehicle(end)
-    event(f"transitions>0={bool(whole)}")
+    whole = play(stream, mdbs, switch, run.acks, cuts)
+    again = play(stream, mdbs, switch, run.acks, cuts, restore=True)
+    assert again.transitions == whole.transitions
+    assert dump_vehicle(again.end) == dump_vehicle(whole.end)
+    event(f"transitions>0={bool(whole.transitions)}")
+
+
+def _coverage(p: Played, modes: tuple[str, ...], mdbs: tuple[MissionDb, MissionDb | None]) -> None:
+    """Hypothesis events: each interesting case of the derived/mode draws must occur (a property
+    that never meets its cases proves nothing)."""
+    for reason in sorted({why for _, c in p.computed for _, why in c.nulls}):
+        event(f"null={reason}")
+    event(f"mode_switches>0={len(set(modes)) > 1}")
+    event(f"mode_changed_transition={any(t.note == MODE_CHANGED for t in p.transitions)}")
+    event(f"transitions>0={bool(p.transitions)}")
+    event(f"db_change={mdbs[1] is not None and mdbs[0].set_sha256 != mdbs[1].set_sha256}")
+
+
+@profiles.PROFILE
+@given(st.data())
+def test_p3_same_input_same_keys_with_derived_and_modes(data: st.DataObject) -> None:
+    """P3 with derived parameters, a calibration table and a mode per frame: the batch split moves
+    neither the transition keys nor any derived value; a late frame gets `rate_of` NULL and
+    leaves the window (and so the next value) as it was (EX-13)."""
+    _, run, mdbs, switch = data.draw(_timelines(derived=True))
+    n = len(run.frames)
+    modes = data.draw(mode_schedule(n))
+    late = data.draw(
+        st.lists(
+            st.tuples(st.integers(0, max(0, n - 1)), st.integers(0, 20)), max_size=8 if n else 0
+        )
+    )
+    whole = play(headers(run, modes=modes), mdbs, switch, run.acks, frozenset())
+    stream = headers(run, late, modes)
+    split = play(stream, mdbs, switch, run.acks, data.draw(_cuts(len(stream))))
+    assert split.transitions == whole.transitions
+    assert dump_vehicle(split.end) == dump_vehicle(whole.end)  # incl. the rate_of windows
+    assert [c.values for late_, c in split.computed if not late_] == [
+        c.values for _, c in whole.computed
+    ]
+    for late_, c in split.computed:
+        if late_:
+            assert c.values[LEAK] is None
+            assert (LEAK, "late") in c.nulls
+    _coverage(split, modes, mdbs)
+    event(f"late={bool(late)}")
+
+
+@profiles.PROFILE
+@given(st.data())
+def test_p4_snapshot_any_split_with_set_change_and_mode_switch(data: st.DataObject) -> None:
+    """P4 with derived parameters and modes: JSON snapshot / restore at random batch boundaries,
+    with a mission-db change and mode switches between them, equals the uninterrupted run."""
+    _, run, mdbs, switch = data.draw(_timelines(derived=True))
+    modes = data.draw(mode_schedule(len(run.frames)))
+    stream = headers(run, modes=modes)
+    cuts = data.draw(_cuts(len(stream)))
+    whole = play(stream, mdbs, switch, run.acks, cuts)
+    again = play(stream, mdbs, switch, run.acks, cuts, restore=True)
+    assert again.transitions == whole.transitions
+    assert dump_vehicle(again.end) == dump_vehicle(whole.end)
+    assert [c.values for _, c in again.computed] == [c.values for _, c in whole.computed]
+    _coverage(whole, modes, mdbs)

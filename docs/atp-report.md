@@ -133,11 +133,11 @@ Build `ext01-mission-db` at c7dc345 (the chaos soak at 5973eb4, which only chang
 | Chaos soak (regression net) | — | **PASS**, seed 20261121, 30 min: I1 to I3 and I5 to I8 pass with 0 skipped, I4 pass (7 473 samples); 16 infrastructure actions (all 8 kinds, recovery max 8.2 s) and 57 faults (minimum 15 and 30); 12 raises, 0 false raises, no chattering. A first run with the same seed passed every invariant during the run but crashed in the final pass on an unapplied placeholder set left by an integration test; the recompute now loads only applied sets (5973eb4). | [docs/chaos/2026-11-21-20261121-ext01](chaos/2026-11-21-20261121-ext01/summary.md) |
 
 GS-EXT-01 acceptance, clause by clause (design §11.1; claims only what a test covers):
-- (a) extend without code: covered by `tests/meta/test_extend_without_code.py` for the raw parameter, `power_w` and the SAFE limit; the command with `allowed_modes` is **open** (commanding plan).
+- (a) extend without code: covered by `tests/meta/test_extend_without_code.py` for a new raw parameter, a new derived parameter computed from `power_w`, and a SAFE-mode limit; the command with `allowed_modes` is **open** (commanding plan).
 - (b) calibration: the boundary table is `tests/unit/test_calibration.py::test_boundary_table` and the RED after N frames is `tests/unit/test_calibration_range_check.py::test_red_after_n_frames_and_clear_after_n`; the console words it "RED · OUT OF CALIBRATION RANGE LOW/HIGH" (`ui/src/tools/alarmText.test.ts`). No calibrated parameter is shipped, so ATP-E1's driven-out-of-table step is not run.
 - (c) derived: only the short integration versions are covered (`tests/integration/test_derived_store.py::test_power_w_every_row`, `::test_leak_rate_during_leak`); the 10 min run is ATP-E1's and was not run.
 - (d) TEST to SAFE: `tests/integration/test_mode_limits.py::test_switch_at_first_safe_frame`.
 - (e) `MODE_NOT_ALLOWED` / `MODE_UNKNOWN`: **open** (commanding plan).
-- (f) hashes: the core hash tests, unchanged by this build.
+- (f) hashes: `tests/unit/test_missiondb_schema.py::test_hashes_match_sha256sum_formula` and `::test_set_hashes_pinned`; `tests/unit/test_parameter_changes.py` (a calibration or unit change changes `parameters_sha256`).
 
 The shipped SAFE cabin-pressure set has no ROC check (as design §11.3 specifies), so in SAFE a leak first shows at 95 kPa YELLOW and the leak-rate alarm is off; ATP-02 runs in TEST. An owner decision to revisit; the set is unchanged. Polynomial calibration (R23 S1) is an open owner decision and is not built. Open for the owner: the ATP-08 run P on a quiet machine, and the signature.

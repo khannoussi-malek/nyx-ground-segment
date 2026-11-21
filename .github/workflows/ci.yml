@@ -30,6 +30,10 @@ jobs:
       - run: cd ui && npx tsc --noEmit
       - run: cd ui && npm test
       - run: uv run ruff check
+      # network steps (vulnerability databases); run locally as in docs/assurance/security.md
+      - run: uv export --frozen --no-emit-project --no-hashes -o "$RUNNER_TEMP/req.txt" && uv run pip-audit --no-deps --disable-pip -r "$RUNNER_TEMP/req.txt"
+      - run: cd ui && npm audit --audit-level=high
+      - run: cd e2e && npm audit --audit-level=high
       - run: uv run python scripts/stream_schema_notice.py
       - run: uv run python scripts/check_commits.py origin/main
       - run: 'test -d ui/src && ! grep -rn "toLocale" ui/src --include=*.ts --include=*.tsx'

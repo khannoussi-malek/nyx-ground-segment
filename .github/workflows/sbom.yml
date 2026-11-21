@@ -1,0 +1,28 @@
+name: sbom
+
+on:
+  push:
+    tags: ["v*"]
+
+jobs:
+  sbom:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # no floating major tag upstream
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: uv sync --frozen
+      - run: mkdir sbom
+      - run: uv export --frozen --no-emit-project --no-dev --no-hashes -o sbom/requirements.txt
+      - run: uv run cyclonedx-py requirements sbom/requirements.txt --of JSON -o sbom/python.cdx.json
+      - run: cd ui && npm ci && npx @cyclonedx/cyclonedx-npm@6.0.1 --package-lock-only --output-format JSON --output-file ../sbom/ui.cdx.json
+      - run: cd e2e && npm ci && npx @cyclonedx/cyclonedx-npm@6.0.1 --package-lock-only --output-format JSON --output-file ../sbom/e2e.cdx.json
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sbom-${{ github.ref_name }}
+          path: sbom/*.cdx.json

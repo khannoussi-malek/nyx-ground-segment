@@ -234,7 +234,7 @@ async def _delete_window(
 ) -> tuple[int, datetime | None, datetime | None, str]:
     """DELETE the window's rows; what was deleted: count, min, max, fingerprint."""
     cur = await conn.execute(
-        "with d as (delete from telemetry where " + HourWindow.SQL + " returning t_onboard, seq)"
+        "with d as (delete from telemetry where " + HourWindow.SQL + " returning t_onboard, seq)"  # noqa: S608 identifier from a module constant, values bound
         " select count(*), min(t_onboard), max(t_onboard), " + FINGERPRINT_SQL + " from d",
         w.params(),
     )

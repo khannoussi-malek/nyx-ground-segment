@@ -33,10 +33,22 @@ target-version = "py314"
 extend-exclude = ["docs", "graphify-out", ".superpowers"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "BLE001", "S110", "FIX"]
+select = ["E", "F", "I", "UP", "B", "BLE001", "S", "C901", "FIX"]
+# S101: every assert outside tests narrows a type for mypy or states an internal invariant
+# (none validates input; input is validated by pydantic and the command checks)
+ignore = ["S101"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15  # NPR 7150.2D SWE-135 complexity metric; 15 is the agreed ceiling (the 10 default flags 12 working functions)
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["FIX"]
+# tests: assert is the test idiom (S101); fixed-argument docker/redis-cli calls, seeded random
+# data, test-only credentials and SQL built from test-owned table names are not attack surface
+"tests/**" = ["FIX", "S104", "S105", "S106", "S310", "S311", "S603", "S607", "S608"]
+# developer tools: git/docker/uv run with fixed argument lists (S603, S607), urlopen only on the
+# local stack's http URLs (S310), seeded load-shape randomness (S311), table names from constants (S608)
+"scripts/**" = ["S603", "S607", "S608"]
+"perf/**" = ["S310", "S311", "S603", "S607"]
 
 [tool.ruff.lint.isort]
 # the git-ignored redis/ dir (generated users.acl) made ruff call redis first-party locally only
@@ -49,6 +61,9 @@ plugins = ["pydantic.mypy"]
 [[tool.mypy.overrides]]
 module = ["pyarrow", "pyarrow.*"]  # no stubs, no py.typed
 ignore_missing_imports = true
+
+[tool.coverage.run]
+branch = true  # statement and decision coverage (ECSS-E-ST-40C 5.8.3.5, R25 F2)
 
 [tool.pytest.ini_options]
 testpaths = ["tests/unit", "tests/integration", "tests/meta"]
@@ -63,8 +78,10 @@ pythonpath = ["."]
 
 [dependency-groups]
 dev = [
+    "cyclonedx-bom==8.0.1",  # SBOM per tag (sbom.yml); 8.0.1 is from 2026-11-04, 9.0.0 from 2026-11-19
     "jsonschema==4.26.0",
     "mypy==2.4.1",
+    "pip-audit==2.10.1",  # dependency vulnerability scan (CI lint job)
     "pytest==9.2.0",
     "pytest-asyncio==1.5.0",
     "pytest-cov==7.1.0",
@@ -83,4 +100,8 @@ constraint-dependencies = [
     "markdown-it-py<4.3.0", # 4.3.0 is from 2026-11-11; 4.2.0 is from 2026-05-07
     "argon2-cffi-bindings==26.1.0",  # 26.2.0 is from 2026-11-13; 26.1.0 from 2026-08-20
     "pycryptodome==4.2.0",           # 4.4.0 is from 2026-11-07; 4.2.0 from 2026-10-24
+    "cachecontrol<0.15.0",  # 0.15.0 is from 2026-11-16; 0.14.4 from 2025-11-14
+    "filelock<4.2.10",      # 4.2.10+ are from 2026-11-07 or later; 4.2.9 is from 2026-11-04
+    "jsonpointer<3.11",     # 3.11+ is from 2026-11-07 or later; 3.10 is from 2026-11-06
+    "platformdirs<4.14.6",  # 4.14.6+ is from 2026-11-07 or later; 4.14.5 is from 2026-11-04
 ]

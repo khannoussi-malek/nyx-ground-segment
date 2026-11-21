@@ -82,7 +82,9 @@ def _outside(draw: st.DrawFn) -> str:
             lambda p: f"({render(p[0])}) + ({p[1]})"  # a forbidden node inside a valid one
         )
         | st.integers(17, 100).map(lambda n: "-" * n + "a")  # nested past the depth limit
-        | st.integers(40, 100).map(lambda n: "a" + " + a" * n)  # past the node limit
+        | st.integers(40, 100).map(lambda n: "a" + " + a" * n)  # past the depth limit (a chain)
+        | st.integers(40, 100).map(lambda n: "min(" + ",".join("a" * n) + ")")  # flat: only the
+        # 64-node limit is crossed (height 2); a chain of sums trips the depth limit first
         | st.integers(257, 400).map(lambda n: "a" * n)  # past the length limit
     )
 

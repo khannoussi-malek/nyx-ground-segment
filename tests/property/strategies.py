@@ -144,13 +144,15 @@ def tunings() -> st.SearchStrategy[Tuning]:
         above_floor_pct=st.one_of(st.just(0), st.integers(0, 200)),  # floor end is the chatter end
         window_s=st.sampled_from((0.5, 0.75, 1.0, 1.5, 2.0)),
         faults=st.sets(st.sampled_from(FAULT_KINDS), min_size=1).map(frozenset),  # swarm
-        mode_checks=st.booleans(),
+        mode_checks=st.sampled_from((True,) * 5 + (False,)),  # the mode path is the point
     )
 
 
 LEAK = "cabin_leak_rate_kpa_s"
 LEAK_LIMIT = {"type": "limit", "red_low": -0.6, "yellow_low": -0.3, "hysteresis_abs": 0.02}
 MODES = ("SAFE", "STANDBY", "TEST", "FAULT")
+MODE_PARAMS = ("cabin_pressure_kpa", "bus_voltage_v")
+_MODE_BIAS = MODES + ("SAFE", "FAULT", "SAFE", "FAULT", "TEST")
 
 
 @lru_cache(maxsize=512)
@@ -246,8 +248,8 @@ def _faults(kinds: frozenset[str], n: int) -> st.SearchStrategy[list[Fault]]:
     params = sorted(_bounds())
 
     @st.composite
-    def one(draw: st.DrawFn) -> Fault:
-        p = draw(st.sampled_from(params))
+    def one(draw: st.DrawFn, only: tuple[str, ...] = tuple(params)) -> Fault:
+        p = draw(st.sampled_from(only))
         b = _bounds()[p]
         span = b[-1] - b[0]
         edge = draw(st.sampled_from(b))
@@ -262,7 +264,11 @@ def _faults(kinds: frozenset[str], n: int) -> st.SearchStrategy[list[Fault]]:
             draw(st.integers(1, 8)),
         )
 
-    return st.lists(one(), min_size=1, max_size=6)
+    # one fault is always on a param whose checks change with the mode (cabin_pressure_kpa in SAFE,
+    # bus_voltage_v in FAULT), so a mode switch often meets an open alarm there
+    return st.builds(
+        lambda first, rest: [first, *rest], one(MODE_PARAMS), st.lists(one(), max_size=5)
+    )
 
 
 def _value(f: Fault, i: int, nominal: float) -> float | None:
@@ -311,10 +317,11 @@ def runs(draw: st.DrawFn, kinds: frozenset[str]) -> Run:
 
 @st.composite
 def mode_schedule(draw: st.DrawFn, n: int) -> tuple[str, ...]:
-    """A mode per frame: stretches of one mode, so switches fall at arbitrary frames (mid-batch)."""
+    """A mode per frame: short stretches (switches fall at arbitrary frames, mid-batch), biased to
+    SAFE and FAULT, the modes whose checks differ (limits.yaml SAFE, FAULT unmonitored)."""
     out: list[str] = []
     while len(out) < n:
-        out += [draw(st.sampled_from(MODES))] * draw(st.integers(1, 30))
+        out += [draw(st.sampled_from(_MODE_BIAS))] * draw(st.integers(1, 6))
     return tuple(out[:n])
 
 

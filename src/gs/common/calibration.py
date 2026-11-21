@@ -15,6 +15,8 @@ class Table:
 
     @staticmethod
     def from_pairs(pairs: Sequence[Sequence[float]]) -> Table:
+        if any(len(p) != 2 for p in pairs):
+            raise ValueError("every calibration row needs exactly 2 values [raw, eng]")
         pts = tuple((float(p[0]), float(p[1])) for p in pairs)
         if len(pts) < 2:
             raise ValueError("a calibration table needs at least 2 points")

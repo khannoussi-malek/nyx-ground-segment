@@ -37,6 +37,9 @@ class CheckConfig(BaseModel):
     persistence: int | None = Field(None, ge=1)
 
 
+BUILTIN = frozenset({"calibration_range"})  # added by compile_set, never written in limits.yaml
+
+
 class Check(Protocol):
     kind: ClassVar[str]
     Config: ClassVar[type[CheckConfig]]

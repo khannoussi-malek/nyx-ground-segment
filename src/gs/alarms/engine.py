@@ -11,6 +11,7 @@ from datetime import datetime
 from uuid import UUID
 
 from gs.alarms.checks import CHECKS, Check, Sample
+from gs.alarms.checks.calibration_range import CalibrationRangeCheck
 from gs.alarms.contract import AlarmState, Level, Transition, TransitionKind
 from gs.common.missiondb import MissionDb
 from gs.ingest.events import alarm_id_for, transition_key
@@ -62,6 +63,11 @@ def compile_set(mdb: MissionDb) -> CompiledSet:
             compiled.append((CHECKS[c.type](c), c.persistence))
         if compiled:  # `checks: []` = an unchecked parameter (ruling G16)
             checks[param] = tuple(compiled)
+    for param, table in mdb.calibrations.items():  # built-in, on every calibrated parameter
+        own = checks.get(param, ())
+        n = own[0][1] if own else mdb.default_persistence  # ponytail: the first check's N
+        cfg = CalibrationRangeCheck(type="calibration_range", persistence=n, table=table.points)
+        checks[param] = (*own, (CHECKS[cfg.type](cfg), n))
     return CompiledSet(mdb.set_sha256, mdb.limits_sha256, checks)
 
 
@@ -198,16 +204,21 @@ def step(
     period_s: float,
     values: Mapping[str, float | None],
     reset: bool,
+    raws: Mapping[str, float | None] | None = None,
 ) -> tuple[EngineState, tuple[Transition, ...]]:
     """One frame. `reset` (GAP, SEQ_RESET, data-STALE; the caller decides) restarts every ring and
-    check state before the frame is classified; a NULL value restarts them and is not classified."""
+    check state before the frame is classified; a NULL value restarts them and is not classified.
+    A check with `on_raw` reads `raws` (the frame's own values; `values` when none are given)."""
     f = _Frame(vehicle, epoch, seq, t)
     slots, alarms = dict(state.slots), dict(state.alarms)
     out: list[Transition] = []
     for param, checks in cset.checks.items():
-        v = values.get(param)
-        sample = None if v is None else Sample(seq, t.timestamp(), v, period_s)
-        stepped = [_slot_step(slots[(param, c.kind)], c, n, sample, reset) for c, n in checks]
+
+        def sample(c: Check, param: str = param) -> Sample | None:
+            v = (raws if raws is not None and getattr(c, "on_raw", False) else values).get(param)
+            return None if v is None else Sample(seq, t.timestamp(), v, period_s)
+
+        stepped = [_slot_step(slots[(param, c.kind)], c, n, sample(c), reset) for c, n in checks]
         new = [s for s, _ in stepped]
         slots.update({(param, s.kind): s for s in new})
         tr = _judge(f, param, alarms, new)

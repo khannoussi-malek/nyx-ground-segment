@@ -18,12 +18,17 @@ def ld(f: dict[str, bytes]) -> MissionDb:
     return load(f["limits"], f["commands"], f["parameters"])
 
 
-def calibrated(table: str = "[[0, 0], [10, 100]]", param: str = "bus_current_a") -> MissionDb:
-    """The shipped mission with a calibration table on one raw parameter (tmp, never mission/)."""
+def calibrated(
+    table: str = "[[0, 0], [10, 100]]", param: str = "bus_current_a", no_limits: bool = False
+) -> MissionDb:
+    """The shipped mission with a calibration table on one raw parameter (tmp, never mission/);
+    `no_limits` drops that parameter's limits entry."""
     p = files()["parameters"].decode()
     line = next(x for x in p.splitlines() if x.lstrip().startswith(f"{param}:"))
-    return ld(
-        files(
-            parameters=p.replace(line, line[:-1] + f", calibration: {{table: {table}}}}}").encode()
-        )
-    )
+    over = {
+        "parameters": p.replace(line, f"{line[:-1]}, calibration: {{table: {table}}}}}").encode()
+    }
+    if no_limits:
+        lim = files()["limits"].decode().splitlines(keepends=True)
+        over["limits"] = "".join(x for x in lim if not x.startswith(f"  {param}:")).encode()
+    return ld(files(**over))

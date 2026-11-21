@@ -26,7 +26,7 @@ from pydantic import (
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import CoreSchema, core_schema
 
-from gs.alarms.checks import CHECKS, CheckConfig
+from gs.alarms.checks import BUILTIN, CHECKS, CheckConfig
 from gs.alarms.checks.limit import LimitCheck as LimitCheck  # moved there, re-exported
 from gs.alarms.checks.limit import deadband, floor, meets_floor
 from gs.alarms.checks.roc import RocCheck as RocCheck  # moved there, re-exported
@@ -114,9 +114,10 @@ def _check_item(v: object) -> CheckConfig:
     if isinstance(v, CheckConfig):
         return v
     kind = v.get("type") if isinstance(v, dict) else None
-    cls = CHECKS.get(kind) if isinstance(kind, str) else None
+    known = sorted(CHECKS.keys() - BUILTIN)
+    cls = CHECKS.get(kind) if isinstance(kind, str) and kind not in BUILTIN else None
     if cls is None:
-        raise ValueError(f"unknown check type {kind!r}; known: {', '.join(sorted(CHECKS))}")
+        raise ValueError(f"unknown check type {kind!r}; known: {', '.join(known)}")
     return cls.Config.model_validate(v)
 
 
@@ -127,7 +128,9 @@ class _ChecksUnionSchema:
     def __get_pydantic_json_schema__(
         _cs: CoreSchema, handler: GetJsonSchemaHandler
     ) -> JsonSchemaValue:
-        choices = {k: CHECKS[k].Config.__pydantic_core_schema__ for k in sorted(CHECKS)}
+        choices = {
+            k: CHECKS[k].Config.__pydantic_core_schema__ for k in sorted(CHECKS.keys() - BUILTIN)
+        }
         return handler(core_schema.tagged_union_schema(choices, discriminator="type"))
 
 
@@ -236,6 +239,7 @@ class MissionDb:
     derived_names: tuple[str, ...]
     raw_columns: tuple[str, ...]  # `<name>_raw` of each calibrated raw parameter
     calibrations: Mapping[str, Table]
+    default_persistence: int  # limits.yaml `defaults`, used by the built-in calibration_range
     derived: Mapping[str, DerivedSpec]
     limits_sha256: str
     commands_sha256: str
@@ -436,6 +440,7 @@ def load(limits: bytes, commands: bytes, parameters: bytes) -> MissionDb:
         derived_names=tuple(derived),
         raw_columns=tuple(f"{n}_raw" for n in calibrations),
         calibrations=calibrations,
+        default_persistence=lim.defaults.persistence,
         derived=derived,
         limits_sha256=hashes[0],
         commands_sha256=hashes[1],

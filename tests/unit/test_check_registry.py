@@ -53,8 +53,8 @@ def checks_union_kinds() -> set[str]:
 
 
 def test_shipped_kinds() -> None:
-    assert set(CHECKS) == {"limit", "roc"}
-    assert checks_union_kinds() == {"limit", "roc"}
+    assert set(CHECKS) == {"limit", "roc", "calibration_range"}
+    assert checks_union_kinds() == {"limit", "roc"}  # calibration_range is built in (D-EXT-04)
 
 
 def test_moved_models_still_importable_from_missiondb() -> None:

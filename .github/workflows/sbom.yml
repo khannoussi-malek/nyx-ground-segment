@@ -28,5 +28,5 @@ jobs:
       - run: cd e2e && npm ci && npx @cyclonedx/cyclonedx-npm@6.0.1 --package-lock-only --output-format JSON --output-file ../sbom/e2e.cdx.json
       - uses: actions/upload-artifact@v7
         with:
-          name: sbom-${{ github.ref_name }}
+          name: sbom-${{ github.run_id }}
           path: sbom/*.cdx.json

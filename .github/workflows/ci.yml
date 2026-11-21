@@ -64,7 +64,7 @@ jobs:
       - run: docker compose up -d --wait redis db minio
       - run: docker compose run --rm minio-init
       - run: docker compose run --rm --build migrate
-      - run: uv run pytest --cov=gs --cov-fail-under=80 --cov-report=json:coverage.json --junitxml=junit-test.xml
+      - run: uv run pytest --cov=gs --cov-fail-under=80 --cov-report=term --cov-report=json:coverage.json --junitxml=junit-test.xml
       - run: uv run pytest --no-cov -m after_coverage tests/meta/test_except_coverage.py --junitxml=junit-after-coverage.xml
       - if: always()
         uses: actions/upload-artifact@v7
@@ -115,7 +115,7 @@ jobs:
   matrix:
     # as-run verification matrix (R25 F4): fails when a requirement's named test is absent from the run
     needs: [test, e2e]
-    if: always()
+    if: ${{ !cancelled() }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -137,7 +137,7 @@ jobs:
           path: verification-matrix.md
 
   release-record:
-    # v* tags only (R25 F6): tag, commit, image digests, lockfile hashes, open NCRs, the matrix
+    # v* tags only (R25 F6): tag, commit, image IDs of a local rebuild, lockfile hashes, open NCRs, the matrix
     needs: [lint, test, e2e, matrix]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest

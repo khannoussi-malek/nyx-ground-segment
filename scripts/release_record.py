@@ -1,5 +1,6 @@
-"""Release record for a v* tag (R25 F6, ECSS-E-ST-40C Annex G): tag, commit, image digests,
-lockfile hashes, open NCRs and the as-run verification matrix, in one markdown file.
+"""Release record for a v* tag (R25 F6, ECSS-E-ST-40C Annex G): tag, commit,
+image IDs of a local rebuild, lockfile hashes, open NCRs
+and the as-run verification matrix, in one markdown file.
 Run: python -m scripts.release_record --tag T --commit SHA --images F --matrix F --out F"""
 
 import argparse

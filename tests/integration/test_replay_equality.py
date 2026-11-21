@@ -42,6 +42,7 @@ from tests.support.pg import admin_dsn, app_dsn, rows
 from tests.support.recompute import recompute_columns, recompute_keys
 from tests.support.redisx import aclient, client, drained
 from tests.support.s3 import s3_client
+from tests.support.sim import post_fault, post_mode, running_sim
 
 pytestmark = pytest.mark.usefixtures("archiver_paused")
 START = hour_of(datetime.now(UTC)) - timedelta(days=3)
@@ -312,3 +313,43 @@ async def test_window_across_added_parameter(recording: Recording, tmp_path: Pat
             c.execute(f"alter table telemetry drop column {col}")  # noqa: S608
     tms = [x for x in msgs if isinstance(x, ReplayTm)]
     assert len(tms) > 30_000 and all(x.values[col] is None for x in tms)  # EX-19: null, not error
+
+
+async def test_recompute_with_modes_and_a_derived_alarm() -> None:
+    """D-REP-05 (b), widened: a live run with TEST -> SAFE -> TEST switches and an alarm on the
+    derived `power_w`, re-derived from the stored raw inputs by the same rules, gives exactly the
+    recorded alarm keys."""
+    v, step = vid(), "step"
+    async with worker([v]), running_sim(v) as port:
+        t = asyncio.to_thread
+        await t(post_mode, v, "SAFE", port)
+        await t(post_fault, v, step, port, param=ROC, value=92.0, duration_s=60)  # SAFE: YELLOW
+        await until(lambda: bool(rows("select 1 from alarm_events where vehicle=%s", v)), 10)
+        await t(post_mode, v, "TEST", port)  # the default set: RED, an ESCALATE
+        await t(post_fault, v, step, port, param="bus_current_a", value=12.0, duration_s=60)
+        q = "select 1 from alarm_events where vehicle=%s and param='power_w'"
+        await until(lambda: bool(rows(q, v)), 10)  # derived: 12 A x ~28 V > 300 W
+        await until(lambda: drained(v), 30)
+    recorded = rows("select key, param from alarm_events where vehicle=%s order by id", v)
+    assert {"power_w", ROC} <= {r["param"] for r in recorded}
+    modes = rows("select mode from telemetry where vehicle=%s order by seq", v)
+    assert {m["mode"] for m in modes} == {"SAFE", "TEST"}
+    applied = [
+        (r["details"]["first_seq"], r["details"]["set_sha256"])
+        for r in rows(
+            "select details from events where vehicle=%s and kind='LIMITS_APPLIED' order by id", v
+        )
+    ]
+    sets = {
+        r["set_sha256"]: load(
+            r["limits_yaml"].encode(), r["commands_yaml"].encode(), r["parameters_yaml"].encode()
+        )
+        for r in rows(
+            "select * from limits_versions where set_sha256 = any(%s)", [a[1] for a in applied]
+        )
+    }
+    cols = ["vehicle", "t_onboard", "seq", "t_received", "mode", "last_cmd_id"]
+    cols += recompute_columns(list(sets.values()))
+    frames = rows(f"select {', '.join(cols)} from telemetry where vehicle=%s order by seq", v)  # noqa: S608
+    keys, _ = recompute_keys([pa.Table.from_pylist(frames)], [], sets, v, applied)
+    assert keys == [r["key"] for r in recorded]

@@ -1,9 +1,11 @@
 """R25 F3: the code -> D-ID index is generated, fresh, and cites only decisions that exist."""
 
+import re
 from pathlib import Path
 
-from scripts.design_trace import REPO, cited, defined, render
+from scripts.design_trace import REPO, cited, defined, render, uncited
 
+DESIGN = REPO / "docs/design.md"
 INDEX = REPO / "docs/assurance/design-trace.md"
 HAZARDS = REPO / "docs/assurance/hazards.md"
 
@@ -36,8 +38,17 @@ def test_render_is_deterministic(tmp_path: Path) -> None:
     assert "| D-X-01 | `a.py` |" in render(src)
 
 
+def test_uncited_is_defined_minus_cited(tmp_path: Path) -> None:
+    src = _src(tmp_path, {"a.py": "# D-X-01\n"})
+    d = tmp_path / "design.md"
+    d.write_text("| D-X-01 | a |\n| D-X-02 | b |\n| D-X-03 | c |\n")
+    assert uncited(src, d) == ["D-X-02", "D-X-03"]
+    out = render(src, "", d)
+    assert "D-X-02, D-X-03" in out and "src/` only" in out
+
+
 def test_committed_index_is_fresh() -> None:  # drift
-    assert INDEX.read_text() == render(REPO / "src", "src/"), (
+    assert INDEX.read_text() == render(REPO / "src", "src/", DESIGN), (
         "run: uv run python -m scripts.design_trace"
     )
 
@@ -48,10 +59,22 @@ def test_every_cited_decision_exists_in_design() -> None:
 
 
 def test_hazard_table_names_real_requirements_and_decisions() -> None:
-    import re
-
     text = HAZARDS.read_text()
     reqs = set(re.findall(r"^\| ([A-Z]+-\d+) ", (REPO / "docs/requirements.md").read_text(), re.M))
     named = set(re.findall(r"(?<!D-)\b(?:ING|ALM|CMD|UI|DAT|ENG|EXT)-\d\d\b", text))
     assert named and named <= reqs, sorted(named - reqs)
     assert set(re.findall(r"\bD-[A-Z]+-\d+\b", text)) <= defined(REPO / "docs/design.md")
+
+
+def test_every_hazard_cites_a_real_test() -> None:
+    """R25 review: each hazard names at least one test file (and test, when given) that exists."""
+    sections = re.split(r"^### (?=H-\d+ )", HAZARDS.read_text(), flags=re.M)[1:]
+    assert len(sections) >= 11
+    for sec in sections:
+        title = sec.splitlines()[0]
+        refs = re.findall(r"`((?:tests|ui|e2e)/[^`:\s]+)(?:::([^`]+))?`", sec)
+        assert refs, f"{title}: no test cited"
+        for path, name in refs:
+            f = REPO / path
+            assert f.is_file(), f"{title}: {path} does not exist"
+            assert not name or name in f.read_text(), f"{title}: {name!r} not in {path}"

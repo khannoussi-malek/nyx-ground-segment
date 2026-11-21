@@ -981,6 +981,10 @@ export interface components {
         LimitView: {
             /** Checks */
             checks: (components["schemas"]["LimitCheck"] | components["schemas"]["RocCheck"])[];
+            /** Checks By Mode */
+            checks_by_mode: {
+                [key: string]: (components["schemas"]["LimitCheck"] | components["schemas"]["RocCheck"])[];
+            };
         };
         /** Link */
         Link: {

@@ -17,3 +17,9 @@ def test_view_keeps_a_derived_description() -> None:
         b"derived:\n  p: {unit: W, description: Power, expr: bus_voltage_v * bus_current_a}\n"
     )
     assert MissionDbView.of(ld(f)).derived["p"].description == "Power"
+
+
+def test_view_carries_the_mode_sets() -> None:
+    lim = MissionDbView.of(load_dir(MISSION_DIR)).limits["cabin_pressure_kpa"]
+    assert [c.type for c in lim.checks_by_mode["SAFE"]] == ["limit"]
+    assert lim.checks_by_mode["SAFE"][0].model_dump()["red_low"] == 90

@@ -1534,10 +1534,35 @@
             },
             "title": "Checks",
             "type": "array"
+          },
+          "checks_by_mode": {
+            "additionalProperties": {
+              "items": {
+                "discriminator": {
+                  "mapping": {
+                    "limit": "#/components/schemas/LimitCheck",
+                    "roc": "#/components/schemas/RocCheck"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LimitCheck"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RocCheck"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "title": "Checks By Mode",
+            "type": "object"
           }
         },
         "required": [
-          "checks"
+          "checks",
+          "checks_by_mode"
         ],
         "title": "LimitView",
         "type": "object"

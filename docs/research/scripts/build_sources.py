@@ -73,6 +73,12 @@ WEBDOCS = [
     ("q80c.pdf", "ECSS-Q-ST-80C-Rev1-software-product-assurance-15February2017.pdf", "R25", "https://ecss.nl/wp-content/uploads/2017/04/ECSS-Q-ST-80C-Rev.1(15February2017).pdf"),
     ("e70c.pdf", "ECSS-E-ST-70C-ground-systems-and-operations-31July2008.pdf", "R25", "https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-70C31July2008.pdf"),
     ("npr7150.pdf", "NPR-7150.2D-NASA-software-engineering-requirements.pdf", "R25", "https://nodis3.gsfc.nasa.gov/npg_img/N_PR_7150_002D_/N_PR_7150_002D_.pdf"),
+    ("bulletinC.txt", "IERS-Bulletin-C-72-2026-07-06.txt", "R26", "https://datacenter.iers.org/data/latestVersion/16_BULLETIN_C16.txt"),
+    ("cgpm2022-r4.txt", "CGPM-2022-Resolution-4-UTC.txt", "R26", "https://www.bipm.org/en/cgpm-2022/resolution-4"),
+    ("ccsds-301.pdf", "CCSDS-301.0-B-4-time-code-formats.pdf", "R26", "https://ccsds.org/Pubs/301x0b4e1.pdf"),
+    ("google-smear.txt", "Google-leap-smear.txt", "R26", "https://developers.google.com/time/smear"),
+    ("py-datetime.txt", "Python-datetime-docs.txt", "R26", "https://docs.python.org/3/library/datetime.html"),
+    ("pg-datetime.txt", "PostgreSQL-17-datetime-functions.txt", "R26", "https://www.postgresql.org/docs/17/functions-datetime.html"),
 ]
 
 

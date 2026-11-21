@@ -29,6 +29,7 @@ def render(
     sha = [f"- `{p.name if p.parent == REPO else p.as_posix()}`: {_sha(p)}" for p in locks]
     return (
         f"# Release record {tag}\n\n- Tag: {tag}\n- Commit: {commit}\n\n## Images\n\n"
+        "Image IDs of a local rebuild on the tag, not registry digests of published images.\n\n"
         + "".join(f"- `{i}`\n" for i in images)
         + "\n## Lockfile SHA-256\n\n"
         + "\n".join(sha)

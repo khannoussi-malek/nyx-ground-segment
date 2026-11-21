@@ -49,3 +49,14 @@ def test_main_writes_record(tmp_path: Path) -> None:
     assert rr.main([*argv, "--matrix", str(tmp_path / "m.md"), "--out", str(out)]) == 0
     text = out.read_text()
     assert "sha256:9" in text and "MATRIX" in text and "uv.lock" in text and "NCR-01" in text
+
+
+def test_closed_with_a_note_is_still_closed(tmp_path: Path) -> None:
+    (tmp_path / "NCR-04.md").write_text(
+        "# NCR-04: x\n- **Status:** CLOSED (fixed in v1.0.1; see below)\n"
+    )
+    assert rr.open_ncrs(tmp_path) == []
+
+
+def test_header_says_images_are_a_local_rebuild() -> None:
+    assert "local rebuild" in rr.render("t", "c", [], [], [], "m")

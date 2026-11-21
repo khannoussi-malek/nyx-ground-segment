@@ -14,7 +14,7 @@ from starlette.background import BackgroundTask
 from gs.api.dbguard import connect, db_503
 from gs.api.deps import ApiError, User, errors, mission, vehicles
 from gs.api.replays import _s3, _unavailable
-from gs.api.workers import one_at_a_time, run_in_worker
+from gs.api.workers import one_at_a_time, parameter_hashes, run_in_worker
 from gs.common.interfaces.base import UtcTime, VehicleId
 
 router = APIRouter()
@@ -124,6 +124,7 @@ async def _export(
         with db_503(request):
             async with connect(request) as conn:
                 rows = await archive_rows(conn, vehicle, t_from, t_to)
+                hashes = await parameter_hashes(conn, vehicle, t_from, t_to)
         await check_rows(_s3(st), st.s3_settings.bucket, rows)  # 409 before any byte is written
     except ArchiveCorrupt as e:
         raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", corrupt_text(e)) from e
@@ -134,12 +135,14 @@ async def _export(
     try:
         await run_in_worker(
             request, "export", export_calc.export, st.database_url, st.s3_settings, vehicle,
-            t_from, t_to, names, fmt, path,
+            t_from, t_to, names, fmt, path, hashes,
         )  # fmt: skip
     except BaseException:
         os.unlink(path)
         raise
     name = f"{vehicle}_{t_from:{STAMP}}_{t_to:{STAMP}}.{fmt}"
+    meta = export_calc.header(hashes)
     return FileResponse(
-        path, media_type=MEDIA[fmt], filename=name, background=BackgroundTask(os.unlink, path)
-    )
+        path, media_type=MEDIA[fmt], filename=name, background=BackgroundTask(os.unlink, path),
+        headers={f"X-{k.replace('_', '-').title()}": v for k, v in meta.items()},
+    )  # fmt: skip

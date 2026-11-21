@@ -6,6 +6,7 @@ from datetime import UTC, datetime, timedelta
 import pyarrow as pa
 
 from gs.api.compare_calc import MIN_BUCKET_S, bucket_width_s, buckets, session_end
+from gs.api.workers import merge_hashes, spans_change
 
 T0 = datetime(2026, 11, 1, 10, 0, tzinfo=UTC)
 
@@ -59,3 +60,9 @@ def test_running_session_ends_at_now() -> None:
     now = T0 + timedelta(hours=3)
     assert session_end(None, now) == now
     assert session_end(T0 + timedelta(hours=1), now) == T0 + timedelta(hours=1)
+
+
+def test_compare_flags_two_hashes() -> None:
+    assert merge_hashes([["a"], ["a"]]) == ["a"] and not spans_change(merge_hashes([["a"], ["a"]]))
+    assert merge_hashes([["a"], ["b", "a"]]) == ["a", "b"]  # each session one set, the two differ
+    assert spans_change(merge_hashes([["a"], ["b"]]))

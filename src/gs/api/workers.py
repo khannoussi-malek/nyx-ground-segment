@@ -4,13 +4,15 @@ HTTP. Imports no pyarrow (UI-07); the worker side is worker_calc."""
 
 import asyncio
 import logging
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Sequence
 from concurrent.futures import BrokenExecutor, ProcessPoolExecutor
 from contextlib import contextmanager
+from datetime import datetime
 from http import HTTPStatus
 from multiprocessing import get_context
 from typing import Any
 
+import psycopg
 from fastapi import Request
 
 from gs.api.deps import ApiError
@@ -61,3 +63,36 @@ async def run_in_worker(request: Request, name: str, fn: Callable[..., Any], *ar
         raise ApiError(HTTPStatus.CONFLICT, "ARCHIVE_CORRUPT", out)
     what = "archive store" if kind == "s3" else "database"
     raise ApiError(HTTPStatus.SERVICE_UNAVAILABLE, "UNAVAILABLE", f"{what} unreachable")
+
+
+def hashes_in_window(
+    applied: Sequence[tuple[datetime, str]], t_from: datetime, t_to: datetime
+) -> list[str]:
+    """The distinct parameters_sha256 in force over [t_from, t_to], in order: the one in force at
+    t_from, then each applied inside the window. `applied`: (t_onboard, hash) by time (R23 M1)."""
+    before = [h for t, h in applied if t <= t_from][-1:]
+    return list(dict.fromkeys([*before, *(h for t, h in applied if t_from < t < t_to)]))
+
+
+def merge_hashes(per_window: Sequence[Sequence[str]]) -> list[str]:
+    return list(dict.fromkeys(h for hs in per_window for h in hs))
+
+
+def spans_change(hashes: Sequence[str]) -> bool:
+    """True when a window holds more than one parameter set: its engineering values are not one
+    series (A-R23-1, stored values are never recomputed)."""
+    return len(hashes) > 1
+
+
+async def parameter_hashes(
+    conn: psycopg.AsyncConnection, vehicle: str, t_from: datetime, t_to: datetime
+) -> list[str]:
+    # ponytail: every LIMITS_APPLIED of the vehicle (one per set change or restart); an index
+    # on (vehicle, kind, t_onboard) if that ever grows large
+    cur = await conn.execute(
+        "SELECT t_onboard, details->>'parameters_sha256' FROM events WHERE vehicle = %s"
+        " AND kind = 'LIMITS_APPLIED' AND t_onboard IS NOT NULL"
+        " AND details ? 'parameters_sha256' ORDER BY t_onboard, id",
+        (vehicle,),
+    )
+    return hashes_in_window(await cur.fetchall(), t_from, t_to)

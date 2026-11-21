@@ -11,7 +11,13 @@ from gs.api.bodies import Compare, CompareBucket, CompareSeries, CompareSession
 from gs.api.dbguard import connect, db_503
 from gs.api.deps import ApiError, User, errors, mission
 from gs.api.replays import _s3, _unavailable
-from gs.api.workers import one_at_a_time, run_in_worker
+from gs.api.workers import (
+    merge_hashes,
+    one_at_a_time,
+    parameter_hashes,
+    run_in_worker,
+    spans_change,
+)
 
 router = APIRouter()
 MAX_WINDOW = timedelta(hours=24)
@@ -88,6 +94,9 @@ async def _compare(request: Request, ids: list[int], names: list[str]) -> Compar
             async with connect(request) as conn:
                 rows = [await archive_rows(conn, v, s, e) for (_, v, _, s, _), e in
                         zip(found, ends, strict=True)]  # fmt: skip
+                per = [await parameter_hashes(conn, v, s, e) for (_, v, _, s, _), e in
+                       zip(found, ends, strict=True)]  # fmt: skip
+                hashes = merge_hashes(per)
         for r in rows:  # no connection held: MinIO reads
             await check_rows(_s3(st), st.s3_settings.bucket, r)
         width = compare_calc.bucket_width_s([sp.total_seconds() for sp in spans])
@@ -104,6 +113,8 @@ async def _compare(request: Request, ids: list[int], names: list[str]) -> Compar
     series = iter(out)
     return Compare(
         bucket_s=width,
+        parameters_sha256=hashes,
+        spans_parameters_change=spans_change(hashes),
         sessions=[
             CompareSession(id=i, vehicle=v, name=n, started_at=s, ended_at=e,
                            duration_s=sp.total_seconds())

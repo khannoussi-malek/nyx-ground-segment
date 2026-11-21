@@ -884,6 +884,13 @@
             "title": "Bucket S",
             "type": "number"
           },
+          "parameters_sha256": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Parameters Sha256",
+            "type": "array"
+          },
           "series": {
             "items": {
               "$ref": "#/components/schemas/CompareSeries"
@@ -897,10 +904,16 @@
             },
             "title": "Sessions",
             "type": "array"
+          },
+          "spans_parameters_change": {
+            "title": "Spans Parameters Change",
+            "type": "boolean"
           }
         },
         "required": [
           "bucket_s",
+          "parameters_sha256",
+          "spans_parameters_change",
           "sessions",
           "series"
         ],

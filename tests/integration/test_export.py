@@ -18,6 +18,7 @@ import psycopg
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
+from psycopg.types.json import Jsonb
 
 from gs.archiver import window
 from gs.archiver.hours import hour_of, object_key
@@ -100,7 +101,8 @@ def _z(text: str) -> datetime:
 
 
 def csv_rows(body: bytes) -> tuple[list[str], list[dict[str, Any]]]:
-    header, *lines = list(csv.reader(io.StringIO(body.decode())))
+    text = [x for x in body.decode().splitlines(keepends=True) if not x.startswith("#")]
+    header, *lines = list(csv.reader(io.StringIO("".join(text))))
     out = []
     for line in lines:
         row: dict[str, Any] = {}
@@ -116,6 +118,39 @@ def csv_rows(body: bytes) -> tuple[list[str], list[dict[str, Any]]]:
             # the last_cmd_id of a stored row is a UUID or NULL: compared as text below
         out.append(row)
     return header, out
+
+
+def applied(v: str, t: datetime, sha: str) -> None:
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
+        c.execute(
+            "insert into events (key, vehicle, kind, t_onboard, details)"
+            " values (%s, %s, 'LIMITS_APPLIED', %s, %s)",
+            (f"LIMITS_APPLIED/{v}/{iso_z(t)}", v, t, Jsonb({"parameters_sha256": sha})),
+        )
+
+
+@pytest.mark.parametrize("fmt", ["csv", "parquet"])
+async def test_header_carries_parameters_sha256(live_api: LiveApi, fmt: str) -> None:  # R23 M1
+    one, two = backfilled(), backfilled()
+    applied(one, H - HOUR, "a" * 64)
+    applied(two, H - HOUR, "a" * 64)
+    applied(two, H + HOUR / 2, "b" * 64)
+    async with client(live_api) as c:
+        got = [await c.get(url(v, fmt)) for v in (one, two)]
+    want = [(["a" * 64], "false"), (["a" * 64, "b" * 64], "true")]
+    for r, (hashes, flag) in zip(got, want, strict=True):
+        assert r.status_code == 200, r.text
+        assert r.headers["x-parameters-sha256"] == ",".join(hashes)
+        assert r.headers["x-spans-parameters-change"] == flag
+        if fmt == "csv":
+            lines = r.text.splitlines()[:2]
+            assert lines == [
+                f"# parameters_sha256: {','.join(hashes)}", f"# spans_parameters_change: {flag}"
+            ]  # fmt: skip
+        else:
+            meta = pq.read_schema(io.BytesIO(r.content)).metadata
+            assert meta[b"parameters_sha256"].decode() == ",".join(hashes)
+            assert meta[b"spans_parameters_change"].decode() == flag
 
 
 @pytest.mark.parametrize(
@@ -180,7 +215,8 @@ async def test_csv_times_end_in_z(live_api: LiveApi) -> None:
     v = backfilled(120)
     async with client(live_api) as c:
         r = await c.get(url(v))
-    lines = list(csv.DictReader(io.StringIO(r.text)))
+    body = "".join(x for x in r.text.splitlines(keepends=True) if not x.startswith("#"))
+    lines = list(csv.DictReader(io.StringIO(body)))
     assert len(lines) == 120
     for row in lines:
         assert re.fullmatch(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z", row["t_onboard"])

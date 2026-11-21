@@ -740,10 +740,14 @@ export interface components {
         Compare: {
             /** Bucket S */
             bucket_s: number;
+            /** Parameters Sha256 */
+            parameters_sha256: string[];
             /** Series */
             series: components["schemas"]["CompareSeries"][];
             /** Sessions */
             sessions: components["schemas"]["CompareSession"][];
+            /** Spans Parameters Change */
+            spans_parameters_change: boolean;
         };
         /** CompareBucket */
         CompareBucket: {

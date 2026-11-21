@@ -7,7 +7,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, ValidationInfo, field_validator
 
 from gs.common.health import Route
-from gs.common.interfaces import VehicleId
+from gs.common.interfaces import Mode, VehicleId
 from gs.simulator.nominals import NOMINALS
 
 FaultName = Literal[
@@ -91,6 +91,12 @@ class FaultClear(BaseModel):
     fault: FaultName
 
 
+class ModeRequest(BaseModel):  # POST /sim/mode (D-EXT-06): the mode the frames carry
+    model_config = ConfigDict(extra="forbid", strict=True)
+    vehicle: VehicleId
+    mode: Mode
+
+
 @dataclass(frozen=True)
 class Active:
     name: str
@@ -124,6 +130,13 @@ class FaultBoard:
 
     def __init__(self) -> None:
         self._by_vehicle: dict[str, tuple[Active, ...]] = {}
+        self._mode: dict[str, str] = {}
+
+    def set_mode(self, vehicle: str, mode: str) -> None:
+        self._mode[vehicle] = mode
+
+    def mode(self, vehicle: str) -> str:
+        return self._mode.get(vehicle, "TEST")
 
     def add(self, req: FaultRequest, now_mono: float) -> None:
         d = req.params.get("duration_s")
@@ -189,4 +202,18 @@ def fault_routes(
         board.clear(key.vehicle, key.fault)
         return 204, None
 
-    return {("POST", "/sim/fault"): post, ("DELETE", "/sim/fault"): delete}
+    async def set_mode(body: bytes) -> tuple[int, dict[str, object] | None]:
+        try:
+            req = ModeRequest.model_validate_json(body)
+        except ValueError as e:
+            return _invalid(e)
+        if bad := known(req.vehicle):
+            return bad
+        board.set_mode(req.vehicle, req.mode)
+        return 204, None
+
+    return {
+        ("POST", "/sim/fault"): post,
+        ("DELETE", "/sim/fault"): delete,
+        ("POST", "/sim/mode"): set_mode,
+    }

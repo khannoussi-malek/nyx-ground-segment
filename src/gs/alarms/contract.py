@@ -40,6 +40,7 @@ class Transition:
     # the trigger slot's reading on the transition frame; None for ACK/RTN/CLEAR and when that
     # slot gave no reading on that frame (ruling R-b)
     value: float | None = None
+    check_set: str = "default"  # 'default' or the mode whose limits judged it (D-EXT-06)
 
 
 @dataclass(frozen=True)

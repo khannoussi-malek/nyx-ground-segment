@@ -48,7 +48,7 @@ file is stale or when `src/` cites a D-ID that `docs/design.md` does not define.
 | D-EXT-02 | `src/gs/api/app.py` |
 | D-EXT-04 | `src/gs/alarms/checks/calibration_range.py`, `src/gs/common/calibration.py`, `src/gs/common/missiondb.py`, `src/gs/ingest/compute.py`, `src/gs/ingest/store.py`, `src/gs/ingest/worker.py` |
 | D-EXT-05 | `src/gs/alarms/checks/roc.py`, `src/gs/common/expr.py`, `src/gs/common/missiondb.py`, `src/gs/ingest/compute.py` |
-| D-EXT-06 | `src/gs/alarms/engine.py`, `src/gs/common/missiondb.py` |
+| D-EXT-06 | `src/gs/alarms/contract.py`, `src/gs/alarms/engine.py`, `src/gs/alarms/state.py`, `src/gs/common/missiondb.py`, `src/gs/simulator/faults.py` |
 | D-EXT-07 | `src/gs/commanding/args.py` |
 | D-EXT-09 | `src/gs/common/missiondb.py`, `src/gs/ingest/fold.py` |
 | D-EXT-11 | `src/gs/api/app.py`, `src/gs/api/bodies.py`, `src/gs/api/compare.py`, `src/gs/api/compare_calc.py` |

@@ -5,6 +5,8 @@ limits:
     checks:
       - {type: limit, red_low: 95.0, yellow_low: 98.0, yellow_high: 104.0, red_high: 106.0, hysteresis_pct: 15}
       - {type: roc, limit_per_s: 0.15, window_s: 1.0, direction: falling, severity: YELLOW}
+    checks_by_mode:
+      SAFE: [{type: limit, red_low: 90.0, yellow_low: 95.0, yellow_high: 104.0, red_high: 106.0, hysteresis_pct: 15}]
   cabin_temp_c: {checks: [{type: limit, red_low: 15.0, yellow_low: 18.0, yellow_high: 27.0, red_high: 30.0, hysteresis_pct: 3}]}
   bus_voltage_v: {checks: [{type: limit, red_low: 24.0, yellow_low: 26.0, yellow_high: 30.0, red_high: 32.0, hysteresis_pct: 6}]}
   bus_current_a: {checks: [{type: limit, yellow_high: 8.0, red_high: 10.0, hysteresis_abs: 0.2}]}

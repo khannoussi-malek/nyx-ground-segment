@@ -47,20 +47,29 @@ def at(t: float) -> datetime:
 
 
 def feed(
-    state: EngineState, cset: CompiledSet, frames: Iterable[Frame], resets: Iterable[int] = ()
+    state: EngineState,
+    cset: CompiledSet,
+    frames: Iterable[Frame],
+    resets: Iterable[int] = (),
+    mode: str | None = None,
 ) -> tuple[EngineState, list[Transition]]:
     out: list[Transition] = []
     reset_seqs = set(resets)
     for seq, t, values in frames:
-        state, trs = step(state, cset, V, EPOCH, seq, at(t), PERIOD_S, values, seq in reset_seqs)
+        state, trs = step(
+            state, cset, V, EPOCH, seq, at(t), PERIOD_S, values, seq in reset_seqs, mode=mode
+        )
         out.extend(trs)
     return state, out
 
 
 def run_engine(
-    cset: CompiledSet, frames: Iterable[Frame], resets: Iterable[int] = frozenset()
+    cset: CompiledSet,
+    frames: Iterable[Frame],
+    resets: Iterable[int] = frozenset(),
+    mode: str | None = None,
 ) -> list[Transition]:
-    return feed(initial_state(cset), cset, frames, resets)[1]
+    return feed(initial_state(cset), cset, frames, resets, mode)[1]
 
 
 def nominal_frames(seconds: float, seed: int, leak_per_s: float = 0.0) -> list[Frame]:

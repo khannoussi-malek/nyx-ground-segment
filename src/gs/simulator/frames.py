@@ -31,12 +31,13 @@ def build_frame(
     t: datetime,
     values: Mapping[str, float],
     last_cmd_id: UUID | None = None,
+    mode: str = "TEST",
 ) -> str:
     frame = {
         "vehicle": vehicle,
         "seq": seq,
         "t_onboard": iso_z(t),
-        "mode": "TEST",
+        "mode": mode,
         "last_cmd_id": str(last_cmd_id) if last_cmd_id else None,
         **values,
     }
@@ -116,7 +117,9 @@ async def tick_loop(
         if dropout:
             note(vehicle, seq, t, "dropout")
         else:  # dropout: seq advances, nothing sent
-            data = build_frame(vehicle, seq, t, values, box.last_cmd_id if box else None)
+            data = build_frame(
+                vehicle, seq, t, values, box.last_cmd_id if box else None, board.mode(vehicle)
+            )
             put(vehicle, seq, t, data, "sent")
             for _ in range(int(str(dup.params["count"])) if dup else 0):
                 put(vehicle, seq, t, data, "duplicate")

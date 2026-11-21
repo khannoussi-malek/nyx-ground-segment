@@ -113,26 +113,26 @@ async def load_cset(conn: psycopg.AsyncConnection, set_sha256: str) -> CompiledS
 # YELLOW|RED only); limits_sha256 comes from the set row, so it always matches set_sha256
 _UPSERT_ALARM = """
 INSERT INTO alarms (alarm_id, vehicle, param, state, severity, acked_sev, trigger_check,
-                    limits_sha256, set_sha256, opened_at, closed_at)
+                    limits_sha256, set_sha256, opened_at, closed_at, check_set)
 VALUES (%(alarm_id)s, %(vehicle)s, %(param)s, %(state)s,
         COALESCE(%(severity)s, (SELECT severity FROM alarms WHERE alarm_id = %(alarm_id)s)),
         %(acked_sev)s, %(trigger_check)s,
         (SELECT limits_sha256 FROM limits_versions WHERE set_sha256 = %(set_sha256)s),
-        %(set_sha256)s, %(opened_at)s, %(closed_at)s)
+        %(set_sha256)s, %(opened_at)s, %(closed_at)s, %(check_set)s)
 ON CONFLICT (alarm_id) DO UPDATE SET state = EXCLUDED.state, severity = EXCLUDED.severity,
   acked_sev = EXCLUDED.acked_sev, trigger_check = EXCLUDED.trigger_check,
   limits_sha256 = EXCLUDED.limits_sha256, set_sha256 = EXCLUDED.set_sha256,
-  closed_at = EXCLUDED.closed_at
+  closed_at = EXCLUDED.closed_at, check_set = EXCLUDED.check_set
 """
 _INSERT_ALARM_EVENT = """
 INSERT INTO alarm_events (key, alarm_id, vehicle, param, kind, check_kind, level, severity,
                           value, trigger_seq, trigger_t_onboard, by_user, note, alert,
-                          limits_sha256, set_sha256)
+                          limits_sha256, set_sha256, check_set)
 VALUES (%(key)s, %(alarm_id)s, %(vehicle)s, %(param)s, %(kind)s, %(check_kind)s, %(level)s,
         %(event_severity)s, %(value)s, %(trigger_seq)s, %(trigger_t)s, %(by_user)s, %(note)s,
         %(alert)s,
         (SELECT limits_sha256 FROM limits_versions WHERE set_sha256 = %(set_sha256)s),
-        %(set_sha256)s)
+        %(set_sha256)s, %(check_set)s)
 ON CONFLICT (key) DO NOTHING
 """
 
@@ -165,6 +165,7 @@ async def write_transitions(
             "by_user": t.by_user,
             "note": t.note,
             "alert": t.alert,
+            "check_set": t.check_set,
         }
         await conn.execute(_UPSERT_ALARM, p)
         await conn.execute(_INSERT_ALARM_EVENT, p)

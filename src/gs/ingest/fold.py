@@ -113,8 +113,9 @@ def fold(
             events.append(_applied(vehicle, mdb, s.epoch, f))
             applied = cset.set_sha256
         es, trs = engine.step(
-            es, cset, vehicle, s.epoch, f.seq, f.t_onboard, s.period_s, c.values, reset, c.raws
-        )
+            es, cset, vehicle, s.epoch, f.seq, f.t_onboard, s.period_s, c.values, reset, c.raws,
+            f.mode,
+        )  # fmt: skip
         transitions += trs
         new.append(f)
     out = Outcome(tuple(new), tuple(events), dup, tuple(transitions), computed=tuple(computed))

@@ -566,6 +566,32 @@ Web documents and standards:
 - [CCSDS-131.0-B-5-TM-sync-channel-coding.pdf](papers/web/CCSDS-131.0-B-5-TM-sync-channel-coding.pdf) – saved copy of https://ccsds.org/Pubs/131x0b5.pdf
 - [RFC6298-computing-TCP-retransmission-timer.txt](papers/web/RFC6298-computing-TCP-retransmission-timer.txt) – saved copy of https://www.rfc-editor.org/rfc/rfc6298
 
+## [R23-mission-database-standards](R23-mission-database-standards.md)
+
+No papers from the library are cited in this note (PaperLab was not reachable; the documents below were read from the web on 2026-11-21).
+
+Web documents and standards:
+
+- https://ccsds.org/Pubs/660x0b2.pdf (CCSDS 660.0-B-2, XTCE v1.2, February 2020; link only, no saved copy)
+- https://www.omg.org/spec/XTCE/20180204/SpaceSystem.xsd (OMG XTCE 1.2 schema; link only, no saved copy)
+- https://ecss.nl/standard/ecss-e-st-70-31c-ground-systems-and-operations-monitoring-and-control-data-definition/ (ECSS-E-ST-70-31C, 31 July 2008; PDF linked from that page; link only, no saved copy)
+- https://docs.yamcs.org/yamcs-server-manual/mdb/ (Yamcs Mission Database; also /mdb/data-types/, /mdb/alarm-definitions/, /mdb/algorithm-definitions/, /mdb/command-definitions/, /mdb/loaders/xtce/, /mdb/loaders/sheet/alarms/, /processors/command-processing/, /data-management/parameter-archive/; link only, no saved copy)
+- https://docs.openc3.com/docs/configuration/telemetry (OpenC3 COSMOS; also /configuration/command, /configuration/conversions; link only, no saved copy)
+
+## [R24-command-verification-pus](R24-command-verification-pus.md)
+
+No papers from the library are cited in this note (PaperLab was down; the standards are the primary sources).
+
+Web documents and standards:
+
+- [ECSS-E-ST-70-41C-PUS-15April2016.pdf](papers/web/ECSS-E-ST-70-41C-PUS-15April2016.pdf) – saved copy of https://ecss.nl/wp-content/uploads/2016/06/ECSS-E-ST-70-41C15April2016.pdf
+- [ECSS-E-ST-70-11C-space-segment-operability-31July2008.pdf](papers/web/ECSS-E-ST-70-11C-space-segment-operability-31July2008.pdf) – saved copy of https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-70-11C31July2008.pdf
+- [NASA-STD-8739.8B-software-assurance-and-safety.pdf](papers/web/NASA-STD-8739.8B-software-assurance-and-safety.pdf) – saved copy of https://standards.nasa.gov/sites/default/files/standards/NASA/B/0/NASA-STD-87398-Revision-B.pdf
+- [CCSDS-232.1-B-2-COP-1.pdf](papers/web/CCSDS-232.1-B-2-COP-1.pdf) – saved copy of https://ccsds.org/Pubs/232x1b2e2c1.pdf
+- [Yamcs-server-manual-commanding.txt](papers/web/Yamcs-server-manual-commanding.txt) – saved copy of https://docs.yamcs.org/yamcs-server-manual/tc/
+- [Yamcs-server-manual.pdf](papers/web/Yamcs-server-manual.pdf) – saved copy of https://dl.yamcs.org/docs/yamcs-server-manual.pdf
+- [OpenC3-command-configuration.txt](papers/web/OpenC3-command-configuration.txt) – saved copy of https://docs.openc3.com/docs/configuration/command
+
 ## [S1-gate2-spikes](S1-gate2-spikes.md)
 
 No papers from the library are cited in this note.
@@ -583,6 +609,30 @@ No papers from the library are cited in this note.
 Web documents and standards:
 
 - http://testserver/api/mission-db/frame-schema (link only, no saved copy)
+
+## [R25-software-assurance-gap](R25-software-assurance-gap.md)
+
+No papers from the library are cited in this note (PaperLab was down; the standards are the primary sources).
+
+Web documents and standards:
+
+- [ECSS-E-ST-40C-software-6March2009.pdf](papers/web/ECSS-E-ST-40C-software-6March2009.pdf) – saved copy of https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-40C6March2009.pdf
+- [ECSS-Q-ST-80C-Rev1-software-product-assurance-15February2017.pdf](papers/web/ECSS-Q-ST-80C-Rev1-software-product-assurance-15February2017.pdf) – saved copy of https://ecss.nl/wp-content/uploads/2017/04/ECSS-Q-ST-80C-Rev.1(15February2017).pdf
+- [ECSS-E-ST-70C-ground-systems-and-operations-31July2008.pdf](papers/web/ECSS-E-ST-70C-ground-systems-and-operations-31July2008.pdf) – saved copy of https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-70C31July2008.pdf
+- [NPR-7150.2D-NASA-software-engineering-requirements.pdf](papers/web/NPR-7150.2D-NASA-software-engineering-requirements.pdf) – saved copy of https://nodis3.gsfc.nasa.gov/npg_img/N_PR_7150_002D_/N_PR_7150_002D_.pdf
+
+## [R26-time-handling](R26-time-handling.md)
+
+No papers from the library are cited in this note (the standards and tool documentation are the primary sources). ECSS-E-ST-70-41C is listed under R24.
+
+Web documents and standards:
+
+- [IERS-Bulletin-C-72-2026-07-06.txt](papers/web/IERS-Bulletin-C-72-2026-07-06.txt) – saved copy of https://datacenter.iers.org/data/latestVersion/16_BULLETIN_C16.txt
+- [CGPM-2022-Resolution-4-UTC.txt](papers/web/CGPM-2022-Resolution-4-UTC.txt) – saved copy of https://www.bipm.org/en/cgpm-2022/resolution-4
+- [CCSDS-301.0-B-4-time-code-formats.pdf](papers/web/CCSDS-301.0-B-4-time-code-formats.pdf) – saved copy of https://ccsds.org/Pubs/301x0b4e1.pdf
+- [Google-leap-smear.txt](papers/web/Google-leap-smear.txt) – saved copy of https://developers.google.com/time/smear
+- [Python-datetime-docs.txt](papers/web/Python-datetime-docs.txt) – saved copy of https://docs.python.org/3/library/datetime.html
+- [PostgreSQL-17-datetime-functions.txt](papers/web/PostgreSQL-17-datetime-functions.txt) – saved copy of https://www.postgresql.org/docs/17/functions-datetime.html
 
 ## Known gaps (checked 2026-11-19)
 

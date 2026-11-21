@@ -54,6 +54,13 @@ ALIAS = {
 
 # web documents used by R21/R22: (source file name when fetched, saved name, note, URL)
 WEBDOCS = [
+    ("ecss-70-41c.pdf", "ECSS-E-ST-70-41C-PUS-15April2016.pdf", "R24", "https://ecss.nl/wp-content/uploads/2016/06/ECSS-E-ST-70-41C15April2016.pdf"),
+    ("ecss-70-11c.pdf", "ECSS-E-ST-70-11C-space-segment-operability-31July2008.pdf", "R24", "https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-70-11C31July2008.pdf"),
+    ("nasa-8739-8b.pdf", "NASA-STD-8739.8B-software-assurance-and-safety.pdf", "R24", "https://standards.nasa.gov/sites/default/files/standards/NASA/B/0/NASA-STD-87398-Revision-B.pdf"),
+    ("ccsds-232-1b2.pdf", "CCSDS-232.1-B-2-COP-1.pdf", "R24", "https://ccsds.org/Pubs/232x1b2e2c1.pdf"),
+    ("yamcs-tc.txt", "Yamcs-server-manual-commanding.txt", "R24", "https://docs.yamcs.org/yamcs-server-manual/tc/"),
+    ("yamcs-manual.pdf", "Yamcs-server-manual.pdf", "R24", "https://dl.yamcs.org/docs/yamcs-server-manual.pdf"),
+    ("openc3-configuration-command.txt", "OpenC3-command-configuration.txt", "R24", "https://docs.openc3.com/docs/configuration/command"),
     ("dsn208b.pdf", "NASA-DSN-810-005-208B-telemetry-data-decoding.pdf", "R22", "https://deepspace.jpl.nasa.gov/dsndocs/810-005/208/208B.pdf"),
     ("ccsds1301g.pdf", "CCSDS-130.1-G-3-TM-sync-channel-coding-green-book.pdf", "R22", "https://ccsds.org/Pubs/130x1g3e1.pdf"),
     ("ccsds1310b.pdf", "CCSDS-131.0-B-5-TM-sync-channel-coding.pdf", "R22", "https://ccsds.org/Pubs/131x0b5.pdf"),
@@ -62,6 +69,16 @@ WEBDOCS = [
     ("lambda-sqs.txt", "AWS-Lambda-SQS-partial-batch-response.txt", "R21", "https://docs.aws.amazon.com/lambda/latest/dg/services-sqs-errorhandling.html"),
     ("redis-xautoclaim.txt", "Redis-XAUTOCLAIM-command.txt", "R21", "https://redis.io/docs/latest/commands/xautoclaim/"),
     ("kip932.txt", "Kafka-KIP-932-queues-for-kafka.txt", "R21", "https://cwiki.apache.org/confluence/display/KAFKA/KIP-932%3A+Queues+for+Kafka"),
+    ("e40c.pdf", "ECSS-E-ST-40C-software-6March2009.pdf", "R25", "https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-40C6March2009.pdf"),
+    ("q80c.pdf", "ECSS-Q-ST-80C-Rev1-software-product-assurance-15February2017.pdf", "R25", "https://ecss.nl/wp-content/uploads/2017/04/ECSS-Q-ST-80C-Rev.1(15February2017).pdf"),
+    ("e70c.pdf", "ECSS-E-ST-70C-ground-systems-and-operations-31July2008.pdf", "R25", "https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-70C31July2008.pdf"),
+    ("npr7150.pdf", "NPR-7150.2D-NASA-software-engineering-requirements.pdf", "R25", "https://nodis3.gsfc.nasa.gov/npg_img/N_PR_7150_002D_/N_PR_7150_002D_.pdf"),
+    ("bulletinC.txt", "IERS-Bulletin-C-72-2026-07-06.txt", "R26", "https://datacenter.iers.org/data/latestVersion/16_BULLETIN_C16.txt"),
+    ("cgpm2022-r4.txt", "CGPM-2022-Resolution-4-UTC.txt", "R26", "https://www.bipm.org/en/cgpm-2022/resolution-4"),
+    ("ccsds-301.pdf", "CCSDS-301.0-B-4-time-code-formats.pdf", "R26", "https://ccsds.org/Pubs/301x0b4e1.pdf"),
+    ("google-smear.txt", "Google-leap-smear.txt", "R26", "https://developers.google.com/time/smear"),
+    ("py-datetime.txt", "Python-datetime-docs.txt", "R26", "https://docs.python.org/3/library/datetime.html"),
+    ("pg-datetime.txt", "PostgreSQL-17-datetime-functions.txt", "R26", "https://www.postgresql.org/docs/17/functions-datetime.html"),
 ]
 
 

@@ -7,14 +7,15 @@ import subprocess
 import time
 import urllib.request
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
 import psycopg
 
 from chaos.schedule import INGEST, VEHICLES, Action
-from tests.support.compose import api_url, compose, compose_ps, stack_problems
+from tests.support.compose import ONE_SHOTS, api_url, compose, compose_ps, stack_problems
 from tests.support.ingest import set_read_only
-from tests.support.pg import newest_t
+from tests.support.pg import admin_dsn, newest_t
 
 RECOVERY_S = 60.0
 FRESH_S = 5.0  # newest stored frame at most this old, both vehicles
@@ -61,34 +62,80 @@ def _networks(service: str, suffix: str) -> tuple[str, str]:
     return cid, net
 
 
-def _docker(*args: str, check: bool = True) -> None:
-    subprocess.run(["docker", *args], capture_output=True, text=True, check=check)
+def _docker(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(["docker", *args], capture_output=True, text=True, check=check)
 
 
-def restore_stack() -> list[str]:
+# the soak's stack runs with these (make chaos); a recreate here must not use .env's values
+CHAOS_PINS = {"STEAL_IDLE_MS": "30000", "RECLAIM_IDLE_MS": "30000"}
+
+
+def _up(*services: str) -> None:
+    compose("up", "-d", *services, env=CHAOS_PINS)
+
+
+def _read_only_on() -> bool:
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
+        row = c.execute("SHOW default_transaction_read_only").fetchone()
+    return row is not None and row[0] == "on"
+
+
+@dataclass
+class Restore:
+    repairs: list[str] = field(default_factory=list)  # what it had to fix
+    failures: list[str] = field(default_factory=list)  # what it could not
+
+    def lines(self) -> list[str]:
+        return [*self.repairs, *(f"FAILED {f}" for f in self.failures)]
+
+
+def restore_stack() -> Restore:
     """Back to a known good state, whatever an earlier run left: every service up, ingest
-    unpaused, ingest on both networks, Postgres writable. Every step runs; returns the failures.
-    Used at soak start (a crashed run must not poison the next) and when it ends."""
-    failures: list[str] = []
+    unpaused, ingest on both networks, Postgres writable. Every step runs; reports each repair
+    made and each step that failed. Used at soak start (a crashed run must not poison the next)
+    and when it ends."""
+    r = Restore()
 
     def step(name: str, fn: Callable[[], object]) -> None:
         try:
             fn()
         except (subprocess.CalledProcessError, psycopg.Error, OSError, ValueError) as e:
-            failures.append(f"{name}: {type(e).__name__}: {e}")
+            r.failures.append(f"{name}: {type(e).__name__}: {e}")
+
+    def up() -> None:
+        ps = compose_ps()
+        for svc, row in sorted(ps.items()):
+            if svc not in ONE_SHOTS and row.get("State") != "running":
+                r.repairs.append(f"{svc} was {row.get('State')}: started")
+        _up()
+
+    def unpause() -> None:
+        for svc, row in sorted(compose_ps().items()):
+            if svc in INGEST and row.get("State") == "paused":
+                compose("unpause", svc)
+                r.repairs.append(f"{svc} was paused: unpaused")
 
     def reconnect() -> None:
-        nets = [_networks("redis", "redisnet")[1], _networks("db", "dbnet")[1]]
+        nets = {"redis": _networks("redis", "redisnet")[1], "db": _networks("db", "dbnet")[1]}
         for t in INGEST:
             cid = compose("ps", "-aq", t).stdout.strip()
-            for net in nets:  # already connected: docker says so, which is fine
-                _docker("network", "connect", net, cid, check=False)
+            for svc, net in nets.items():
+                p = _docker("network", "connect", net, cid, check=False)
+                if p.returncode == 0:
+                    r.repairs.append(f"network reconnect {t} from {svc}")
+                elif "already exists" not in p.stderr:  # connected already: fine
+                    raise subprocess.CalledProcessError(p.returncode, "docker network connect")
 
-    step("up", lambda: compose("up", "-d"))
-    step("unpause", lambda: compose("unpause", *INGEST, check=False))
+    def read_only() -> None:
+        if _read_only_on():
+            r.repairs.append("read-only was on: reset")
+        set_read_only(False)
+
+    step("up", up)
+    step("unpause", unpause)
     step("networks", reconnect)
-    step("read-only reset", lambda: set_read_only(False))
-    return failures
+    step("read-only reset", read_only)
+    return r
 
 
 def run_action(a: Action, sleep: Callable[[float], object] = time.sleep) -> None:
@@ -108,7 +155,7 @@ def run_action(a: Action, sleep: Callable[[float], object] = time.sleep) -> None
                 compose("kill", t)
                 sleep(a.duration_s)
             finally:
-                compose("up", "-d", t)
+                _up(t)
         case "worker_hang":
             try:
                 compose("pause", t)

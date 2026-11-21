@@ -48,13 +48,25 @@ def render(
     quality: Quality | None,
     violation: str | None,
     recoveries: Sequence[float],
+    restores: tuple[Sequence[str], Sequence[str], bool] = ((), (), False),
 ) -> str:
+    """`restores`: start-up repair lines, end repair lines, whether the end restore failed."""
+    start, end, end_failed = restores
+    repairs = "".join(
+        f"\n## {title}\n\n" + ("".join(f"- {ln}\n" for ln in lines) or "- none\n")
+        for title, lines in (("Start-up repairs", start), ("End repairs", end))
+    )
+    not_clean = (
+        "**NOT CLEAN: the end restore failed, the stack may be left broken (see End repairs).**\n\n"
+        if end_failed
+        else ""
+    )
     rows = "".join(
         f"| {i} | {'FAIL' if i in tally.failed else 'PASS' if tally.taken[i] else 'NOT RUN'} "
         f"| {tally.taken[i]} | {tally.skipped[i]} | {tally.failed.get(i, '')} |\n"
         for i in INVARIANTS
     )
-    verdict = "FAIL" if tally.failed or violation else "PASS"
+    verdict = "FAIL" if tally.failed or violation or end_failed else "PASS"
     q = (
         f"- RAISEs {quality.raises}, false raises {quality.false_raises}, "
         f"chattering: {', '.join(quality.chattering) or 'none'}\n"
@@ -68,10 +80,11 @@ def render(
     return (
         f"# Chaos soak, seed {seed}, {minutes:g} min, started {started:%Y-%m-%d %H:%M:%S}Z\n\n"
         f"**{verdict}**{f' (stopped: {violation})' if violation else ''}\n\n"
+        f"{not_clean}"
         "I4 (no OK shown for old data) is the browser watcher's, not this run's.\n\n"
         "| Invariant | Result | Samples | Skipped | First failure |\n|---|---|---|---|---|\n"
         f"{rows}\n"
         f"- Recovery after each action (I5): max {max(recoveries, default=0):.1f} s over "
         f"{len(recoveries)} actions\n{q}\n{cnt}\n"
-        f"Machine: {platform.platform()}, {platform.machine()}\n\nImages:\n{digests}"
+        f"Machine: {platform.platform()}, {platform.machine()}\n{repairs}\nImages:\n{digests}"
     )

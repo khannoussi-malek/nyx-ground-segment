@@ -25,13 +25,21 @@ def calls(monkeypatch: pytest.MonkeyPatch) -> Calls:
 
     class Done:
         stdout = "cid123\n"
+        stderr = ""
+        returncode = 0
 
-    def compose(*a: str, check: bool = True) -> Done:
+    def compose(*a: str, check: bool = True, env: Any = None) -> Done:
         seen.append(("compose", *a))
         return Done()
 
+    def docker(*a: str, check: bool = True) -> Done:
+        seen.append(("docker", *a))
+        return Done()
+
     monkeypatch.setattr(actions, "compose", compose)
-    monkeypatch.setattr(actions, "_docker", lambda *a, **_: seen.append(("docker", *a)))
+    monkeypatch.setattr(actions, "_docker", docker)
+    monkeypatch.setattr(actions, "compose_ps", lambda: {})
+    monkeypatch.setattr(actions, "_read_only_on", lambda: False)
     monkeypatch.setattr(actions, "set_read_only", lambda on: seen.append(("ro", str(on))))
     monkeypatch.setattr(
         actions,
@@ -103,15 +111,14 @@ def test_restore_runs_every_step_even_when_one_fails(
 ) -> None:
     compose_orig = vars(actions)["compose"]  # the recording fake
 
-    def compose(*a: str, check: bool = True) -> Any:
+    def compose(*a: str, check: bool = True, env: Any = None) -> Any:
         if a[0] == "up":
             raise subprocess.CalledProcessError(1, "docker compose up")
         return compose_orig(*a, check=check)
 
     monkeypatch.setattr(actions, "compose", compose)
-    failures = actions.restore_stack()
+    failures = actions.restore_stack().failures
     assert len(failures) == 1 and failures[0].startswith("up:")
-    assert ("compose", "unpause", "ingest-1", "ingest-2") in calls
     assert ("docker", "network", "connect", "proj_redisnet", "cid123") in calls
     assert ("docker", "network", "connect", "proj_dbnet", "cid123") in calls
     assert calls[-1] == ("ro", "False")
@@ -124,8 +131,61 @@ def test_restore_reports_a_failed_read_only_reset(
         raise psycopg.OperationalError("db down")
 
     monkeypatch.setattr(actions, "set_read_only", down)
-    (failure,) = actions.restore_stack()
-    assert failure.startswith("read-only reset:")
+    r = actions.restore_stack()
+    (failure,) = r.failures
+    assert failure.startswith("read-only reset:") and r.lines()[-1].startswith("FAILED ")
+
+
+def test_restore_reports_each_repair_it_made(calls: Calls, monkeypatch: pytest.MonkeyPatch) -> None:
+    ps = {
+        "redis": {"State": "exited"},
+        "ingest-1": {"State": "paused"},
+        "migrate": {"State": "exited"},  # a one-shot: not a repair
+        "db": {"State": "running"},
+    }
+    monkeypatch.setattr(actions, "compose_ps", lambda: ps)
+    monkeypatch.setattr(actions, "_read_only_on", lambda: True)
+    assert actions.restore_stack().repairs == [
+        "ingest-1 was paused: started",
+        "redis was exited: started",
+        "ingest-1 was paused: unpaused",
+        "network reconnect ingest-1 from redis",
+        "network reconnect ingest-1 from db",
+        "network reconnect ingest-2 from redis",
+        "network reconnect ingest-2 from db",
+        "read-only was on: reset",
+    ]
+
+
+def test_restore_reports_a_failed_reconnect_but_not_an_existing_connection(
+    calls: Calls, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class Res:
+        def __init__(self, rc: int, err: str) -> None:
+            self.stdout, self.stderr, self.returncode = "cid123\n", err, rc
+
+    answers = iter([Res(1, "endpoint already exists in network"), Res(1, "no such network")])
+    monkeypatch.setattr(actions, "_docker", lambda *a, **_: next(answers, Res(1, "already exists")))
+    r = actions.restore_stack()
+    assert r.repairs == []
+    (failure,) = r.failures
+    assert failure.startswith("networks: CalledProcessError")
+
+
+def test_restore_up_uses_the_soaks_pins(calls: Calls, monkeypatch: pytest.MonkeyPatch) -> None:
+    envs: list[Any] = []
+
+    class Done:
+        stdout = "cid123\n"
+
+    def compose(*a: str, check: bool = True, env: Any = None) -> Done:
+        if a[0] == "up":
+            envs.append((a, env))
+        return Done()
+
+    monkeypatch.setattr(actions, "compose", compose)
+    actions.restore_stack()
+    assert envs == [(("up", "-d"), {"STEAL_IDLE_MS": "30000", "RECLAIM_IDLE_MS": "30000"})]
 
 
 def test_unknown_action_and_worker_action_without_a_worker_are_refused(calls: Calls) -> None:
@@ -158,3 +218,42 @@ def test_core_compose_is_untouched_by_the_overlay() -> None:
     core = (REPO / "docker-compose.yml").read_text()
     assert "redisnet" not in core and "SIM_LEDGER" not in core
     assert json.dumps(yaml.safe_load(core)["services"]["redis"]).count("networks") == 0
+
+
+def test_summary_lists_repairs_and_marks_a_failed_end_restore_not_clean(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from datetime import UTC, datetime
+
+    import chaos.report as report
+
+    monkeypatch.setattr(report, "image_digests", lambda: [])
+    text = report.render(
+        1,
+        1,
+        datetime.now(UTC),
+        report.Tally(),
+        {},
+        None,
+        None,
+        [],
+        (["redis was exited: started"], ["FAILED networks: boom"], True),
+    )
+    assert "## Start-up repairs\n\n- redis was exited: started" in text
+    assert "## End repairs\n\n- FAILED networks: boom" in text
+    assert "NOT CLEAN" in text and "**FAIL**" in text
+
+
+def test_operator_ack_survives_an_error_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    import httpx
+
+    from chaos.operator import Operator
+
+    monkeypatch.setattr("chaos.operator.api_url", lambda: "http://x")
+    op = Operator()
+    op.http = httpx.Client(
+        base_url="http://x",
+        transport=httpx.MockTransport(lambda r: httpx.Response(503, json={"code": "DB_DOWN"})),
+    )
+    op.ack_reds()
+    assert op.failed == 1

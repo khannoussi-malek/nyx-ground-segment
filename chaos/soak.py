@@ -205,7 +205,8 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
             "stack not up with the chaos overlay: run `make chaos` (see docker-compose.chaos.yml)"
         )
     # a crashed earlier run may have left Redis stopped, a network cut or Postgres read-only
-    for f in restore_stack():
+    start = restore_stack()
+    for f in start.lines():
         print(f"restore at start: {f}", file=sys.stderr)
     if wait_recovered() is None:
         sys.exit("stack not healthy after restore: check `docker compose ps`")
@@ -216,6 +217,8 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
     print(f"chaos soak seed={seed} minutes={minutes:g} out={out}", flush=True)
 
     sh, tally = Shared(), Tally()
+    for line in start.lines():
+        sh.note(out, kind="start repair", detail=line)
     s = Sampler(sh, out, tally)
     faults, acts = fault_schedule(seed, minutes), infra_schedule(seed, minutes)
     t0, total = time.monotonic(), minutes * 60
@@ -252,14 +255,29 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
     finally:
         sh.stop.set()
         thread.join(timeout=RECOVERY_S + 30)  # its action ends and undoes itself
-        for f in restore_stack():  # whatever is still pending (idempotent, also after a PASS)
-            print(f"restore at end: {f}", file=sys.stderr)
+        end = restore_stack()  # whatever is still pending (idempotent, also after a PASS)
+        for line in end.lines():
+            print(f"restore at end: {line}", file=sys.stderr)
+            sh.note(out, kind="end repair", detail=line)
         s.csv.close()
     counts = {k: dict(v) for k, v in sh.counts.items()}
     counts["operator"] = {"isolate_valve sent": op.sent, "acks": op.acked, "failed": op.failed}
     (out / "summary.md").write_text(
-        render(seed, minutes, started, tally, counts, s.quality, s.violation, sh.recoveries)
+        render(
+            seed,
+            minutes,
+            started,
+            tally,
+            counts,
+            s.quality,
+            s.violation,
+            sh.recoveries,
+            (start.lines(), end.lines(), bool(end.failures)),
+        )
     )
+    if end.failures:
+        print(f"chaos soak NOT CLEAN: end restore failed: {end.failures}", file=sys.stderr)
+        return 1
     if s.violation:
         print_failure(seed, s, sh)
         return 1

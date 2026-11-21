@@ -37,7 +37,9 @@ class Operator:
 
     def ack_reds(self) -> None:
         try:
-            alarms = self._call("GET", "/api/alarms").json()
+            got = self._call("GET", "/api/alarms")
+            got.raise_for_status()  # a 503 body is an error object, not a list
+            alarms = got.json()
             for a in alarms:
                 if a["severity"] == "RED" and a["state"] == "UNACK":
                     body = {"request_id": str(uuid4()), "note": "chaos watcher: seen"}

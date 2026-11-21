@@ -54,6 +54,13 @@ ALIAS = {
 
 # web documents used by R21/R22: (source file name when fetched, saved name, note, URL)
 WEBDOCS = [
+    ("ecss-70-41c.pdf", "ECSS-E-ST-70-41C-PUS-15April2016.pdf", "R24", "https://ecss.nl/wp-content/uploads/2016/06/ECSS-E-ST-70-41C15April2016.pdf"),
+    ("ecss-70-11c.pdf", "ECSS-E-ST-70-11C-space-segment-operability-31July2008.pdf", "R24", "https://ecss.nl/wp-content/uploads/standards/ecss-e/ECSS-E-ST-70-11C31July2008.pdf"),
+    ("nasa-8739-8b.pdf", "NASA-STD-8739.8B-software-assurance-and-safety.pdf", "R24", "https://standards.nasa.gov/sites/default/files/standards/NASA/B/0/NASA-STD-87398-Revision-B.pdf"),
+    ("ccsds-232-1b2.pdf", "CCSDS-232.1-B-2-COP-1.pdf", "R24", "https://ccsds.org/Pubs/232x1b2e2c1.pdf"),
+    ("yamcs-tc.txt", "Yamcs-server-manual-commanding.txt", "R24", "https://docs.yamcs.org/yamcs-server-manual/tc/"),
+    ("yamcs-manual.pdf", "Yamcs-server-manual.pdf", "R24", "https://dl.yamcs.org/docs/yamcs-server-manual.pdf"),
+    ("openc3-configuration-command.txt", "OpenC3-command-configuration.txt", "R24", "https://docs.openc3.com/docs/configuration/command"),
     ("dsn208b.pdf", "NASA-DSN-810-005-208B-telemetry-data-decoding.pdf", "R22", "https://deepspace.jpl.nasa.gov/dsndocs/810-005/208/208B.pdf"),
     ("ccsds1301g.pdf", "CCSDS-130.1-G-3-TM-sync-channel-coding-green-book.pdf", "R22", "https://ccsds.org/Pubs/130x1g3e1.pdf"),
     ("ccsds1310b.pdf", "CCSDS-131.0-B-5-TM-sync-channel-coding.pdf", "R22", "https://ccsds.org/Pubs/131x0b5.pdf"),

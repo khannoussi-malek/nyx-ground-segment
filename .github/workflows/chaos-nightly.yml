@@ -34,19 +34,20 @@ jobs:
       - run: cd e2e && npm ci && npx playwright install --with-deps chromium
       # I1-I3 and I5-I8 are what makes the night green; I4 is in summary.md for information (EX-27)
       - name: Property suite, nightly profile
+        timeout-minutes: 40
         env:
           HYPOTHESIS_PROFILE: nightly
           HYPOTHESIS_SEED: ${{ inputs.seed }}
-        run: uv run pytest --no-cov -q tests/property
+        run: uv run pytest --no-cov tests/property # no -q: the header prints the hypothesis seed
       - name: Chaos soak, 30 min
         if: ${{ !cancelled() }} # a property failure must not hide the soak
         env:
           SEED: ${{ inputs.seed }}
         run: make chaos MINUTES=30
       - name: Summary
-        if: ${{ !cancelled() }}
+        if: always()
         run: cat chaos/out/20*/summary.md >> "$GITHUB_STEP_SUMMARY" || true
-      - if: ${{ !cancelled() }}
+      - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: chaos-${{ github.run_id }}

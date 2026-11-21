@@ -178,13 +178,15 @@ async def test_frame_committed_on_last_retry(monkeypatch: pytest.MonkeyPatch) ->
     produce(v, 10)
     calls = 0
 
-    async def flaky(conn: object, frames: list[FrameHeader], params: object) -> object:
+    async def flaky(
+        conn: object, frames: list[FrameHeader], computed: object, mdb: object
+    ) -> object:
         nonlocal calls
         if any(f.seq == 5 for f in frames):
             calls += 1
             if calls <= 3:  # the batch + 2 per-frame attempts fail (a processing exception)
                 raise ValueError("flaky")
-        return await insert_frames(conn, frames, params)  # type: ignore[arg-type]
+        return await insert_frames(conn, frames, computed, mdb)  # type: ignore[arg-type]
 
     monkeypatch.setattr(worker_mod, "insert_frames", flaky)
     async with worker([v]):
@@ -300,12 +302,14 @@ async def test_frame_failing_every_retry_dlqd(monkeypatch: pytest.MonkeyPatch) -
     eid = [i for i, _ in read_all(v)][5]
     calls = 0
 
-    async def always(conn: object, frames: list[FrameHeader], params: object) -> object:
+    async def always(
+        conn: object, frames: list[FrameHeader], computed: object, mdb: object
+    ) -> object:
         nonlocal calls
         if any(f.seq == 5 for f in frames):
             calls += 1
             raise ValueError("always bad")
-        return await insert_frames(conn, frames, params)  # type: ignore[arg-type]
+        return await insert_frames(conn, frames, computed, mdb)  # type: ignore[arg-type]
 
     monkeypatch.setattr(worker_mod, "insert_frames", always)
     async with worker([v]):

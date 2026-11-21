@@ -28,6 +28,7 @@ from gs.common.missiondb import MissionDb, MissionDbError
 from gs.common.uievents import publish_ui
 from gs.common.views import alarm_views
 from gs.ingest.acks import AckReq, apply_acks, db_now, pending_acks
+from gs.ingest.compute import Computed, compute
 from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
 from gs.ingest.events import GroundEvent, poison_key, reset_key, to_link
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
@@ -147,7 +148,7 @@ async def _batch(ctx: Ctx, conn: psycopg.AsyncConnection, vs: VehicleState) -> B
 
 def to_tm(
     frame: FrameHeader,
-    params: Sequence[str],
+    values: Mapping[str, float | None],
     frozen: bool = False,
     stale: int = round(STALE_S * 1000),
 ) -> Tm:
@@ -157,7 +158,7 @@ def to_tm(
         t_onboard=frame.t_onboard,
         mode=frame.mode,
         last_cmd_id=frame.last_cmd_id,
-        values={p: getattr(frame, p) for p in params},
+        values=dict(values),
         frozen=frozen,
         stale_ms=stale,
     )
@@ -204,14 +205,13 @@ def _shown_now(msgs: Sequence[UiMessage], vs: VehicleState) -> set[UUID]:
 async def _ui(
     conn: psycopg.AsyncConnection,
     vs: VehicleState,
-    stored: Sequence[FrameHeader],
+    stored: Sequence[tuple[FrameHeader, Computed]],
     outs: Sequence[Outcome],
-    params: Sequence[str],
 ) -> list[UiMessage]:
     """After COMMIT (D-ING-22): `tm` per stored frame, `link` per committed event, `alarm` per
     alarm the commits touched (its view after them)."""
     stale = stale_ms(vs.seq.period_s) if vs.seq else round(STALE_S * 1000)
-    tm = [to_tm(f, params, vs.frozen.reported, stale) for f in stored]
+    tm = [to_tm(f, c.values, vs.frozen.reported, stale) for f, c in stored]
     links = _links([e for o in outs for e in o.events], vs)
     ids = list(dict.fromkeys([*(t.alarm_id for o in outs for t in o.transitions),
                               *(a for o in outs for a in o.acked)]))  # fmt: skip
@@ -271,7 +271,7 @@ async def _process(
     vehicle = stream.removeprefix("tm:")
     now = datetime.now(UTC)
     b = await _batch(ctx, conn, vs)
-    params = b.mdb.param_names
+    params = b.mdb.raw_names  # the frame's fields; engineering columns are computed (D-EXT-04)
     model = _frame_model(params)
     dlq: list[DlqRecord] = []
     events: list[GroundEvent] = []
@@ -304,7 +304,12 @@ async def _process(
     ctx.hooks.fire("after_commit_before_publish")
     # tm only for what this commit stored (a redelivery publishes none); links and alarms may
     # repeat on a redelivery
-    msgs = await _ui(conn, nvs, inserted, outs, params)
+    stored = [(f, compute(b.mdb, f)) for f in inserted]
+    for _, c in stored:  # counted once, for what this commit stored
+        for p, why in c.nulls:
+            if why == "out_of_range":
+                ctx.counters[f"calibration_out_of_range:{p}"] += 1
+    msgs = await _ui(conn, nvs, stored, outs)
     try:
         await publish_ui(ctx.redis, msgs)
         await _stamp_shown(ctx, conn, vehicle, _news(outs), nvs)
@@ -363,7 +368,8 @@ async def _commit(
         nvs, out = fold(replace(vs, engine=es), vehicle, frames, b.mdb, b.cset, b.old)
         acked = tuple(r.alarm_id for r in acks)
         out = replace(out, events=(*events, *out.events), acked=acked)
-        inserted = await insert_frames(conn, frames, b.mdb.param_names)
+        computed = [compute(b.mdb, f) for f in frames]
+        inserted = await insert_frames(conn, frames, computed, b.mdb)
         await write_outcome(conn, vehicle, nvs, out)
         ctx.hooks.fire("before_commit")
     return nvs, out, inserted

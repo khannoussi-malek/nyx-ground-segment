@@ -16,6 +16,7 @@ from gs.common import migrate
 from gs.common.interfaces import FrameHeader, build_frame_model
 from gs.common.interfaces.export import write_all
 from gs.common.missiondb import load_dir
+from gs.ingest.compute import compute
 from gs.ingest.store import insert_frames
 from gs.ingest.validate import classify
 from gs.simulator.frames import make_frame
@@ -84,12 +85,12 @@ async def test_add_parameter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
             f"tm:{vehicle}",
             "0-1",
             1,
-            build_frame_model(db.param_names),
+            build_frame_model(db.raw_names),
             now,
         )
         assert isinstance(frame, FrameHeader)
         async with await psycopg.AsyncConnection.connect(app_dsn(name)) as c, c.transaction():
-            assert len(await insert_frames(c, [frame], db.param_names)) == 1
+            assert len(await insert_frames(c, [frame], [compute(db, frame)], db)) == 1
         assert stored_value(name, vehicle) == 41.5
     # the new parameter is limit-checked by the engine, with no engine edit (EX-01)
     frames: list[Frame] = [(i, i * 0.1, {PARAM: 75.0}) for i in range(1, 4)]

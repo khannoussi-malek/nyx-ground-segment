@@ -1,12 +1,13 @@
 """Per-vehicle fold over one batch: sequence tracker, LOS/AOS, FROZEN, alarm engine (pure)."""
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from typing import Any
 from uuid import UUID
 
 from gs.alarms import engine
+from gs.alarms.checks.roc import RocState
 from gs.alarms.contract import OpenAlarm, Transition
 from gs.alarms.engine import Alarm, CompiledSet, EngineState
 from gs.alarms.state import dump, rebuild, shape_version
@@ -14,7 +15,7 @@ from gs.common.interfaces import FrameHeader
 from gs.common.missiondb import MissionDb
 from gs.common.time import iso_z
 from gs.ingest import link, seq
-from gs.ingest.compute import compute
+from gs.ingest.compute import Computed, compute
 from gs.ingest.events import GroundEvent, applied_key
 from gs.ingest.link import FrozenState, LinkState
 from gs.ingest.seq import SeqState
@@ -27,6 +28,7 @@ class VehicleState:
     frozen: FrozenState
     set_sha256: str  # the mission-db set `engine` was built with; "" before the first frame
     engine: EngineState
+    derived: Mapping[str, RocState] = field(default_factory=dict)  # rate_of windows, by name
 
 
 @dataclass(frozen=True)
@@ -36,6 +38,7 @@ class Outcome:
     dup_or_late: int
     transitions: tuple[Transition, ...] = ()
     acked: tuple[UUID, ...] = ()  # alarms of the ACK requests settled in the same commit
+    computed: tuple[Computed, ...] = ()  # one per input frame, late ones included
 
 
 def state_version() -> int:
@@ -74,6 +77,8 @@ def fold(
     if vs.set_sha256 not in ("", cset.set_sha256) and old is None:
         raise ValueError(f"fold needs the set {vs.set_sha256} the engine was built with")
     s, ls, fs, es, applied = vs.seq, vs.link, vs.frozen, vs.engine, vs.set_sha256
+    dw = vs.derived
+    computed: list[Computed] = []
     new: list[FrameHeader] = []
     events: list[GroundEvent] = []
     transitions: list[Transition] = []
@@ -83,6 +88,7 @@ def fold(
         s, k, ev = seq.step(prev, vehicle, f.seq, f.t_onboard)
         if k == "DUP_OR_LATE":
             dup += 1
+            computed.append(compute(mdb, f, dw, True)[0])
             continue
         events += ev
         # G13 / D-ING-16: only a GAP counts lost frames; a counter jump or reset is of unknown size
@@ -91,7 +97,10 @@ def fold(
         events += lev
         if k in ("SEQ_RESET", "SEQ_ANOMALY"):
             fs = FrozenState()  # G11: no FROZEN run spans epochs
-        c = compute(mdb, f)  # FROZEN runs over the raw values, in raw_names order (D-EXT-09)
+        # D-ALM-04: GAP, SEQ_RESET and data-STALE restart rings, ROC and rate_of windows
+        reset = stale or any(e.kind in ("GAP", "SEQ_RESET") for e in ev)
+        c, dw = compute(mdb, f, dw, False, reset=reset, period_s=s.period_s)
+        computed.append(c)  # FROZEN runs over the raw values, in raw_names order (D-EXT-09)
         fs, fev = link.frozen_step(fs, vehicle, s.epoch, f.seq, f.t_onboard, tuple(c.raws.values()))
         if fev is not None:
             events.append(fev)
@@ -103,15 +112,13 @@ def fold(
                 transitions += trs
             events.append(_applied(vehicle, mdb, s.epoch, f))
             applied = cset.set_sha256
-        # D-ALM-04: GAP, SEQ_RESET and data-STALE restart rings and ROC windows
-        reset = stale or any(e.kind in ("GAP", "SEQ_RESET") for e in ev)
         es, trs = engine.step(
             es, cset, vehicle, s.epoch, f.seq, f.t_onboard, s.period_s, c.values, reset, c.raws
         )
         transitions += trs
         new.append(f)
-    out = Outcome(tuple(new), tuple(events), dup, tuple(transitions))
-    return replace(vs, seq=s, link=ls, frozen=fs, set_sha256=applied, engine=es), out
+    out = Outcome(tuple(new), tuple(events), dup, tuple(transitions), computed=tuple(computed))
+    return replace(vs, seq=s, link=ls, frozen=fs, set_sha256=applied, engine=es, derived=dw), out
 
 
 def _t(d: datetime | None) -> str | None:
@@ -134,6 +141,9 @@ def dump_vehicle(vs: VehicleState) -> dict[str, Any]:
             "t_from": _t(fs.t_from),
             "reported": fs.reported,
         },
+        # ponytail: shape_version already covers RocState; an old snapshot without this key
+        # loads with empty windows rather than being discarded
+        "derived": {n: {"t": list(w.t), "v": list(w.v)} for n, w in sorted(vs.derived.items())},
     }
 
 
@@ -147,4 +157,5 @@ def load_vehicle(
     ls = LinkState(lk["los_open"], _parse(lk["epoch"]), lk["last_seq"])
     values = None if fz["values"] is None else tuple(fz["values"])
     fs = FrozenState(values, fz["first_seq"], _parse(fz["t_from"]), fz["reported"])
-    return VehicleState(s, ls, fs, set_sha256, es)
+    dw = {n: RocState(tuple(w["t"]), tuple(w["v"])) for n, w in obj.get("derived", {}).items()}
+    return VehicleState(s, ls, fs, set_sha256, es, dw)

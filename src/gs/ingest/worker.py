@@ -28,7 +28,7 @@ from gs.common.missiondb import MissionDb, MissionDbError
 from gs.common.uievents import publish_ui
 from gs.common.views import alarm_views
 from gs.ingest.acks import AckReq, apply_acks, db_now, pending_acks
-from gs.ingest.compute import Computed, compute
+from gs.ingest.compute import Computed
 from gs.ingest.errors import POISON_DELIVERIES, RETRIES, OperationalDbError, pg_error_class
 from gs.ingest.events import GroundEvent, poison_key, reset_key, to_link
 from gs.ingest.fold import Outcome, VehicleState, fold, load_vehicle, state_version
@@ -59,6 +59,7 @@ RESUME_GRACE_S = 5.0
 SOCKET_TIMEOUT_S = 5  # Redis client socket timeout; must exceed the 1 s XREADGROUP block
 Entry = tuple[str, dict[bytes, bytes]]
 Item = tuple[str, dict[bytes, bytes], int, FrameHeader]  # entry id, fields, deliveries, frame
+Stored = tuple[FrameHeader, Computed]  # a stored frame and the values the fold computed for it
 
 
 @dataclass(frozen=True)
@@ -304,7 +305,7 @@ async def _process(
     ctx.hooks.fire("after_commit_before_publish")
     # tm only for what this commit stored (a redelivery publishes none); links and alarms may
     # repeat on a redelivery
-    stored = [(f, compute(b.mdb, f)) for f in inserted]
+    stored = inserted  # (frame, the values the fold computed for it)
     for _, c in stored:  # counted once, for what this commit stored
         for p, why in c.nulls:
             if p in b.mdb.derived:  # missing | div0 | nonfinite | error (a bug is visible)
@@ -360,7 +361,7 @@ async def _commit(
     vs: VehicleState,
     events: Sequence[GroundEvent],
     acks: Sequence[AckReq] = (),
-) -> tuple[VehicleState, Outcome, list[FrameHeader]]:
+) -> tuple[VehicleState, Outcome, list[Stored]]:
     """One transaction: the ACK requests (each in a savepoint, positioned after the last frame
     before this batch, D-ALM-14), then fold, frames (LATE frames still insert), seq/link/events
     (incl. LIMITS_APPLIED), alarm transitions and the engine snapshot; returns what it
@@ -370,11 +371,11 @@ async def _commit(
         nvs, out = fold(replace(vs, engine=es), vehicle, frames, b.mdb, b.cset, b.old)
         acked = tuple(r.alarm_id for r in acks)
         out = replace(out, events=(*events, *out.events), acked=acked)
-        computed = [compute(b.mdb, f) for f in frames]
-        inserted = await insert_frames(conn, frames, computed, b.mdb)
+        inserted = await insert_frames(conn, frames, out.computed, b.mdb)
         await write_outcome(conn, vehicle, nvs, out)
         ctx.hooks.fire("before_commit")
-    return nvs, out, inserted
+    by_id = dict(zip(map(id, frames), out.computed, strict=True))  # the fold's values
+    return nvs, out, [(f, by_id[id(f)]) for f in inserted]
 
 
 async def _isolate(
@@ -387,7 +388,7 @@ async def _isolate(
     events: list[GroundEvent],
     acks: Sequence[AckReq],
     now: datetime,
-) -> tuple[VehicleState, list[FrameHeader], list[DlqRecord], list[Outcome]]:
+) -> tuple[VehicleState, list[Stored], list[DlqRecord], list[Outcome]]:
     """Re-run one frame per transaction from the pre-batch state; a frame failing RETRIES times
     goes to the DLQ as poison, the rest commit (D-ING-04). Pending events (POISON) and the ACK
     requests ride in the first per-frame commit that succeeds (P-pf15; a rolled-back try
@@ -395,7 +396,7 @@ async def _isolate(
     outcomes too."""
     vehicle = stream.removeprefix("tm:")
     outs: list[Outcome] = []
-    inserted: list[FrameHeader] = []
+    inserted: list[Stored] = []
     bad: list[DlqRecord] = []
     pending, unapplied = list(events), list(acks)
     for eid, fields, n, frame in items:

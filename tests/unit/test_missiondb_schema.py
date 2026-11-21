@@ -36,7 +36,7 @@ def rejected(file: str, **over: bytes) -> MissionDbError:
 
 def test_shipped_set_loads() -> None:
     db = load_dir(MISSION_DIR)
-    assert db.param_names == (*PARAMS, "power_w") and set(db.commands) == {
+    assert db.param_names == (*PARAMS, "power_w", "cabin_leak_rate_kpa_s") and set(db.commands) == {
         "isolate_valve",
         "vent_cabin",
     }

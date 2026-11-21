@@ -58,3 +58,21 @@ async def test_bad_expr_never_dlqs(tmp_path: Path) -> None:
         r = rows("select ratio from telemetry where vehicle=%s", v, db=db)
         assert len(r) == 3 and all(x["ratio"] is None for x in r)
         assert dlq_entries(v) == []
+
+
+async def test_leak_rate_during_leak(tmp_path: Path) -> None:  # EX-28
+    v = vid()
+    with throwaway_db() as db:
+        m, _ = setup(tmp_path, db)
+        kpa = [101.3 - 0.4 * i / 10 for i in range(80)]  # 0.4 kPa/s at 10 Hz
+        produce_values(v, {"cabin_pressure_kpa": kpa})
+        async with worker([v], dsn=app_dsn(db), mission_dir=m) as w:
+            await until(lambda: drained(v), 10)
+        q = "select seq, cabin_leak_rate_kpa_s as r from telemetry where vehicle=%s order by seq"
+        r = rows(q, v, db=db)
+        assert all(x["r"] is None for x in r[:7])  # window under 80 % full: NULL
+        assert all(x["r"] is not None and abs(x["r"] + 0.4) < 0.01 for x in r[10:])
+        cold = sum(x["r"] is None for x in r)  # 7 or 8: epoch-seconds floats blur the 8th span
+        assert (
+            7 <= cold <= 8 and w.ctx.counters["derived_null:cabin_leak_rate_kpa_s:samples"] == cold
+        )

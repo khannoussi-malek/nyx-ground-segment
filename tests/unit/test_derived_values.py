@@ -3,12 +3,19 @@
 import random
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from gs.common.interfaces import FrameHeader, build_frame_model
 from gs.common.missiondb import MissionDb, load_dir
-from gs.ingest.compute import compute
+from gs.ingest.compute import Computed
+from gs.ingest.compute import compute as _compute
 from gs.ingest.validate import FieldStats
 from tests.support.mission import calibrated, files, ld
+
+
+def compute(*a: Any) -> Computed:
+    return _compute(*a)[0]
+
 
 T0 = datetime(2026, 11, 14, 10, tzinfo=UTC)
 SHIPPED = load_dir(Path("mission"))
@@ -34,7 +41,7 @@ def test_power_w_bit_equal_product() -> None:
         v, i = rng.uniform(20, 35), rng.uniform(0, 12)
         c = compute(SHIPPED, frame(SHIPPED, bus_voltage_v=v, bus_current_a=i))
         assert c.values["power_w"] == v * i  # == not approx
-        assert c.nulls == ()
+        assert c.nulls == (("cabin_leak_rate_kpa_s", "samples"),)  # only the cold window
 
 
 def test_null_input_gives_null_not_last() -> None:  # M4
@@ -82,7 +89,7 @@ def test_error_reason_is_reported() -> None:
     m = load_dir(Path("mission"))  # own copy: the patch must not leak
     object.__setattr__(m.derived["power_w"].expr, "_run", boom)  # frozen dataclass
     c = compute(m, frame(m))
-    assert c.values["power_w"] is None and c.nulls == (("power_w", "error"),)
+    assert c.values["power_w"] is None and ("power_w", "error") in c.nulls
 
 
 def test_derived_in_frame_is_ignored_and_counted() -> None:

@@ -1,15 +1,22 @@
 """Calibration in the frame path: compute() (D-EXT-04)."""
 
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from gs.alarms.contract import Level
 from gs.alarms.engine import compile_set
 from gs.common.interfaces import FrameHeader, build_frame_model
 from gs.common.missiondb import MissionDb
-from gs.ingest.compute import compute
+from gs.ingest.compute import Computed
+from gs.ingest.compute import compute as _compute
 from gs.ingest.fold import VehicleState, fold
 from tests.support.mission import calibrated
 from tests.support.recompute import _frame, empty_state, recompute_columns
+
+
+def compute(*a: Any) -> Computed:
+    return _compute(*a)[0]
+
 
 T0 = datetime(2026, 11, 14, 10, tzinfo=UTC)
 P = "bus_current_a"

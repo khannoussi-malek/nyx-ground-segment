@@ -10,3 +10,4 @@ parameters:
   rate_z_dps: {unit: deg/s, type: float, description: Attitude rate Z}
 derived:
   power_w: {unit: W, description: Bus power (voltage × current), expr: bus_voltage_v * bus_current_a}
+  cabin_leak_rate_kpa_s: {unit: kPa/s, description: Cabin pressure rate of change over 1 s, rate_of: cabin_pressure_kpa, window_s: 1.0}

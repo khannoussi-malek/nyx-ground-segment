@@ -10,7 +10,7 @@ from typing import IO
 from tests.support.env import REPO
 
 STOP_WAIT_S = 90.0  # the spec polls the stop file every second, then writes its result
-MAX_BLIND_MS = 10_000  # longest stretch the console may show no OK row at all (a blank watcher)
+MAX_BLIND_MS = 10_000  # longest stretch with no parameter row on screen (a blind watcher)
 
 
 def i4_result(out_file: Path, rc: int | None) -> str:
@@ -30,9 +30,10 @@ def i4_result(out_file: Path, rc: int | None) -> str:
     if not rows:
         return "NOT RUN (the watcher saw no OK row: logged out or console down)"
     if blind > MAX_BLIND_MS:
-        return f"FAIL (reported, not gating): no OK row for {blind / 1000:.0f} s (limit 10 s)"
+        secs = f"{blind / 1000:.0f} s"
+        return f"FAIL (reported, not gating): no parameter row on screen for {secs} (limit 10 s)"
     return (
-        f"PASS ({samples} samples, {rows} OK rows, longest stretch without an OK row "
+        f"PASS ({samples} samples, {rows} OK rows, longest stretch with no parameter row on screen "
         f"{blind / 1000:.1f} s)"
     )
 

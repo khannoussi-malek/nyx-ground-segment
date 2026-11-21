@@ -32,7 +32,7 @@ def test_a_missing_blind_field_is_malformed(tmp_path: Path) -> None:
 
 def test_a_long_stretch_without_ok_rows_fails(tmp_path: Path) -> None:
     ok = watch.i4_result(write(tmp_path, blind_ms=watch.MAX_BLIND_MS), 0)
-    assert ok.startswith("PASS") and "longest stretch without an OK row" in ok
+    assert ok.startswith("PASS") and "longest stretch with no parameter row on screen" in ok
     assert watch.i4_result(write(tmp_path, blind_ms=watch.MAX_BLIND_MS + 1), 0).startswith("FAIL")
 
 

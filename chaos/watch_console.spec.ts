@@ -26,14 +26,17 @@ test("I4: no OK row shows data older than the stale threshold", async ({ page })
       __i4: { samples: number; rows: number; bad: string[]; blind_ms: number };
     };
     w.__i4 = { samples: 0, rows: 0, bad: [], blind_ms: 0 };
-    let lastOk = Date.now(); // the longest stretch with no OK row at all: a blank console shows
+    // blind = no parameter row on screen at all (blank page, login, crash); rows that are present
+    // but not OK (a broker outage, LOS) are the console doing its job, not a blind watcher
+    let lastSeen = Date.now();
     const report = (msg: string) => {
       if (w.__i4.bad.length < 50) w.__i4.bad.push(`${new Date().toISOString()} ${msg}`);
     };
     setInterval(() => {
       w.__i4.samples++;
       let ok = 0;
-      for (const td of document.querySelectorAll<HTMLElement>("td[data-t-onboard]")) {
+      const cells = document.querySelectorAll<HTMLElement>("td[data-t-onboard]");
+      for (const td of cells) {
         if (td.closest("tbody")?.getAttribute("data-acq") !== "OK") continue;
         ok++;
         w.__i4.rows++;
@@ -48,8 +51,8 @@ test("I4: no OK row shows data older than the stale threshold", async ({ page })
         if (age > limit) report(`${who} OK at ${age} ms`);
       }
       const now = Date.now();
-      if (ok > 0) lastOk = now;
-      w.__i4.blind_ms = Math.max(w.__i4.blind_ms, now - lastOk);
+      if (cells.length > 0) lastSeen = now;
+      w.__i4.blind_ms = Math.max(w.__i4.blind_ms, now - lastSeen);
     }, 250);
   }, { tol: TOLERANCE_MS, override: OVERRIDE_MS });
   while (!existsSync(STOP)) await page.waitForTimeout(1000);

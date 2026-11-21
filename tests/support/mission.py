@@ -1,5 +1,6 @@
 """Shipped mission-db bytes with per-file overrides, for loader tests."""
 
+import re
 from pathlib import Path
 
 from gs.common.missiondb import MissionDb, load
@@ -12,7 +13,7 @@ def files(**over: bytes) -> dict[str, bytes]:
     base = {
         n: (MISSION_DIR / f"{n}.yaml").read_bytes() for n in ("limits", "commands", "parameters")
     }
-    base["parameters"] = base["parameters"].split(b"derived:")[0]
+    base["parameters"] = re.split(rb"^derived:", base["parameters"], flags=re.M)[0]
     base["limits"] = b"".join(
         x for x in base["limits"].splitlines(keepends=True) if not x.startswith(b"  power_w:")
     )

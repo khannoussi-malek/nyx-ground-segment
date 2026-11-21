@@ -43,6 +43,9 @@ def test_shipped_set_loads() -> None:
     vent = db.commands["vent_cabin"]
     duration = vent.args["duration_s"]
     assert vent.hazardous and isinstance(duration, NumArg) and duration.max == 10
+    (pw,) = db.limits["power_w"].checks  # an accidental edit of the shipped limits fails here
+    assert isinstance(pw, LimitCheck)
+    assert (pw.yellow_high, pw.red_high, pw.hysteresis_abs) == (250, 300, 4.5)
     lim, roc = db.limits["cabin_pressure_kpa"].checks
     assert isinstance(lim, LimitCheck) and isinstance(roc, RocCheck)
     assert (lim.red_low, lim.yellow_low, lim.yellow_high, lim.red_high, lim.hysteresis_pct) == (

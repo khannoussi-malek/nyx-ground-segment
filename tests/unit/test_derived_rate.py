@@ -6,6 +6,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from datetime import timedelta
 
+import pytest
+
 from gs.alarms.checks.roc import RocState
 from gs.alarms.engine import compile_set
 from gs.common.interfaces import FrameHeader
@@ -71,6 +73,24 @@ def test_reset_flag_restarts_window() -> None:
     _, w = feed([101.0 - i for i in range(15)])
     c, w2 = compute(MDB, fr(15, 80.0), w, False, reset=True)
     assert c.values[L] is None and len(w2[L].t) == 1
+
+
+def test_slope_error_is_null_and_window_advances(monkeypatch: pytest.MonkeyPatch) -> None:
+    vals = [101.0 - 0.4 * i / 10 for i in range(20)]
+    _, ref_w = feed(vals[:15])
+    ref_cs, _ = feed(vals)
+
+    def boom(*_a: object) -> float | None:
+        raise ValueError("forced")
+
+    monkeypatch.setattr("gs.ingest.compute.slope", boom)
+    cs, w = feed(vals[:15])  # EX-11: every frame NULL "error", the window still moves on
+    assert all(c.values[L] is None and c.nulls == ((L, "error"),) for c in cs)
+    assert w == ref_w
+    monkeypatch.undo()
+    cs2, _ = feed(vals[15:], w, 15)  # the next good sample is handled normally again
+    got, want = cs2[-1].values[L], ref_cs[-1].values[L]
+    assert got is not None and want is not None and abs(got - want) < 1e-9
 
 
 def test_input_window_untouched() -> None:

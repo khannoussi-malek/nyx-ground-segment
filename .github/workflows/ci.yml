@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -135,7 +138,7 @@ jobs:
 
   release-record:
     # v* tags only (R25 F6): tag, commit, image digests, lockfile hashes, open NCRs, the matrix
-    needs: [matrix]
+    needs: [lint, test, e2e, matrix]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
@@ -154,7 +157,8 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           name: verification-matrix
-      - run: uv run python -m scripts.release_record --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --images images.txt --matrix verification-matrix.md --out release-record.md
+      - run: uv sync --frozen
+      - run: uv run --frozen python -m scripts.release_record --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --images images.txt --matrix verification-matrix.md --out release-record.md
       - uses: actions/upload-artifact@v7
         with:
           name: release-record-${{ github.ref_name }}

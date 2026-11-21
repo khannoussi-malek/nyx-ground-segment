@@ -369,6 +369,26 @@
         "title": "Bucket",
         "type": "object"
       },
+      "Calibration": {
+        "additionalProperties": false,
+        "properties": {
+          "table": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Table",
+            "type": "array"
+          }
+        },
+        "required": [
+          "table"
+        ],
+        "title": "Calibration",
+        "type": "object"
+      },
       "CheckConfig": {
         "additionalProperties": false,
         "properties": {
@@ -864,6 +884,13 @@
             "title": "Bucket S",
             "type": "number"
           },
+          "parameters_sha256": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Parameters Sha256",
+            "type": "array"
+          },
           "series": {
             "items": {
               "$ref": "#/components/schemas/CompareSeries"
@@ -877,10 +904,16 @@
             },
             "title": "Sessions",
             "type": "array"
+          },
+          "spans_parameters_change": {
+            "title": "Spans Parameters Change",
+            "type": "boolean"
           }
         },
         "required": [
           "bucket_s",
+          "parameters_sha256",
+          "spans_parameters_change",
           "sessions",
           "series"
         ],
@@ -995,6 +1028,25 @@
           "duration_s"
         ],
         "title": "CompareSession",
+        "type": "object"
+      },
+      "DerivedView": {
+        "additionalProperties": false,
+        "properties": {
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "unit": {
+            "title": "Unit",
+            "type": "string"
+          }
+        },
+        "required": [
+          "unit",
+          "description"
+        ],
+        "title": "DerivedView",
         "type": "object"
       },
       "DlqRecord": {
@@ -1495,10 +1547,35 @@
             },
             "title": "Checks",
             "type": "array"
+          },
+          "checks_by_mode": {
+            "additionalProperties": {
+              "items": {
+                "discriminator": {
+                  "mapping": {
+                    "limit": "#/components/schemas/LimitCheck",
+                    "roc": "#/components/schemas/RocCheck"
+                  },
+                  "propertyName": "type"
+                },
+                "oneOf": [
+                  {
+                    "$ref": "#/components/schemas/LimitCheck"
+                  },
+                  {
+                    "$ref": "#/components/schemas/RocCheck"
+                  }
+                ]
+              },
+              "type": "array"
+            },
+            "title": "Checks By Mode",
+            "type": "object"
           }
         },
         "required": [
-          "checks"
+          "checks",
+          "checks_by_mode"
         ],
         "title": "LimitView",
         "type": "object"
@@ -1569,6 +1646,13 @@
             "title": "Commands Sha256",
             "type": "string"
           },
+          "derived": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/DerivedView"
+            },
+            "title": "Derived",
+            "type": "object"
+          },
           "limits": {
             "additionalProperties": {
               "$ref": "#/components/schemas/LimitView"
@@ -1602,6 +1686,7 @@
           "commands_sha256",
           "parameters_sha256",
           "parameters",
+          "derived",
           "limits",
           "commands"
         ],
@@ -1704,6 +1789,16 @@
       "ParameterEntry": {
         "additionalProperties": false,
         "properties": {
+          "calibration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Calibration"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "description": {
             "default": "",
             "title": "Description",
@@ -2218,6 +2313,7 @@
           },
           "window_s": {
             "exclusiveMinimum": 0.0,
+            "maximum": 3600.0,
             "title": "Window S",
             "type": "number"
           }

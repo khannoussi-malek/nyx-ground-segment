@@ -21,11 +21,14 @@ async def test_vehicles_lists_vehicles_and_parameter_units(api_client: httpx.Asy
     await login(api_client, "fc1", FC1_PW)
     body = (await api_client.get("/api/vehicles")).json()
     assert body["vehicles"] == ["NYX-TA1"]  # api_settings configures one vehicle
-    assert list(body["parameters"]) == list(MISSION.param_names)  # file order kept
+    assert list(body["parameters"]) == list(
+        MISSION.parameters
+    )  # raw parameters, file order kept (derived are in /api/mission-db)
     assert body["parameters"]["cabin_pressure_kpa"] == {
         "unit": "kPa",
         "type": "float",
         "description": "Cabin total pressure",
+        "calibration": None,
     }
     assert Vehicles.model_validate(body, strict=False)
 
@@ -39,6 +42,7 @@ async def test_mission_db_returns_the_loaded_set(api_client: httpx.AsyncClient) 
     assert body["parameters_sha256"] == MISSION.parameters_sha256
     assert set(body["parameters"]) == set(MISSION.parameters)
     assert body["commands"]["vent_cabin"]["hazardous"] is True
+    assert body["derived"]["power_w"]["unit"] == "W"  # derived values are labelled too (I1)
 
 
 async def test_mission_db_keeps_every_check_field(api_client: httpx.AsyncClient) -> None:

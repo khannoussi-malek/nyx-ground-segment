@@ -11,20 +11,33 @@ from psycopg.types.json import Jsonb
 from gs.alarms.contract import Level, OpenAlarm, Transition
 from gs.alarms.engine import CompiledSet, compile_set
 from gs.common.interfaces import FrameHeader
-from gs.common.missiondb import load
+from gs.common.missiondb import MissionDb, load
+from gs.ingest.compute import Computed
 from gs.ingest.events import insert_events
 from gs.ingest.fold import Outcome, VehicleState, dump_vehicle, state_version
 from gs.ingest.seq import SeqState
 
 
 async def insert_frames(
-    conn: psycopg.AsyncConnection, frames: Sequence[FrameHeader], params: Sequence[str]
+    conn: psycopg.AsyncConnection,
+    frames: Sequence[FrameHeader],
+    computed: Sequence[Computed],
+    mdb: MissionDb,
 ) -> list[FrameHeader]:
     """Insert inside the caller's transaction; return the frames actually stored, input order.
-    A frame whose (vehicle, t_onboard, seq) already exists is skipped, not an error."""
+    `<name>` takes the engineering value, `<name>_raw` the frame's own (D-EXT-04). A frame whose
+    (vehicle, t_onboard, seq) already exists is skipped, not an error."""
     if not frames:
         return []
-    cols = ["t_onboard", "vehicle", "seq", "mode", "last_cmd_id", *params]
+    cols = [
+        "t_onboard",
+        "vehicle",
+        "seq",
+        "mode",
+        "last_cmd_id",
+        *mdb.param_names,
+        *mdb.raw_columns,
+    ]
     query = sql.SQL(
         "INSERT INTO telemetry ({}) VALUES ({}) ON CONFLICT DO NOTHING"
         " RETURNING vehicle, t_onboard, seq"
@@ -32,7 +45,14 @@ async def insert_frames(
         sql.SQL(", ").join(map(sql.Identifier, cols)),
         sql.SQL(", ").join(sql.Placeholder() * len(cols)),
     )
-    rows = [tuple(getattr(f, c) for c in cols) for f in frames]
+    rows = [
+        (
+            f.t_onboard, f.vehicle, f.seq, f.mode, f.last_cmd_id,
+            *(c.values[p] for p in mdb.param_names),
+            *(c.raws[r.removesuffix("_raw")] for r in mdb.raw_columns),
+        )
+        for f, c in zip(frames, computed, strict=True)
+    ]  # fmt: skip
     async with conn.cursor() as cur:
         await cur.executemany(query, rows, returning=True)
         # one result set per input row, in order; empty when the row conflicted
@@ -93,26 +113,26 @@ async def load_cset(conn: psycopg.AsyncConnection, set_sha256: str) -> CompiledS
 # YELLOW|RED only); limits_sha256 comes from the set row, so it always matches set_sha256
 _UPSERT_ALARM = """
 INSERT INTO alarms (alarm_id, vehicle, param, state, severity, acked_sev, trigger_check,
-                    limits_sha256, set_sha256, opened_at, closed_at)
+                    limits_sha256, set_sha256, opened_at, closed_at, check_set)
 VALUES (%(alarm_id)s, %(vehicle)s, %(param)s, %(state)s,
         COALESCE(%(severity)s, (SELECT severity FROM alarms WHERE alarm_id = %(alarm_id)s)),
         %(acked_sev)s, %(trigger_check)s,
         (SELECT limits_sha256 FROM limits_versions WHERE set_sha256 = %(set_sha256)s),
-        %(set_sha256)s, %(opened_at)s, %(closed_at)s)
+        %(set_sha256)s, %(opened_at)s, %(closed_at)s, %(check_set)s)
 ON CONFLICT (alarm_id) DO UPDATE SET state = EXCLUDED.state, severity = EXCLUDED.severity,
   acked_sev = EXCLUDED.acked_sev, trigger_check = EXCLUDED.trigger_check,
   limits_sha256 = EXCLUDED.limits_sha256, set_sha256 = EXCLUDED.set_sha256,
-  closed_at = EXCLUDED.closed_at
+  closed_at = EXCLUDED.closed_at, check_set = EXCLUDED.check_set
 """
 _INSERT_ALARM_EVENT = """
 INSERT INTO alarm_events (key, alarm_id, vehicle, param, kind, check_kind, level, severity,
                           value, trigger_seq, trigger_t_onboard, by_user, note, alert,
-                          limits_sha256, set_sha256)
+                          limits_sha256, set_sha256, check_set)
 VALUES (%(key)s, %(alarm_id)s, %(vehicle)s, %(param)s, %(kind)s, %(check_kind)s, %(level)s,
         %(event_severity)s, %(value)s, %(trigger_seq)s, %(trigger_t)s, %(by_user)s, %(note)s,
         %(alert)s,
         (SELECT limits_sha256 FROM limits_versions WHERE set_sha256 = %(set_sha256)s),
-        %(set_sha256)s)
+        %(set_sha256)s, %(check_set)s)
 ON CONFLICT (key) DO NOTHING
 """
 
@@ -145,6 +165,7 @@ async def write_transitions(
             "by_user": t.by_user,
             "note": t.note,
             "alert": t.alert,
+            "check_set": t.check_set,
         }
         await conn.execute(_UPSERT_ALARM, p)
         await conn.execute(_INSERT_ALARM_EVENT, p)

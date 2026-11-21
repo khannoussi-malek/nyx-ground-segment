@@ -115,7 +115,7 @@ test("the meta line shows mode, seq and the age clock", () => {
 test("live values merged with the mission db render label, unit and gauge", async () => {
   const { paramViews } = await import("../tools/params");
   const mission = {
-    parameters: { cabin_pressure_kpa: { unit: "kPa", type: "float", description: "Cabin total pressure" } },
+    derived: {}, parameters: { cabin_pressure_kpa: { unit: "kPa", type: "float", description: "Cabin total pressure" } },
     limits: { cabin_pressure_kpa: { checks: [{ type: "limit", red_low: 95, red_high: 106 }] } },
   } as unknown as import("../server/api").MissionDb;
   const html = card({ params: paramViews({ cabin_pressure_kpa: 101.32 }, mission) });
@@ -132,7 +132,7 @@ test("an unwired row asserts no state in the DOM", () => {
 });
 
 const mission = {
-  parameters: { cabin_pressure_kpa: { unit: "kPa", type: "float", description: "Cabin total pressure" } },
+  derived: {}, parameters: { cabin_pressure_kpa: { unit: "kPa", type: "float", description: "Cabin total pressure" } },
   limits: { cabin_pressure_kpa: { checks: [{ type: "limit", red_low: 95, red_high: 106 }] } },
 } as unknown as import("../server/api").MissionDb;
 const tmOf = (frozen = false, age_ms = 40) => ({

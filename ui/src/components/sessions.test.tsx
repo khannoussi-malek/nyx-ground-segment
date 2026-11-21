@@ -254,7 +254,7 @@ test("the report lists its parameters in mission-db order (jsonb reorders keys),
   const parameters = { zz: stat, o2_pct: stat, legacy: stat, cabin_temp_c: stat, cabin_pressure_kpa: stat };
   server([ended], { "GET /api/sessions/2/report": () => json(200, sessionReport({ parameters })) });
   const meta = { unit: "u", type: "float" };
-  mount({ parameters: { cabin_pressure_kpa: meta, cabin_temp_c: meta, o2_pct: meta, absent: meta } } as unknown as MissionDb);
+  mount({ derived: {}, parameters: { cabin_pressure_kpa: meta, cabin_temp_c: meta, o2_pct: meta, absent: meta } } as unknown as MissionDb);
   await flush();
   await act(async () => button("Report")!.click());
   const order = [...host.querySelectorAll(".report tbody th")].map((th) => th.textContent);

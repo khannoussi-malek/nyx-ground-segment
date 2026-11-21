@@ -20,6 +20,11 @@ def edit(path: Path, old: str, new: str) -> None:
     path.write_text(text.replace(old, new, 1))
 
 
+def add_raw_parameter(m: Path, line: str) -> None:
+    """Append a raw parameter line to parameters.yaml, before the `derived:` section."""
+    edit(m / "parameters.yaml", "derived:", line.rstrip("\n") + "\nderived:")
+
+
 def sha256_file(p: Path) -> str:
     return hashlib.sha256(p.read_bytes()).hexdigest()
 

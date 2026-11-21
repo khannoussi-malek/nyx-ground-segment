@@ -7,6 +7,7 @@ import pytest
 from gs.common.migrate import add_columns, main
 from gs.common.missiondb import load_dir
 from tests.support.env import REPO
+from tests.support.mission import files, ld
 from tests.support.pg import app_dsn, column_types, owner_dsn, throwaway_db
 
 MISSION = Path("mission")
@@ -17,6 +18,20 @@ def test_adds_registry_columns_idempotently() -> None:  # D-DB-03
     with throwaway_db() as db, psycopg.connect(owner_dsn(db), autocommit=True) as c:
         assert add_columns(c, mdb) == list(mdb.param_names)
         assert column_types(c, "telemetry")["cabin_pressure_kpa"] == "double precision"
+        assert add_columns(c, mdb) == []
+
+
+def test_derived_and_raw_columns_added() -> None:  # D-EXT-04/05
+    temp = b"  cabin_temp_c: {unit: degC, type: float, description: Cabin temperature}\n"
+    cal = b"  cabin_temp_c: {unit: degC, type: float, calibration: {table: [[0, 0], [9, 99]]}}\n"
+    p = files()["parameters"].replace(temp, cal)
+    p += b"derived:\n  power_w: {unit: W, expr: bus_voltage_v * bus_current_a}\n"
+    mdb = ld(files(parameters=p))
+    with throwaway_db() as db, psycopg.connect(owner_dsn(db), autocommit=True) as c:
+        added = add_columns(c, mdb)
+        assert {"power_w", "cabin_temp_c_raw"} <= set(added)
+        types = column_types(c, "telemetry")
+        assert types["power_w"] == types["cabin_temp_c_raw"] == "double precision"
         assert add_columns(c, mdb) == []
 
 

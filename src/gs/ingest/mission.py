@@ -39,7 +39,7 @@ def validate_set(raw: tuple[bytes, bytes, bytes], columns: Collection[str]) -> M
     would let a restarted worker run a set its peer rejects. The hazardous true→false rule
     protects the command path and lives in the API's own reload (day 3)."""
     mdb = load(*raw)
-    for p in mdb.param_names:
+    for p in (*mdb.param_names, *mdb.raw_columns):
         if p not in columns:
             raise MissionDbError(
                 "parameters.yaml", f"parameter {p} has no telemetry column: run make migrate"

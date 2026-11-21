@@ -129,28 +129,46 @@ def n1_set() -> CompiledSet:
     return compile_set(ld(files(limits=lim.replace(old, old.replace(b"3}", b"1}")))))
 
 
-def _noise_cases() -> list[tuple[str, float, str]]:
+def _check_sets(param: str) -> list[tuple[str | None, list[CheckConfig]]]:
+    """(mode, checks) for the default set and every mode set of `param` (D-EXT-06)."""
+    e = DB.limits[param]
+    by_mode: list[tuple[str | None, list[CheckConfig]]] = [
+        (m, list(cs)) for m, cs in e.checks_by_mode.items()
+    ]
+    return [(None, list(e.checks)), *by_mode]
+
+
+def _noise_cases() -> list[tuple[str, float, str, str | None]]:
     cases = []
-    for param, entry in DB.limits.items():
-        (lim,) = [c for c in entry.checks if isinstance(c, LimitCheck)]
-        for bound in (lim.red_low, lim.yellow_low, lim.yellow_high, lim.red_high):
-            if bound is not None:
-                cases += [(param, bound, r) for r in ("pct_of_span", "pct_of_limit")]
+    for param in DB.limits:
+        if (
+            param not in DB.raw_names
+        ):  # n1_set is raw-only; derived alarms are covered in integration
+            continue
+        for mode, checks in _check_sets(param):
+            for lim in [c for c in checks if isinstance(c, LimitCheck)]:
+                for bound in (lim.red_low, lim.yellow_low, lim.yellow_high, lim.red_high):
+                    if bound is not None:
+                        cases += [(param, bound, r, mode) for r in ("pct_of_span", "pct_of_limit")]
     return cases
 
 
-@pytest.mark.parametrize(("param", "bound", "reading"), _noise_cases())
-def test_noise_one_alarm(param: str, bound: float, reading: str) -> None:  # ALM-02, R2-17
-    (lim,) = [c for c in DB.limits[param].checks if isinstance(c, LimitCheck)]
+@pytest.mark.parametrize(("param", "bound", "reading", "mode"), _noise_cases())
+def test_noise_one_alarm(
+    param: str, bound: float, reading: str, mode: str | None
+) -> None:  # ALM-02, R2-17, every check set (D-EXT-06)
+    (lim,) = [
+        c for m, cs in _check_sets(param) if m == mode for c in cs if isinstance(c, LimitCheck)
+    ]
     bounds = [
         b for b in (lim.red_low, lim.yellow_low, lim.yellow_high, lim.red_high) if b is not None
     ]
     amp = (max(bounds) - min(bounds) if reading == "pct_of_span" else abs(bound)) / 100
-    rng = random.Random(f"{param}/{bound}/{reading}")
+    rng = random.Random(f"{param}/{bound}/{reading}/{mode}")
     frames: list[Frame] = [
         (i, i * PERIOD_S, {param: bound + rng.uniform(-amp, amp)}) for i in range(2000)
     ]
-    kinds = [t.kind for t in run_engine(n1_set(), frames)]
+    kinds = [t.kind for t in run_engine(n1_set(), frames, mode=mode)]
     assert kinds.count("RAISE") == 1
     assert not {"RTN", "CLEAR", "DEESCALATE"} & set(kinds)
 

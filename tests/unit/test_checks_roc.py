@@ -130,3 +130,9 @@ def test_span_test_has_the_same_float_tolerance_as_the_count() -> None:
     samples = [Sample(i, t, 100.0, PERIOD_S) for i, t in enumerate(times)]
     got = run(Roc(cfg), samples)
     assert got[-1] is not None and got[-1].level == Level.NOMINAL
+
+
+def test_window_s_upper_bound() -> None:  # an unbounded window keeps every sample: push is O(n)
+    RocCheck(type="roc", limit_per_s=0.3, window_s=3600, severity="YELLOW")
+    with pytest.raises(ValueError, match="3600"):
+        RocCheck(type="roc", limit_per_s=0.3, window_s=3601, severity="YELLOW")

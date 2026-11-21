@@ -188,16 +188,18 @@ const PARAMS = `${REPO}mission/parameters.yaml`;
 export function addParameter(id: string): void {
   const line = `  ${id}: {unit: pct, type: float, description: e2e spare}\n`;
   const text = readFileSync(PARAMS, "utf8");
+  // a raw parameter goes at the end of `parameters:`, i.e. before the `derived:` section when there is one
+  const next = /^derived:/m.test(text) ? text.replace(/^derived:/m, `${line}derived:`) : text + line;
   const tmp = mkdtempSync(`${tmpdir()}/nyx-e2e-`);
   cpSync(`${REPO}mission`, tmp, { recursive: true });
-  writeFileSync(`${tmp}/parameters.yaml`, text + line);
+  writeFileSync(`${tmp}/parameters.yaml`, next);
   execFileSync("uv", ["run", "-q", "python", "-c", "from gs.common.migrate import main; raise SystemExit(main())"], {
     cwd: REPO,
     env: { ...process.env, MISSION_DB: tmp, DATABASE_URL: `postgresql://gs_owner:${process.env.GS_OWNER_PASSWORD}@127.0.0.1:${process.env.DB_HOST_PORT}/gs` },
     stdio: "ignore",
   });
   originalParams ??= text;
-  writeFileSync(PARAMS, text + line);
+  writeFileSync(PARAMS, next);
 }
 export function restoreParameters(): void {
   if (originalParams !== null) writeFileSync(PARAMS, originalParams);

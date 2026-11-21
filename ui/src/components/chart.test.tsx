@@ -206,9 +206,9 @@ test("limit labels: red outside the plot, yellow inside, a label near another is
   draw(undefined, h.u); // no limits: no throw
 });
 
-function panel(mission: MissionDb | null = null) {
+function panel(mission: MissionDb | null = null, mode = "TEST") {
   const store = createStore();
-  const tm = (vehicle: string) => ({ kind: "tm", vehicle, seq: 1, t_onboard: "2026-11-14T10:00:00.000000Z", mode: "TEST", last_cmd_id: null, values: { b_param: 1, a_param: 2 }, age_ms: 1, frozen: false });
+  const tm = (vehicle: string) => ({ kind: "tm", vehicle, seq: 1, t_onboard: "2026-11-14T10:00:00.000000Z", mode, last_cmd_id: null, values: { b_param: 1, a_param: 2 }, age_ms: 1, frozen: false });
   ingest(store, "snapshot", { kind: "snapshot", vehicles: { "NYX-TA1": tm("NYX-TA1"), "NYX-TA2": tm("NYX-TA2") }, alarms: [], commands: [], events: [] });
   act(() => root.render(<Picked store={store} mission={mission} />));
   return store;
@@ -246,6 +246,7 @@ test("the panel lists the vehicle's parameters and charts the first; a change of
 test("the limits and unit come from the mission db; before telemetry the panel waits", async () => {
   const mission = {
     parameters: { a_param: { unit: "kPa", type: "float", description: "" } },
+    derived: { b_param: { unit: "W", description: "Bus power" } },
     limits: { a_param: { checks: [{ type: "limit", red_high: 106 }] } },
   } as unknown as MissionDb;
   stubBuckets();
@@ -253,8 +254,34 @@ test("the limits and unit come from the mission db; before telemetry the panel w
   FakeRO.all[0]!.resize(600);
   await flush();
   expect(made.plots[0]!.opts.axes[1].label).toBe("a_param (kPa)");
+  pick("Parameter", "b_param"); // a derived parameter: unit from the derived entries
+  FakeRO.all.at(-1)!.resize(600);
+  await flush();
+  expect(made.plots.at(-1)!.opts.axes[1].label).toBe("Bus power (W)");
   act(() => root.render(<Picked store={createStore()} mission={null} />));
   expect(host.textContent).toContain("Waiting for telemetry");
+});
+
+test("the chart's limit line follows the vehicle's mode set: SAFE limits in SAFE, default ones otherwise", async () => {
+  const mission = {
+    parameters: { a_param: { unit: "kPa", type: "float", description: "" }, b_param: { unit: "kPa", type: "float", description: "" } },
+    derived: {},
+    limits: { a_param: { checks: [{ type: "limit", red_high: 106 }], checks_by_mode: { SAFE: [{ type: "limit", red_high: 50 }] } } },
+  } as unknown as MissionDb;
+  const top = () => {
+    const range = made.plots.at(-1)!.opts.scales.y.range as (u: unknown, min: number | null, max: number | null) => [number, number];
+    return range(null, 0, 1)[1];
+  };
+  stubBuckets();
+  panel(mission, "SAFE");
+  FakeRO.all[0]!.resize(600);
+  await flush();
+  expect(top()).toBeLessThan(106); // SAFE bound 50 in range, the default 106 is not drawn
+  expect(top()).toBeGreaterThanOrEqual(50);
+  panel(mission, "TEST");
+  FakeRO.all.at(-1)!.resize(600);
+  await flush();
+  expect(top()).toBeGreaterThanOrEqual(106);
 });
 
 test("a window being dragged refetches once, after it settles; the first measurement is not delayed", async () => {
@@ -306,7 +333,7 @@ test("the y range always includes the limits, with a margin; without data or lim
 
 test("the parameter picker names each parameter, in mission-db order; a choice from outside is shown", async () => {
   const mission = {
-    parameters: { b_param: { unit: "A", type: "float", description: "Bus current" }, a_param: { unit: "V", type: "float", description: "Bus voltage" } },
+    derived: {}, parameters: { b_param: { unit: "A", type: "float", description: "Bus current" }, a_param: { unit: "V", type: "float", description: "Bus voltage" } },
     limits: {},
   } as unknown as MissionDb;
   const f = stubBuckets();

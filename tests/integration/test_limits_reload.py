@@ -17,7 +17,13 @@ from gs.simulator.nominals import NOMINALS
 from tests.support.env import now, until, vid
 from tests.support.ingest import worker
 from tests.support.mission import MISSION_DIR
-from tests.support.missionfiles import edit, mission_copy, set_formula, sha256_file
+from tests.support.missionfiles import (
+    add_raw_parameter,
+    edit,
+    mission_copy,
+    set_formula,
+    sha256_file,
+)
 from tests.support.pg import app_dsn, owner_dsn, rows, throwaway_db
 from tests.support.redisx import drained, stream_values, xadd_raw
 
@@ -124,8 +130,7 @@ def migrate(db: str, mdb: MissionDb) -> None:
 
 async def test_unmigrated_param_at_start_falls_back(tmp_path: Path) -> None:  # D-DB-11, R2-18
     m, v = mission_copy(tmp_path), vid()
-    with (m / "parameters.yaml").open("a") as f:
-        f.write("  cabin_humidity_pct: {unit: pct, type: float}\n")
+    add_raw_parameter(m, "  cabin_humidity_pct: {unit: pct, type: float}")
     with throwaway_db() as db:
         migrate(db, SHIPPED)
         async with await psycopg.AsyncConnection.connect(app_dsn(db), autocommit=True) as c:

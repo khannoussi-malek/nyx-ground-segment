@@ -75,8 +75,10 @@ async def drive_send_loop(frames: list[str], failures: int) -> tuple[list[str], 
     return sent, sleeps
 
 
-def _fault_call(method: str, body: dict[str, object], port: int | None) -> int:
-    url = f"http://127.0.0.1:{port or dotenv()['SIM_HOST_PORT']}/sim/fault"
+def _fault_call(
+    method: str, body: dict[str, object], port: int | None, path: str = "/sim/fault"
+) -> int:
+    url = f"http://127.0.0.1:{port or dotenv()['SIM_HOST_PORT']}{path}"
     req = urllib.request.Request(url, json.dumps(body).encode(), method=method)
     try:
         return int(urllib.request.urlopen(req, timeout=3).status)
@@ -87,6 +89,10 @@ def _fault_call(method: str, body: dict[str, object], port: int | None) -> int:
 def post_fault(vehicle: str, fault: str, port: int | None = None, **params: object) -> int:
     """POST /sim/fault on the compose sim (SIM_HOST_PORT) or `port`; returns the HTTP status."""
     return _fault_call("POST", {"vehicle": vehicle, "fault": fault, "params": params}, port)
+
+
+def post_mode(vehicle: str, mode: str, port: int | None = None) -> int:
+    return _fault_call("POST", {"vehicle": vehicle, "mode": mode}, port, "/sim/mode")
 
 
 def delete_fault(vehicle: str, fault: str, port: int | None = None) -> int:

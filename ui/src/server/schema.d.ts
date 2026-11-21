@@ -592,6 +592,11 @@ export interface components {
              */
             t: string;
         };
+        /** Calibration */
+        Calibration: {
+            /** Table */
+            table: number[][];
+        };
         /** CheckConfig */
         CheckConfig: {
             /** Persistence */
@@ -735,10 +740,14 @@ export interface components {
         Compare: {
             /** Bucket S */
             bucket_s: number;
+            /** Parameters Sha256 */
+            parameters_sha256: string[];
             /** Series */
             series: components["schemas"]["CompareSeries"][];
             /** Sessions */
             sessions: components["schemas"]["CompareSession"][];
+            /** Spans Parameters Change */
+            spans_parameters_change: boolean;
         };
         /** CompareBucket */
         CompareBucket: {
@@ -779,6 +788,13 @@ export interface components {
             started_at: string;
             /** Vehicle */
             vehicle: string;
+        };
+        /** DerivedView */
+        DerivedView: {
+            /** Description */
+            description: string;
+            /** Unit */
+            unit: string;
         };
         /** DlqRecord */
         DlqRecord: {
@@ -969,6 +985,10 @@ export interface components {
         LimitView: {
             /** Checks */
             checks: (components["schemas"]["LimitCheck"] | components["schemas"]["RocCheck"])[];
+            /** Checks By Mode */
+            checks_by_mode: {
+                [key: string]: (components["schemas"]["LimitCheck"] | components["schemas"]["RocCheck"])[];
+            };
         };
         /** Link */
         Link: {
@@ -999,6 +1019,10 @@ export interface components {
             };
             /** Commands Sha256 */
             commands_sha256: string;
+            /** Derived */
+            derived: {
+                [key: string]: components["schemas"]["DerivedView"];
+            };
             /** Limits */
             limits: {
                 [key: string]: components["schemas"]["LimitView"];
@@ -1051,6 +1075,7 @@ export interface components {
         };
         /** ParameterEntry */
         ParameterEntry: {
+            calibration?: components["schemas"]["Calibration"] | null;
             /**
              * Description
              * @default

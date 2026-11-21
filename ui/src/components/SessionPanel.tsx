@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { paramIds } from "../tools/params";
 import { getReport, listSessions, reportCsvUrl, startSession, stopSession, type MissionDb, type ReportResult, type SessionReport, type SessionResult, type SessionView } from "../server/api";
 import { eventText } from "../tools/eventText";
 import { formatValue, sortedEntries } from "../tools/format";
@@ -19,7 +20,7 @@ type View = { id: number; state: "loading" } | { id: number; state: "error"; mes
 
 /** Mission-db order like the live table (the report's jsonb reorders keys), unknown ids after, sorted. */
 function inMissionOrder(p: SessionReport["parameters"], m: MissionDb | null) {
-  const known = m ? Object.keys(m.parameters).filter((id) => Object.hasOwn(p, id)) : [];
+  const known = m ? paramIds(m).filter((id) => Object.hasOwn(p, id)) : [];
   return [...known.map((id) => [id, p[id]] as const), ...sortedEntries(p).filter(([id]) => !known.includes(id))];
 }
 

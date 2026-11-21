@@ -16,12 +16,14 @@ from gs.common import migrate
 from gs.common.interfaces import FrameHeader, build_frame_model
 from gs.common.interfaces.export import write_all
 from gs.common.missiondb import load_dir
+from gs.ingest.compute import compute
 from gs.ingest.store import insert_frames
 from gs.ingest.validate import classify
 from gs.simulator.frames import make_frame
 from tests.support.alarms import Frame, run_engine
 from tests.support.env import REPO, vid
 from tests.support.gen import stale_files
+from tests.support.missionfiles import add_raw_parameter
 from tests.support.pg import app_dsn, owner_dsn, throwaway_db
 
 PARAM = "cabin_humidity_pct"
@@ -62,9 +64,8 @@ async def test_add_parameter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     before = tree_digest(REPO, "src", "interfaces")
     m = tmp_path / "mission"
     shutil.copytree(REPO / "mission", m)
-    append(
-        m / "parameters.yaml",
-        f"  {PARAM}: {{unit: '%', type: float, description: Cabin relative humidity}}\n",
+    add_raw_parameter(
+        m, f"  {PARAM}: {{unit: '%', type: float, description: Cabin relative humidity}}"
     )
     append(
         m / "limits.yaml",
@@ -72,7 +73,7 @@ async def test_add_parameter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         "yellow_high: 60.0, red_high: 70.0, hysteresis_pct: 5}]}\n",
     )
     db = load_dir(m)
-    assert db.param_names[-1] == PARAM
+    assert db.raw_names[-1] == PARAM
     vehicle, now = vid(), datetime.now(UTC)
     with throwaway_db() as name:
         monkeypatch.setenv("DATABASE_URL", owner_dsn(name))
@@ -84,12 +85,12 @@ async def test_add_parameter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
             f"tm:{vehicle}",
             "0-1",
             1,
-            build_frame_model(db.param_names),
+            build_frame_model(db.raw_names),
             now,
         )
         assert isinstance(frame, FrameHeader)
         async with await psycopg.AsyncConnection.connect(app_dsn(name)) as c, c.transaction():
-            assert len(await insert_frames(c, [frame], db.param_names)) == 1
+            assert len(await insert_frames(c, [frame], [compute(db, frame)[0]], db)) == 1
         assert stored_value(name, vehicle) == 41.5
     # the new parameter is limit-checked by the engine, with no engine edit (EX-01)
     frames: list[Frame] = [(i, i * 0.1, {PARAM: 75.0}) for i in range(1, 4)]

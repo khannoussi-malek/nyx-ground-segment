@@ -37,11 +37,12 @@ from tests.support.env import until, vid
 from tests.support.http import api_settings, authed
 from tests.support.ingest import worker
 from tests.support.mission import MISSION_DIR
-from tests.support.missionfiles import edit, mission_copy, set_formula
+from tests.support.missionfiles import add_raw_parameter, edit, mission_copy, set_formula
 from tests.support.pg import admin_dsn, app_dsn, rows
-from tests.support.recompute import recompute_keys
+from tests.support.recompute import recompute_columns, recompute_keys
 from tests.support.redisx import aclient, client, drained
 from tests.support.s3 import s3_client
+from tests.support.sim import post_fault, post_mode, running_sim
 
 pytestmark = pytest.mark.usefixtures("archiver_paused")
 START = hour_of(datetime.now(UTC)) - timedelta(days=3)
@@ -220,12 +221,12 @@ async def test_replay_equals_recorded(source: str, recording: Recording) -> None
     assert ts == sorted(ts)
 
 
-async def frames_of(rec: Recording) -> list[pa.Table]:
+async def frames_of(rec: Recording, cols: list[str]) -> list[pa.Table]:
     async with app_conn(rec.db) as c:
         return [
             t
             async for t in window_hours(
-                c, s3_client("archiver"), "archive", rec.vehicle, START, END, SHIPPED.param_names
+                c, s3_client("archiver"), "archive", rec.vehicle, START, END, cols
             )
         ]
 
@@ -258,7 +259,9 @@ async def test_recompute_reproduces_recorded_keys(recording: Recording) -> None:
     ]  # fmt: skip
     assert len(applied) == 2 and applied[0][0] == 0
     acks = rows("select * from alarm_events where vehicle=%s and kind='ACK' order by id", v, db=db)
-    keys, events = recompute_keys(await frames_of(recording), acks, sets, v, applied)
+    keys, events = recompute_keys(
+        await frames_of(recording, recompute_columns(list(sets.values()))), acks, sets, v, applied
+    )
     recorded = rows("select key from alarm_events where vehicle=%s order by id", v, db=db)
     assert keys == [r["key"] for r in recorded]  # incl. the ACK row, in order
     q = "select key, kind, t_onboard from events where vehicle=%s order by id"
@@ -301,8 +304,7 @@ async def test_window_across_added_parameter(recording: Recording, tmp_path: Pat
     await archive(recording)
     col = "g4rp_added"
     m = mission_copy(tmp_path)
-    p = m / "parameters.yaml"
-    p.write_text(p.read_text() + f"  {col}: {{unit: V, type: float, description: added later}}\n")
+    add_raw_parameter(m, f"  {col}: {{unit: V, type: float, description: added later}}")
     with psycopg.connect(admin_dsn(recording.db), autocommit=True) as c:
         c.execute(f"alter table telemetry add column {col} double precision")  # noqa: S608
         try:
@@ -311,3 +313,43 @@ async def test_window_across_added_parameter(recording: Recording, tmp_path: Pat
             c.execute(f"alter table telemetry drop column {col}")  # noqa: S608
     tms = [x for x in msgs if isinstance(x, ReplayTm)]
     assert len(tms) > 30_000 and all(x.values[col] is None for x in tms)  # EX-19: null, not error
+
+
+async def test_recompute_with_modes_and_a_derived_alarm() -> None:
+    """D-REP-05 (b), widened: a live run with TEST -> SAFE -> TEST switches and an alarm on the
+    derived `power_w`, re-derived from the stored raw inputs by the same rules, gives exactly the
+    recorded alarm keys."""
+    v, step = vid(), "step"
+    async with worker([v]), running_sim(v) as port:
+        t = asyncio.to_thread
+        await t(post_mode, v, "SAFE", port)
+        await t(post_fault, v, step, port, param=ROC, value=92.0, duration_s=60)  # SAFE: YELLOW
+        await until(lambda: bool(rows("select 1 from alarm_events where vehicle=%s", v)), 10)
+        await t(post_mode, v, "TEST", port)  # the default set: RED, an ESCALATE
+        await t(post_fault, v, step, port, param="bus_current_a", value=12.0, duration_s=60)
+        q = "select 1 from alarm_events where vehicle=%s and param='power_w'"
+        await until(lambda: bool(rows(q, v)), 10)  # derived: 12 A x ~28 V > 300 W
+        await until(lambda: drained(v), 30)
+    recorded = rows("select key, param from alarm_events where vehicle=%s order by id", v)
+    assert {"power_w", ROC} <= {r["param"] for r in recorded}
+    modes = rows("select mode from telemetry where vehicle=%s order by seq", v)
+    assert {m["mode"] for m in modes} == {"SAFE", "TEST"}
+    applied = [
+        (r["details"]["first_seq"], r["details"]["set_sha256"])
+        for r in rows(
+            "select details from events where vehicle=%s and kind='LIMITS_APPLIED' order by id", v
+        )
+    ]
+    sets = {
+        r["set_sha256"]: load(
+            r["limits_yaml"].encode(), r["commands_yaml"].encode(), r["parameters_yaml"].encode()
+        )
+        for r in rows(
+            "select * from limits_versions where set_sha256 = any(%s)", [a[1] for a in applied]
+        )
+    }
+    cols = ["vehicle", "t_onboard", "seq", "t_received", "mode", "last_cmd_id"]
+    cols += recompute_columns(list(sets.values()))
+    frames = rows(f"select {', '.join(cols)} from telemetry where vehicle=%s order by seq", v)  # noqa: S608
+    keys, _ = recompute_keys([pa.Table.from_pylist(frames)], [], sets, v, applied)
+    assert keys == [r["key"] for r in recorded]

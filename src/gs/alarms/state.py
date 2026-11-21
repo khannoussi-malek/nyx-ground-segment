@@ -10,7 +10,7 @@ from uuid import UUID
 
 from gs.alarms.checks import CHECKS
 from gs.alarms.contract import Level, OpenAlarm
-from gs.alarms.engine import Alarm, CompiledSet, EngineState, Slot
+from gs.alarms.engine import Alarm, CompiledSet, EngineState, Slot, _active_map
 from gs.common.time import iso_z
 
 
@@ -67,6 +67,7 @@ def _check_state_json(state: object) -> dict[str, Any]:
 def dump(state: EngineState) -> dict[str, Any]:
     """JSON-native; slots sorted by (param, kind), alarms by param, so equal states dump equal."""
     return {
+        "mode": state.mode,
         "slots": [
             {
                 "param": param,
@@ -133,18 +134,22 @@ def _load_alarm(d: Mapping[str, Any]) -> tuple[str, Alarm]:
 def load(obj: Mapping[str, Any], cset: CompiledSet) -> EngineState:
     """Inverse of dump; `ValueError` on an unknown kind or a shape that does not fit `cset`."""
     try:
-        _keys(obj, {"slots", "alarms"}, "engine state")
+        # "mode" is absent in a snapshot older than D-EXT-06: it loads as the default set
+        _keys(obj, {"slots", "alarms", *({"mode"} & set(obj))}, "engine state")
+        mode = obj.get("mode")
         slots = dict(_load_slot(d) for d in obj["slots"])
         alarms = dict(_load_alarm(d) for d in obj["alarms"])
     except (KeyError, TypeError, AttributeError) as e:
         raise ValueError(f"malformed engine state: {e!r}") from e
-    want = {(p, c.kind) for p, checks in cset.checks.items() for c, _ in checks}
+    want = {(p, c.kind) for p, checks in _active_map(cset, mode).items() for c, _ in checks}
     if set(slots) != want:
         raise ValueError(f"engine state slots {sorted(slots)} do not match the set {sorted(want)}")
-    return EngineState(slots, alarms)
+    return EngineState(slots, alarms, mode)
 
 
-def rebuild(open_alarms: Sequence[OpenAlarm], cset: CompiledSet) -> EngineState:
+def rebuild(
+    open_alarms: Sequence[OpenAlarm], cset: CompiledSet, mode: str | None = None
+) -> EngineState:
     """A-E1-5 approximation from the `alarms` rows: fresh slots, except each open (not RTN_UNACK)
     alarm's trigger check, seeded at its severity so a still-bad value neither clears nor
     re-alerts (ruling G2 item 6). Side, rings and ROC windows are lost."""
@@ -158,7 +163,7 @@ def rebuild(open_alarms: Sequence[OpenAlarm], cset: CompiledSet) -> EngineState:
         for a in open_alarms
     }
     slots = {}
-    for param, checks in cset.checks.items():
+    for param, checks in _active_map(cset, mode).items():
         a = alarms.get(param)
         seed = (
             (a.trigger_check, a.severity) if a and a.state != "RTN_UNACK" else ("", Level.NOMINAL)
@@ -166,4 +171,4 @@ def rebuild(open_alarms: Sequence[OpenAlarm], cset: CompiledSet) -> EngineState:
         for chk, _ in checks:
             level = seed[1] if chk.kind == seed[0] else Level.NOMINAL
             slots[(param, chk.kind)] = Slot(chk.kind, level, None, (), chk.initial())
-    return EngineState(slots, alarms)
+    return EngineState(slots, alarms, mode)

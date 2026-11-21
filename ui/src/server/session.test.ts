@@ -46,7 +46,7 @@ test("checkSession: a transient error with a valid session keeps reconnecting", 
 });
 
 test("loadMission: the set, or back to login on 401, or ids-only (logged) on any error", async () => {
-  const set = { set_sha256: "ab", parameters: {}, limits: { p: { checks: [] } } } as unknown as MissionDb;
+  const set = { set_sha256: "ab", derived: {}, parameters: {}, limits: { p: { checks: [] } } } as unknown as MissionDb;
   const expired = vi.fn();
   expect(await loadMission(async () => set, expired)).toBe(set);
   expect(await loadMission(async () => null, expired)).toBeNull();
@@ -63,11 +63,12 @@ test("loadMission: a 200 with the wrong shape is logged and gives ids only, neve
   const err = vi.spyOn(console, "error").mockImplementation(() => {});
   const bad: unknown[] = [
     {},
-    { parameters: {}, limits: null },
-    { parameters: { p: "kPa" }, limits: {} },
-    { parameters: {}, limits: { p: {} } },
-    { parameters: {}, limits: { p: { checks: "limit" } } },
-    { parameters: {}, limits: { p: { checks: [null] } } },
+    { derived: {}, parameters: {}, limits: null },
+    { derived: {}, parameters: { p: "kPa" }, limits: {} },
+    { derived: {}, parameters: {}, limits: { p: {} } },
+    { derived: {}, parameters: {}, limits: { p: { checks: "limit" } } },
+    { derived: {}, parameters: {}, limits: { p: { checks: [null] } } },
+    { parameters: {}, limits: {} }, // no derived (older shape)
     null,
   ];
   for (const body of bad) {

@@ -11,6 +11,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from gs.api.worker_calc import Outcome, connect, guarded
+from gs.api.workers import spans_change
 from gs.archiver.parquet import hot_schema
 from gs.archiver.s3 import client
 from gs.archiver.window import window_hours
@@ -29,16 +30,25 @@ def cell(v: Any) -> str:
     return repr(v) if isinstance(v, float) else str(v)
 
 
+def header(hashes: Sequence[str]) -> dict[str, str]:
+    """The window's parameter sets and whether it spans a change (R23 M1, A-R23-1)."""
+    return {
+        "parameters_sha256": ",".join(hashes),
+        "spans_parameters_change": str(spans_change(hashes)).lower(),
+    }
+
+
 async def _write(
     database_url: str, s3: S3Settings, vehicle: str, t_from: datetime, t_to: datetime,
-    params: Sequence[str], fmt: str, path: str,
+    params: Sequence[str], fmt: str, path: str, hashes: Sequence[str],
 ) -> None:  # fmt: skip
     cols = [*FIXED, *params]
     c = client(s3)
     async with await connect(database_url) as conn:
         hot = await hot_schema(conn)
         schema = pa.schema(
-            [hot.field(n) if n in hot.names else pa.field(n, pa.float64()) for n in cols]
+            [hot.field(n) if n in hot.names else pa.field(n, pa.float64()) for n in cols],
+            metadata=header(hashes),
         )
         hours = window_hours(conn, c, s3.bucket, vehicle, t_from, t_to, params)
         if fmt == "parquet":
@@ -47,6 +57,7 @@ async def _write(
                     w.write_table(t.select(cols).cast(schema))
             return
         with open(path, "w", newline="", encoding="utf-8") as f:
+            f.writelines(f"# {k}: {v}\n" for k, v in header(hashes).items())
             out = csv.writer(f)
             out.writerow(cols)
             async for t in hours:
@@ -57,7 +68,7 @@ async def _write(
 
 def export(
     database_url: str, s3: S3Settings, vehicle: str, t_from: datetime, t_to: datetime,
-    params: Sequence[str], fmt: str, path: str,
+    params: Sequence[str], fmt: str, path: str, hashes: Sequence[str],
 ) -> Outcome:  # fmt: skip
     """Runs in the export process: the window into `path`; ("ok", None) or a failure marker."""
-    return guarded(_write(database_url, s3, vehicle, t_from, t_to, params, fmt, path))
+    return guarded(_write(database_url, s3, vehicle, t_from, t_to, params, fmt, path, hashes))

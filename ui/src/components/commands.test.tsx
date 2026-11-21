@@ -29,7 +29,7 @@ const MDB = {
     set_rate: { description: "Set the rate", hazardous: false, args: { n: { type: "int", min: 1, max: 5, required: true } }, receive_timeout_s: 5, verify_timeout_s: 15 },
     vent_cabin: { description: "Open the cabin vent valve", hazardous: true, hazard: "Irreversible loss of cabin atmosphere", args: { duration_s: { type: "float", min: 1, max: 10, unit: "s", required: true } }, receive_timeout_s: 5, verify_timeout_s: 15 },
   },
-  parameters: {},
+  derived: {}, parameters: {},
   limits: {},
 } as unknown as MissionDb;
 

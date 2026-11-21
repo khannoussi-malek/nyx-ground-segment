@@ -5,8 +5,13 @@ import { alarmView } from "../test/fixtures";
 
 const MDB = {
   parameters: { cabin_pressure_kpa: { unit: "kPa", type: "float", description: "" }, suit_temp_c: { unit: "degC", type: "float", description: "" } },
+  derived: { power_w: { unit: "W", description: "Bus power" } },
   limits: {
-    cabin_pressure_kpa: { checks: [{ type: "limit", red_low: 95, red_high: 106 }, { type: "roc", direction: "both", limit_per_s: 0.15, severity: "YELLOW", window_s: 5 }] },
+    power_w: { checks: [{ type: "limit", yellow_high: 250, red_high: 300 }] },
+    cabin_pressure_kpa: {
+      checks: [{ type: "limit", red_low: 95, red_high: 106 }, { type: "roc", direction: "both", limit_per_s: 0.15, severity: "YELLOW", window_s: 5 }],
+      checks_by_mode: { SAFE: [{ type: "limit", yellow_low: 95, red_low: 90, yellow_high: 104, red_high: 108 }, { type: "roc", direction: "both", limit_per_s: 0.3, severity: "YELLOW", window_s: 5 }] },
+    },
     suit_temp_c: { checks: [{ type: "limit", yellow_high: 28, red_high: 30, red_low: -5 }] },
   },
 } as unknown as MissionDb;
@@ -35,6 +40,13 @@ test("without the mission db, a unit or a matching bound the text still says wha
   expect(alarmText(roc({ level: "RED_RISING", severity: "RED" }), MDB)).toBe("RED · RATE RISING −0.40 kPa/s (limit 0.15)"); // falls back to the only roc check
 });
 
+test("a calibration_range alarm says out of calibration range with the raw value and range, never the raw count in engineering units", () => {
+  const m = { ...MDB, parameters: { ...MDB.parameters, cabin_pressure_kpa: { unit: "kPa", type: "float", description: "", calibration: { table: [[10, 90], [90, 110]] } } } } as unknown as MissionDb;
+  const a = alarmView({ level: "RED_LOW", severity: "RED", trigger_check: "calibration_range", value: 2 });
+  expect(alarmText(a, m)).toBe("RED · OUT OF CALIBRATION RANGE LOW · raw 2.00 (range 10 to 90)");
+  expect(alarmText({ ...a, level: "RED_HIGH · SAFE limits", value: 95 }, m)).toBe("RED · OUT OF CALIBRATION RANGE HIGH · raw 95.00 (range 10 to 90) · SAFE limits");
+});
+
 test("hash prefixes are 8 hex digits", () =>
   expect(hashText(alarmView({ limits_sha256: "3f9a1c2e77aa", set_sha256: "5d07b8a1ffee" }))).toBe("limits 3f9a1c2e · set 5d07b8a1"));
 
@@ -44,4 +56,16 @@ test("a limit alarm prints its reading, a rate alarm its slope: the two are neve
   expect(alarmText(reading, MDB)).toBe("RED LOW · 94.20 kPa (limit 95)");
   expect(alarmText(slope, MDB)).toBe("YELLOW · RATE FALLING −0.40 kPa/s (limit 0.15)");
   expect(alarmText(alarmView({ level: "YELLOW_HIGH", severity: "YELLOW", value: 100.8 }), MDB)).toBe("YELLOW HIGH · 100.80 kPa"); // no yellow_high bound in this check: none invented
+});
+
+test("a derived parameter's alarm carries its unit", () =>
+  expect(alarmText(lim({ param: "power_w", value: 310 }), MDB)).toBe("RED HIGH · 310.00 W (limit 300)"));
+
+test("a mode alarm names its set, its side and the bound of that set, not the default one", () => {
+  const safe = alarmView({ level: "RED_HIGH · SAFE limits", value: 109 });
+  expect(alarmText(safe, MDB)).toBe("RED HIGH · SAFE limits · 109.00 kPa (limit 108)");
+  expect(alarmText(alarmView({ level: "YELLOW_LOW · SAFE limits", severity: "YELLOW", value: 92 }), MDB)).toBe("YELLOW LOW · SAFE limits · 92.00 kPa (limit 95)");
+  expect(alarmText(roc({ level: "YELLOW_FALLING · SAFE limits" }), MDB)).toBe("YELLOW · RATE FALLING −0.40 kPa/s (limit 0.3) · SAFE limits");
+  expect(alarmText({ ...safe, state: "RTN_UNACK" }, MDB)).toBe("RETURNED · was RED HIGH · SAFE limits");
+  expect(alarmText(alarmView({ level: "RED_HIGH · SAFE limits", value: 109 }), null)).toBe("RED HIGH · SAFE limits · 109.00");
 });

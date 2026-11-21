@@ -64,7 +64,7 @@ async def _stats(
     conn: psycopg.AsyncConnection, s: SessionView, mdb: MissionDb
 ) -> tuple[int, dict[str, ParamStats]]:
     """count(*) and per parameter min/max/avg/count in one pass over the window."""
-    names = list(mdb.parameters)
+    names = list(mdb.param_names)  # engineering columns: raw (calibrated), then derived
     cols = sql.SQL(", ").join(
         sql.SQL("min({c}), max({c}), avg({c}), count({c})").format(c=sql.Identifier(n))
         for n in names
@@ -78,7 +78,7 @@ async def _stats(
     assert row is not None
     stats = {
         n: ParamStats(
-            unit=mdb.parameters[n].unit,
+            unit=(mdb.parameters[n] if n in mdb.parameters else mdb.derived[n]).unit,
             min=row[1 + 4 * i], max=row[2 + 4 * i], avg=row[3 + 4 * i], n=row[4 + 4 * i],
         )
         for i, n in enumerate(names)

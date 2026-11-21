@@ -31,7 +31,7 @@ function Vehicle({ store, v, mission, clock, probe }: { store: Store; v: string;
   // FROZEN is counted from the rows; only the vehicle-level conditions replace the summary
   const banner = condition === "FROZEN" || condition === "STALE" ? undefined : (condition ?? undefined);
   // no row state before the first snapshot: the gauge fill and the summary wait for the engine (G26)
-  const params = paramViews(tm.values, mission).map((p) =>
+  const params = paramViews(tm.values, mission, tm.mode).map((p) =>
     wired ? { ...p, state: paramState(p.value, ageMs, tm.frozen, store.openAlarm(v, p.id), tm.stale_ms) } : p,
   );
   return (

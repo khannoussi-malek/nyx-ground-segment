@@ -43,8 +43,8 @@ export async function checkSession(me: () => Promise<string | null>, onExpired: 
 const isObj = (x: unknown): x is Record<string, unknown> => typeof x === "object" && x !== null;
 // ponytail: checks only what paramViews reads; a wrong shape must fall back to ids, not blank the console
 const isMissionDb = (x: unknown): x is MissionDb =>
-  isObj(x) && isObj(x.parameters) && isObj(x.limits) &&
-  Object.values(x.parameters).every(isObj) &&
+  isObj(x) && isObj(x.parameters) && isObj(x.derived) && isObj(x.limits) &&
+  Object.values(x.parameters).every(isObj) && Object.values(x.derived).every(isObj) &&
   Object.values(x.limits).every((l) => isObj(l) && Array.isArray(l.checks) && l.checks.every(isObj));
 
 /** Once after login: a dead session goes back to login; any other failure shows ids only. */

@@ -1,5 +1,6 @@
 import { useState, useSyncExternalStore } from "react";
 import type { MissionDb } from "../server/api";
+import { paramMeta } from "../tools/params";
 import { AckDialog } from "./AckDialog";
 import { alarmText, hashText } from "../tools/alarmText";
 import { Glyph } from "./Glyph";
@@ -112,7 +113,7 @@ export function AlarmList({ store, mission, user, readOnly = false }: { store: S
                     <td>{a.vehicle}</td>
                     <td>
                     <button type="button" className="plot-link" data-plot-vehicle={a.vehicle} data-plot-param={a.param} title="Show in the chart">
-                      {(mission && Object.hasOwn(mission.parameters, a.param) && mission.parameters[a.param].description) || a.param}
+                      {paramMeta(mission, a.param)?.description || a.param}
                     </button>
                   </td>
                     <td className="text">{alarmText(a, mission)}</td>

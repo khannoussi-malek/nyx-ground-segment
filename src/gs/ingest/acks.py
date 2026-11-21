@@ -105,9 +105,9 @@ def apply_ack(
 # the ACK row takes its set and limits hashes from the alarm it acknowledges
 _ACK_ROW = """
 INSERT INTO alarm_events (key, alarm_id, vehicle, param, kind, severity, after_epoch, after_seq,
-                          after_t_onboard, by_user, note, limits_sha256, set_sha256)
+                          after_t_onboard, by_user, note, limits_sha256, set_sha256, check_set)
 SELECT %(key)s, alarm_id, vehicle, param, 'ACK', %(severity)s, %(after_epoch)s, %(after_seq)s,
-       %(after_t)s, %(by_user)s, %(note)s, limits_sha256, set_sha256
+       %(after_t)s, %(by_user)s, %(note)s, limits_sha256, set_sha256, check_set
 FROM alarms WHERE alarm_id = %(alarm_id)s
 ON CONFLICT (key) DO NOTHING
 """

@@ -165,10 +165,10 @@ async def test_link_messages_from_isolation(monkeypatch: pytest.MonkeyPatch) -> 
     v, base = vid(), now() - timedelta(minutes=1)  # P-pf9: _isolate's commits, incl. pending-only
     produce_values(v, {"cabin_temp_c": [22.0] * 6}, base=base)
 
-    async def bad_last(conn: Any, frames: list[FrameHeader], params: Any) -> Any:
+    async def bad_last(conn: Any, frames: list[FrameHeader], computed: Any, mdb: Any) -> Any:
         if any(f.seq == 5 for f in frames):
             raise ValueError("always bad")
-        return await insert_frames(conn, frames, params)
+        return await insert_frames(conn, frames, computed, mdb)
 
     monkeypatch.setattr(worker_mod, "insert_frames", bad_last)
     async with worker([v]):

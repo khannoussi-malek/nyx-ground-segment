@@ -17,6 +17,12 @@ class Vehicles(_Resp):
 
 class LimitView(_Resp):
     checks: list[CheckItem]  # CheckItem dumps as its own kind (G21)
+    checks_by_mode: dict[str, list[CheckItem]]  # a mode alarm's bound is read here
+
+
+class DerivedView(_Resp):
+    unit: str
+    description: str
 
 
 class MissionDbView(_Resp):
@@ -25,6 +31,7 @@ class MissionDbView(_Resp):
     commands_sha256: str
     parameters_sha256: str
     parameters: dict[str, ParameterEntry]
+    derived: dict[str, DerivedView]  # computed values, in parameters.yaml order
     limits: dict[str, LimitView]
     commands: dict[str, Command]
 
@@ -36,6 +43,15 @@ class MissionDbView(_Resp):
             commands_sha256=m.commands_sha256,
             parameters_sha256=m.parameters_sha256,
             parameters=m.parameters,
-            limits={p: LimitView(checks=list(e.checks)) for p, e in m.limits.items()},
+            derived={
+                n: DerivedView(unit=d.unit, description=d.description) for n, d in m.derived.items()
+            },
+            limits={
+                p: LimitView(
+                    checks=list(e.checks),
+                    checks_by_mode={k: list(v) for k, v in e.checks_by_mode.items()},
+                )
+                for p, e in m.limits.items()
+            },
             commands=m.commands,
         )

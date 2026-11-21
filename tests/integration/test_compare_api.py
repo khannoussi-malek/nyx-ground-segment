@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 import psycopg
 import pytest
+from psycopg.types.json import Jsonb
 
 from gs.archiver import window
 from gs.archiver.hours import hour_of, object_key
@@ -42,7 +43,7 @@ def _cleanup() -> Iterator[None]:
     root = s3_client("root")
     with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
         for v in _made:
-            for t in ("archive_object", "telemetry", "test_session"):
+            for t in ("archive_object", "telemetry", "test_session", "events"):
                 c.execute(f"delete from {t} where vehicle = %s", (v,))  # noqa: S608
             for o in root.list_objects("archive", prefix=f"{v}/", recursive=True):
                 root.remove_object("archive", o.object_name)
@@ -240,3 +241,30 @@ async def test_route_side_s3_failure_503(
             r = await c.get(url(ids, [param_columns()[0]]))
         assert (r.status_code, r.json()["message"]) == (503, "archive store unreachable")
         assert (await c.get(url(ids, [param_columns()[0]]))).status_code == 200
+
+
+def _applied(v: str, t: datetime, sha: str) -> None:
+    with psycopg.connect(admin_dsn("gs"), autocommit=True) as c:
+        c.execute(
+            "insert into events (key, vehicle, kind, t_onboard, details)"
+            " values (%s, %s, 'LIMITS_APPLIED', %s, %s)",
+            (f"LIMITS_APPLIED/{v}/{t.isoformat()}", v, t, Jsonb({"parameters_sha256": sha})),
+        )
+
+
+async def test_compare_flags_two_parameter_sets(live_api: LiveApi) -> None:  # R23 M1
+    ids = [session(), session()]
+    async with client(live_api) as c:
+        plain = (await c.get(url(ids, param_columns()[:1]))).json()
+        for i, sha in zip(ids, ("a" * 64, "b" * 64), strict=True):  # one set each, they differ
+            row = (
+                psycopg.connect(admin_dsn("gs"), autocommit=True)
+                .execute("select vehicle from test_session where id = %s", (i,))
+                .fetchone()
+            )
+            assert row is not None
+            _applied(row[0], H - timedelta(hours=1), sha)
+        flagged = (await c.get(url(ids, param_columns()[:1]))).json()
+    assert (plain["parameters_sha256"], plain["spans_parameters_change"]) == ([], False)
+    assert flagged["parameters_sha256"] == ["a" * 64, "b" * 64]
+    assert flagged["spans_parameters_change"] is True

@@ -225,5 +225,7 @@ class CompareSeries(_Body):
 
 class Compare(_Body):
     bucket_s: float  # one width for every session (D-EXT-11)
+    parameters_sha256: list[str]  # the parameter sets in force over the sessions (R23 M1)
+    spans_parameters_change: bool  # more than one: engineering values are not one series (A-R23-1)
     sessions: list[CompareSession]  # in the order asked
     series: list[CompareSeries]  # per session, then per param, in the order asked

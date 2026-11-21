@@ -54,6 +54,6 @@ test("two sessions overlaid: legend, dash patterns, paint time; one session expo
   await exp.getByLabel("Session").selectOption({ label: `${names[0]} · ${VEHICLES[0]}` });
   const [download] = await Promise.all([page.waitForEvent("download"), exp.getByRole("button", { name: "Export" }).click()]);
   expect(download.suggestedFilename()).toMatch(/^NYX-TA1_.*Z_.*Z\.csv$/);
-  const head = readFileSync((await download.path())!, "utf8").split("\n")[0];
+  const head = readFileSync((await download.path())!, "utf8").split("\n").find((l) => !l.startsWith("#"));  // R23 M1: comment lines first
   expect(head).toMatch(/^vehicle,seq,t_onboard,t_received,mode,last_cmd_id/);
 });

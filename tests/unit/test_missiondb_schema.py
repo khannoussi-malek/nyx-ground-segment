@@ -156,14 +156,6 @@ def test_allowed_modes_rejected() -> None:
     assert "allowed_modes" in rejected("commands.yaml", commands=bad).message
 
 
-def test_checks_by_mode_rejected() -> None:
-    bad = SHIPPED_L.replace(
-        b"  bus_current_a: {checks:",
-        b"  bus_current_a: {checks_by_mode: {SAFE: []}, checks:",
-    )
-    assert "checks_by_mode" in rejected("limits.yaml", limits=bad).message
-
-
 def test_dangling_limits_key_rejected() -> None:
     err = rejected(
         "limits.yaml",
@@ -263,3 +255,146 @@ def test_set_hashes_pinned() -> None:  # the set_sha in LIMITS_REJECTED events m
         ),
         "3dc9202a2a3e33e639f9f5b1cd0b63a4cf7e1937bbdab0c393e423a05491b45b",
     )
+
+
+# ---- EXT-01 Task 4: calibration, derived, checks_by_mode, names
+RAW_LINE = b"  cabin_temp_c: {unit: degC, type: float, description: Cabin temperature}\n"
+
+
+def _p(derived: str = "", cal: str = "") -> dict[str, bytes]:
+    text = SHIPPED_P
+    if cal:
+        text = text.replace(RAW_LINE, RAW_LINE.replace(b"}\n", b", " + cal.encode() + b"}\n"))
+    if derived:
+        text += b"derived:\n" + derived.encode()
+    return {"parameters": text}
+
+
+def test_calibration_table_loads() -> None:
+    db = ld(files(**_p(cal="calibration: {table: [[0, 0], [10, 100]]}")))
+    assert db.calibrations["cabin_temp_c"].points == ((0.0, 0.0), (10.0, 100.0))
+    assert db.raw_columns == ("cabin_temp_c_raw",)
+    assert db.raw_names == db.param_names and db.derived_names == ()
+
+
+@pytest.mark.parametrize(
+    "key", ["poly: {coefficients: [0, 1], raw_range: [0, 1]}", "frozen_check: 1"]
+)
+def test_unknown_calibration_key_rejected(key: str) -> None:
+    rejected("parameters.yaml", **_p(cal=f"calibration: {{table: [[0, 0], [1, 1]], {key}}}"))
+    rejected("parameters.yaml", **_p(cal=key))  # not a parameter key either
+
+
+def test_derived_loads_in_order() -> None:
+    db = ld(
+        files(
+            **_p(
+                "  power_w: {unit: W, expr: bus_voltage_v * bus_current_a}\n"
+                "  power_rate: {unit: W/s, rate_of: power_w, window_s: 5}\n"
+                "  r2: {unit: x, expr: abs(power_rate) + 1.5}\n"
+            )
+        )
+    )
+    assert db.derived_names == ("power_w", "power_rate", "r2")
+    assert db.param_names == db.raw_names + db.derived_names
+    s = db.derived["power_rate"]
+    assert (s.rate_of, s.window_s, s.expr) == ("power_w", 5.0, None)
+    assert db.derived["power_w"].expr is not None and db.derived["power_w"].rate_of is None
+
+
+def test_derived_forward_reference_rejected() -> None:
+    err = rejected(
+        "parameters.yaml",
+        **_p("  a: {unit: x, expr: b + 1}\n  b: {unit: x, expr: bus_voltage_v}\n"),
+    )
+    assert "b" in err.message
+
+
+def test_derived_cycle_rejected() -> None:
+    rejected(
+        "parameters.yaml",
+        **_p("  a: {unit: x, rate_of: b, window_s: 1}\n  b: {unit: x, expr: a}\n"),
+    )
+    rejected("parameters.yaml", **_p("  a: {unit: x, rate_of: a, window_s: 1}\n"))
+
+
+@pytest.mark.parametrize("body", [
+    "{unit: x}", "{unit: x, expr: bus_voltage_v, rate_of: bus_current_a, window_s: 1}",
+    "{unit: x, rate_of: bus_current_a}", "{unit: x, expr: bus_voltage_v, window_s: 1}",
+    "{unit: x, rate_of: bus_current_a, window_s: 0}", "{expr: bus_voltage_v}",
+    "{unit: x, expr: 'bus_voltage_v +'}", "{unit: x, expr: nope + 1}",
+    "{unit: x, rate_of: nope, window_s: 1}", "{unit: x, expr: 'ａ + 1'}",
+])  # fmt: skip
+def test_derived_needs_exactly_one_of_expr_rate_of(body: str) -> None:
+    rejected("parameters.yaml", **_p(f"  d: {body}\n"))
+
+
+def test_derived_expr_unicode_name_rejected_even_when_folded() -> None:
+    p = _p("  a: {unit: x, expr: bus_voltage_v}\n  b: {unit: x, expr: 'ａ + 1'}\n")
+    assert "ASCII" in rejected("parameters.yaml", **p).message
+
+
+@pytest.mark.parametrize("name", ["abs", "min", "max", "sqrt", "mode", "Bad"])
+def test_derived_reserved_or_bad_name_rejected(name: str) -> None:
+    rejected("parameters.yaml", **_p(f"  {name}: {{unit: x, expr: bus_voltage_v}}\n"))
+
+
+def test_raw_name_collision_rejected() -> None:
+    p = SHIPPED_P.replace(RAW_LINE, RAW_LINE + b"  cabin_temp_c_raw: {unit: x, type: float}\n")
+    cal = RAW_LINE.replace(b"}\n", b", calibration: {table: [[0, 0], [1, 1]]}}\n")
+    err = rejected("parameters.yaml", parameters=p.replace(RAW_LINE, cal))
+    assert "cabin_temp_c_raw" in err.message
+    rejected("parameters.yaml", **_p("  bus_voltage_v: {unit: x, expr: bus_current_a}\n"))
+    rejected(
+        "parameters.yaml",
+        **_p(
+            "  cabin_temp_c_raw: {unit: x, expr: bus_current_a}\n",
+            cal="calibration: {table: [[0, 0], [1, 1]]}",
+        ),
+    )
+
+
+def test_no_raw_parameter_rejected() -> None:
+    rejected("parameters.yaml", parameters=b"version: 1\nparameters: {}\n")
+
+
+def test_limits_on_derived_parameter_load() -> None:
+    lim = SHIPPED_L + b"  pw:\n    checks: [{type: limit, red_high: 100.0, hysteresis_abs: 2}]\n"
+    db = ld(files(limits=lim, **_p("  pw: {unit: W, expr: bus_voltage_v * bus_current_a}\n")))
+    assert "pw" in db.limits
+    rejected("limits.yaml", limits=lim)
+
+
+def test_checks_by_mode_empty_list_loads() -> None:
+    lim = SHIPPED_L.replace(
+        b"  cabin_temp_c: {checks: [", b"  cabin_temp_c: {checks_by_mode: {SAFE: []}, checks: ["
+    )
+    db = ld(files(limits=lim))
+    assert db.limits["cabin_temp_c"].checks_by_mode["SAFE"] == []
+
+
+def test_checks_by_mode_resolves_persistence_and_rejects_bad_mode_and_duplicates() -> None:
+    one = "{type: limit, red_high: 40.0, hysteresis_abs: 1}"
+    lim = SHIPPED_L.replace(
+        b"  cabin_temp_c: {checks: [",
+        f"  cabin_temp_c: {{checks_by_mode: {{TEST: [{one}]}}, checks: [".encode(),
+    )
+    c = ld(files(limits=lim)).limits["cabin_temp_c"].checks_by_mode["TEST"][0]
+    assert isinstance(c, LimitCheck) and c.persistence == 3 and c.hysteresis_abs == 1
+    for bad in (f"{{BOGUS: [{one}]}}", f"{{TEST: [{one}, {one}]}}"):
+        rejected(
+            "limits.yaml",
+            limits=SHIPPED_L.replace(
+                b"  cabin_temp_c: {checks: [",
+                f"  cabin_temp_c: {{checks_by_mode: {bad}, checks: [".encode(),
+            ),
+        )
+
+
+def test_checks_by_mode_floor_checked() -> None:
+    lim = SHIPPED_L.replace(
+        b"  cabin_temp_c: {checks: [",
+        b"  cabin_temp_c: {checks_by_mode: {FAULT: [{type: limit, red_high: 40.0,"
+        b" hysteresis_abs: 0.001}]}, checks: [",
+    )
+    assert "floor" in rejected("limits.yaml", limits=lim).message

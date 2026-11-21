@@ -592,6 +592,11 @@ export interface components {
              */
             t: string;
         };
+        /** Calibration */
+        Calibration: {
+            /** Table */
+            table: number[][];
+        };
         /** CheckConfig */
         CheckConfig: {
             /** Persistence */
@@ -1051,6 +1056,7 @@ export interface components {
         };
         /** ParameterEntry */
         ParameterEntry: {
+            calibration?: components["schemas"]["Calibration"] | null;
             /**
              * Description
              * @default

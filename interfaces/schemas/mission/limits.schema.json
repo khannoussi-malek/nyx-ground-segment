@@ -145,6 +145,39 @@
           },
           "title": "Checks",
           "type": "array"
+        },
+        "checks_by_mode": {
+          "additionalProperties": {
+            "items": {
+              "discriminator": {
+                "mapping": {
+                  "limit": "#/$defs/LimitCheck",
+                  "roc": "#/$defs/RocCheck"
+                },
+                "propertyName": "type"
+              },
+              "oneOf": [
+                {
+                  "$ref": "#/$defs/LimitCheck"
+                },
+                {
+                  "$ref": "#/$defs/RocCheck"
+                }
+              ]
+            },
+            "type": "array"
+          },
+          "default": {},
+          "propertyNames": {
+            "enum": [
+              "SAFE",
+              "STANDBY",
+              "TEST",
+              "FAULT"
+            ]
+          },
+          "title": "Checks By Mode",
+          "type": "object"
         }
       },
       "required": [

@@ -29,7 +29,7 @@ def add_columns(conn: psycopg.Connection, db: MissionDb) -> list[str]:
             "select column_name from information_schema.columns where table_name='telemetry'"
         )
     }
-    added = [n for n in db.param_names if n not in have]
+    added = [n for n in (*db.param_names, *db.raw_columns) if n not in have]
     for name in added:
         conn.execute(
             sql.SQL("ALTER TABLE telemetry ADD COLUMN IF NOT EXISTS {} double precision").format(

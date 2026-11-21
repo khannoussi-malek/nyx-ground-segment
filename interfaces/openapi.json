@@ -369,6 +369,26 @@
         "title": "Bucket",
         "type": "object"
       },
+      "Calibration": {
+        "additionalProperties": false,
+        "properties": {
+          "table": {
+            "items": {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            "title": "Table",
+            "type": "array"
+          }
+        },
+        "required": [
+          "table"
+        ],
+        "title": "Calibration",
+        "type": "object"
+      },
       "CheckConfig": {
         "additionalProperties": false,
         "properties": {
@@ -1704,6 +1724,16 @@
       "ParameterEntry": {
         "additionalProperties": false,
         "properties": {
+          "calibration": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Calibration"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "description": {
             "default": "",
             "title": "Description",

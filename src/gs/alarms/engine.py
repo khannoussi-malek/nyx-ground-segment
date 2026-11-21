@@ -57,6 +57,10 @@ class CompiledSet:
     checks: Mapping[str, Checks]  # param -> (check, persistence), file order
     by_mode: Mapping[tuple[str, str], Checks] = field(default_factory=dict)  # (param, MODE); () =
     # not monitored in that mode (D-EXT-06, A-R23-3)
+    # per-mode active map, filled on first use: built once per (set, mode), not per frame
+    _maps: dict[str | None, Mapping[str, Checks]] = field(
+        default_factory=dict, compare=False, repr=False
+    )
 
 
 def active(cset: CompiledSet, param: str, mode: str | None) -> Checks:
@@ -67,8 +71,11 @@ def active(cset: CompiledSet, param: str, mode: str | None) -> Checks:
 def _active_map(cset: CompiledSet, mode: str | None) -> Mapping[str, Checks]:
     if not cset.by_mode:
         return cset.checks
+    if (hit := cset._maps.get(mode)) is not None:  # noqa: SLF001
+        return hit
     out = {p: c for p, c in cset.checks.items() if (p, mode or "") not in cset.by_mode}
     out.update({p: c for (p, m), c in cset.by_mode.items() if m == mode and c})
+    cset._maps[mode] = out  # noqa: SLF001
     return out
 
 

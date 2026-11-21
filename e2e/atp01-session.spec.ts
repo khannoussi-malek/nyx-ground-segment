@@ -2,23 +2,15 @@
 // and the CSV downloaded with every time in UTC with Z (D-DB-10/11, D-ENG-18).
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { cell, fault, login, VEHICLES } from "./helpers";
+import { cell, fault, login, stopActiveSessions, VEHICLES } from "./helpers";
 
 const RUN_MS = 120_000;
 const panel = (page: Page) => page.getByRole("region", { name: "Sessions" });
 
-async function stopActive(page: Page): Promise<void> {
-  const stops = panel(page).getByRole("button", { name: /^Stop / });
-  while ((await stops.count()) > 0) {
-    await stops.first().click(); // a session an earlier run left active
-    await expect(panel(page).getByText("Loading the report…")).toBeHidden();
-  }
-}
-
 test("two 2-minute sessions: report pending, then ready; CSV times end in Z", async ({ page }) => {
   test.setTimeout(RUN_MS + 120_000);
   await login(page, "fc1");
-  await stopActive(page);
+  await stopActiveSessions(page);
   const tag = Date.now().toString(36);
   for (const v of VEHICLES) {
     await panel(page).getByLabel(/^Vehicle/).selectOption(v);

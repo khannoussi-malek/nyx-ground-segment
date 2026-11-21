@@ -20,6 +20,19 @@ function password(user: string): string {
   return pw;
 }
 
+/** Stop every active session in the Sessions panel. Each click waits for the list to drop that row:
+ * a Stop click disables all Stop buttons until the list refetches, so a stale count() would click a
+ * button that is about to vanish and hang until the test timeout (main CI, 2026-11-21). */
+export async function stopActiveSessions(page: Page): Promise<void> {
+  const panel = page.getByRole("region", { name: "Sessions" });
+  const stops = panel.getByRole("button", { name: /^Stop / });
+  for (let n = await stops.count(); n > 0; n = await stops.count()) {
+    await stops.first().click();
+    await expect(stops).toHaveCount(n - 1);
+    await expect(panel.getByText("Loading the report…")).toBeHidden();
+  }
+}
+
 /** Log in through the form; resolves once the live table shows a value (the console is wired). */
 export async function login(page: Page, user: string): Promise<void> {
   await page.goto("/");

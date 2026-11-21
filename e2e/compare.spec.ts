@@ -2,24 +2,16 @@
 // the paint time (logged, not asserted), and a CSV export of one session through the form.
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
-import { login, VEHICLES } from "./helpers";
+import { login, stopActiveSessions, VEHICLES } from "./helpers";
 
 const RUN_MS = 8_000;
 const PARAM = "cabin_pressure_kpa";
 const panel = (page: Page) => page.getByRole("region", { name: "Sessions" });
 
-async function stopActive(page: Page): Promise<void> {
-  const stops = panel(page).getByRole("button", { name: /^Stop / });
-  while ((await stops.count()) > 0) {
-    await stops.first().click();
-    await expect(panel(page).getByText("Loading the report…")).toBeHidden();
-  }
-}
-
 test("two sessions overlaid: legend, dash patterns, paint time; one session exported as CSV", async ({ page }) => {
   test.setTimeout(120_000);
   await login(page, "fc1");
-  await stopActive(page);
+  await stopActiveSessions(page);
   const tag = Date.now().toString(36);
   const names = VEHICLES.map((v) => `cmp ${v} ${tag}`);
   for (const [i, v] of VEHICLES.entries()) {
@@ -29,7 +21,7 @@ test("two sessions overlaid: legend, dash patterns, paint time; one session expo
     await expect(panel(page).locator("tr[data-active]").filter({ hasText: names[i]! })).toBeVisible();
   }
   await page.waitForTimeout(RUN_MS);
-  await stopActive(page);
+  await stopActiveSessions(page);
 
   await page.getByRole("button", { name: "Compare" }).click();
   const form = page.locator(".compare form").first();

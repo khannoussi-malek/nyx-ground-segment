@@ -37,7 +37,7 @@ def side(t: Table, raw: float | None) -> Literal["LOW", "HIGH"] | None:
 
 
 def apply(t: Table, raw: float | None) -> float | None:
-    """Engineering value, or None for None, non-finite or out-of-table raw."""
+    """Engineering value; None for a None, non-finite or out-of-table raw, or an overflow."""
     if raw is None or not math.isfinite(raw) or side(t, raw) is not None:
         return None
     pts = t.points
@@ -46,7 +46,8 @@ def apply(t: Table, raw: float | None) -> float | None:
     if raw == r0:
         return e0
     r1, e1 = pts[i + 1]
-    return e0 + (raw - r0) * (e1 - e0) / (r1 - r0)
+    eng = e0 + (raw - r0) * (e1 - e0) / (r1 - r0)
+    return eng if math.isfinite(eng) else None  # an overflow is a NULL, never a stored inf
 
 
 def eng_range(t: Table) -> tuple[float, float]:

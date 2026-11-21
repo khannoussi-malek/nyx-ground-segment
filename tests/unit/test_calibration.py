@@ -110,3 +110,8 @@ def test_table_must_cover_mode_checks_too() -> None:
 def test_calibration_row_too_short_rejected_at_load() -> None:
     with pytest.raises(MissionDbError, match="2 values"):
         ld(files(**_cal("[[0], [10, 31]]")))
+
+
+def test_overflowing_output_is_none_not_inf() -> None:
+    t = Table.from_pairs([[0, 0], [1, 1.7e308], [2, -1.7e308]])
+    assert apply(t, 1.5) is None  # e1 - e0 overflows to -inf, so the output would be -inf

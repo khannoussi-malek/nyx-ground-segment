@@ -10,6 +10,9 @@ test("RED_HIGH alarm → RED, HIGH, with the check kind", () => {
   expect(paramState(1, 0, false, alarm("YELLOW_LOW", "ACKED")).level).toBe("YELLOW");
 });
 
+test("a mode alarm keeps its side: the ' · SAFE limits' suffix is not part of it", () =>
+  expect(paramState(1, 0, false, alarm("RED_HIGH · SAFE limits"))).toEqual({ acq: "OK", level: "RED", side: "HIGH", check_kind: "limit" }));
+
 test("RTN_UNACK and no alarm are NOMINAL", () => {
   expect(paramState(1, 0, false, alarm("RED_HIGH", "RTN_UNACK"))).toEqual({ acq: "OK", level: "NOMINAL" });
   expect(paramState(1, 0, false, undefined)).toEqual({ acq: "OK", level: "NOMINAL" });

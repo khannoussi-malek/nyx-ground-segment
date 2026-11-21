@@ -9,15 +9,21 @@ const minus = (n: number) => String(n).replaceAll("-", "−");
  *  Taken from the AlarmView alone (+ the mission db for unit and limit): the level of a returned alarm is its last
  *  non-NOMINAL one (P-pf20) and the value survives an ACK (P-pf4). */
 export function alarmText(a: AlarmView, m: MissionDb | null): string {
-  const [sev = "", side = ""] = a.level.split("_");
+  // "RED_HIGH · SAFE limits": the level, then the check set the engine judged it by (absent: the default set)
+  const [levelText = "", setName] = a.level.split(" · ");
+  const [sev = "", side = ""] = levelText.split("_");
+  const set = setName?.replace(/ limits$/, "");
+  const tag = setName ? ` · ${setName}` : "";
   if (a.state === "RTN_UNACK") return `RETURNED · was ${a.level.replace("_", " ")}`;
   const unit = paramMeta(m, a.param)?.unit ?? "";
-  const checks = m && Object.hasOwn(m.limits, a.param) ? m.limits[a.param].checks : [];
+  const entry = m && Object.hasOwn(m.limits, a.param) ? m.limits[a.param] : undefined;
+  const modeChecks = set !== undefined && entry && Object.hasOwn(entry.checks_by_mode, set) ? entry.checks_by_mode[set] : undefined;
+  const checks = modeChecks ?? entry?.checks ?? [];
   const num = (suffix: string) => (a.value === null ? formatValue(null) : `${formatValue(a.value)}${unit ? ` ${unit}${suffix}` : ""}`);
   if (a.trigger_check === "roc") {
     const roc = checks.find((c) => c.type === "roc" && c.severity === sev) ?? checks.find((c) => c.type === "roc");
     const lim = roc?.type === "roc" ? ` (limit ${minus(roc.limit_per_s)})` : "";
-    return `${sev} · RATE ${side} ${num("/s")}${lim}`;
+    return `${sev} · RATE ${side} ${num("/s")}${lim}${tag}`;
   }
   const limit = checks.find((c) => c.type === "limit");
   const bound = limit?.type === "limit" ? limit[`${sev.toLowerCase()}_${side.toLowerCase()}` as "red_high"] : undefined;

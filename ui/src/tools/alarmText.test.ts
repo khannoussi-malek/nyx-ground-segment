@@ -8,7 +8,10 @@ const MDB = {
   derived: { power_w: { unit: "W", description: "Bus power" } },
   limits: {
     power_w: { checks: [{ type: "limit", yellow_high: 250, red_high: 300 }] },
-    cabin_pressure_kpa: { checks: [{ type: "limit", red_low: 95, red_high: 106 }, { type: "roc", direction: "both", limit_per_s: 0.15, severity: "YELLOW", window_s: 5 }] },
+    cabin_pressure_kpa: {
+      checks: [{ type: "limit", red_low: 95, red_high: 106 }, { type: "roc", direction: "both", limit_per_s: 0.15, severity: "YELLOW", window_s: 5 }],
+      checks_by_mode: { SAFE: [{ type: "limit", yellow_low: 95, red_low: 90, yellow_high: 104, red_high: 108 }, { type: "roc", direction: "both", limit_per_s: 0.3, severity: "YELLOW", window_s: 5 }] },
+    },
     suit_temp_c: { checks: [{ type: "limit", yellow_high: 28, red_high: 30, red_low: -5 }] },
   },
 } as unknown as MissionDb;
@@ -50,3 +53,12 @@ test("a limit alarm prints its reading, a rate alarm its slope: the two are neve
 
 test("a derived parameter's alarm carries its unit", () =>
   expect(alarmText(lim({ param: "power_w", value: 310 }), MDB)).toBe("RED HIGH · 310.00 W (limit 300)"));
+
+test("a mode alarm names its set, its side and the bound of that set, not the default one", () => {
+  const safe = alarmView({ level: "RED_HIGH · SAFE limits", value: 109 });
+  expect(alarmText(safe, MDB)).toBe("RED HIGH · SAFE limits · 109.00 kPa (limit 108)");
+  expect(alarmText(alarmView({ level: "YELLOW_LOW · SAFE limits", severity: "YELLOW", value: 92 }), MDB)).toBe("YELLOW LOW · SAFE limits · 92.00 kPa (limit 95)");
+  expect(alarmText(roc({ level: "YELLOW_FALLING · SAFE limits" }), MDB)).toBe("YELLOW · RATE FALLING −0.40 kPa/s (limit 0.3) · SAFE limits");
+  expect(alarmText({ ...safe, state: "RTN_UNACK" }, MDB)).toBe("RETURNED · was RED HIGH · SAFE limits");
+  expect(alarmText(alarmView({ level: "RED_HIGH · SAFE limits", value: 109 }), null)).toBe("RED HIGH · SAFE limits · 109.00");
+});

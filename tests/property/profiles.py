@@ -23,4 +23,6 @@ if NAME == "nightly":
     # the plugin's --hypothesis-seed sets the same global; an env seed replays a night
     SEED = int(os.environ.get("HYPOTHESIS_SEED") or random.SystemRandom().randrange(2**32))
     _core.global_force_seed = SEED  # type: ignore[assignment]
-settings.load_profile(NAME)
+# ponytail: applied per test (@profiles.PROFILE), never loaded globally: a global load would give
+# every Hypothesis test in the run (the REST fuzz too) this profile's 500 ms deadline
+PROFILE = settings.get_profile(NAME)

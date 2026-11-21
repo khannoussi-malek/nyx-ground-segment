@@ -19,7 +19,7 @@ from gs.common.interfaces.frame import T_ONBOARD_FUTURE, T_ONBOARD_PAST
 from gs.common.missiondb import load_dir
 from gs.common.time import iso_z
 from gs.ingest.validate import classify
-from tests.property import profiles  # noqa: F401  (registers and loads the profiles)
+from tests.property import profiles
 from tests.support.mission import MISSION_DIR
 
 NOW = datetime(2026, 11, 14, 10, tzinfo=UTC)
@@ -71,6 +71,7 @@ _BREAKS: tuple[Callable[[dict[str, Any], str], dict[str, Any]], ...] = (
 _REQUIRED = ("vehicle", "seq", "t_onboard", "mode", "last_cmd_id")
 
 
+@profiles.PROFILE
 @given(_frames(), st.sampled_from(_BREAKS), st.sampled_from(_REQUIRED))
 def test_p7_schema_frames_stored_or_dlqd(
     frame: dict[str, Any], brk: Callable[[dict[str, Any], str], dict[str, Any]], key: str
@@ -91,6 +92,7 @@ _JSON = st.recursive(
 )
 
 
+@profiles.PROFILE
 @given(st.one_of(_JSON, _frames(), st.binary()), st.booleans())
 def test_p7_validator_never_raises(raw: object, as_entry: bool) -> None:
     """Whatever arrives in `data`, the frame path answers a frame or a DLQ record."""

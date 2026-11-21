@@ -11,6 +11,7 @@ from gs.alarms.contract import AlarmState, Level, Transition
 from gs.alarms.engine import ack, compile_set, initial_state, step
 from gs.common.missiondb import MissionDb
 from gs.ingest.fold import dump_vehicle
+from tests.property import profiles
 from tests.property.folding import headers, play
 from tests.property.strategies import Run, Tuning, mission_for, runs, tunings
 from tests.support.alarms import EPOCH, PERIOD_S, V, at
@@ -98,6 +99,7 @@ def _replay(tuning: Tuning, run: Run) -> list[Transition]:
     return out
 
 
+@profiles.PROFILE
 @given(st.data())
 def test_p5_transition_paths_valid(data: st.DataObject) -> None:
     tuning = data.draw(tunings())
@@ -122,6 +124,7 @@ def _cuts(n: int) -> st.SearchStrategy[frozenset[int]]:
     return st.sets(st.integers(1, max(1, n - 1)), max_size=30).map(frozenset)
 
 
+@profiles.PROFILE
 @given(st.data())
 def test_p3_same_input_same_keys(data: st.DataObject) -> None:
     """Same frames + same ACKs + same mission-db timeline => the same transitions, whatever the
@@ -148,6 +151,7 @@ def test_p3_same_input_same_keys(data: st.DataObject) -> None:
     event(f"switched={mdbs[1] is not None and mdbs[0].set_sha256 != mdbs[1].set_sha256}")
 
 
+@profiles.PROFILE
 @given(st.data())
 def test_p4_snapshot_any_split(data: st.DataObject) -> None:
     """Dump to JSON and load at random batch boundaries (with a mission-db change between) =>

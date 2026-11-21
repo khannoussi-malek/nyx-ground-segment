@@ -7,6 +7,7 @@ from hypothesis import given
 
 from gs.ingest.events import GroundEvent
 from gs.ingest.seq import Klass, SeqState, step
+from tests.property import profiles
 from tests.property.strategies import Delivery, Scenario, scenarios
 
 V = "NYX-TA1"
@@ -21,6 +22,7 @@ def _run(sc: Scenario) -> list[tuple[Klass, tuple[GroundEvent, ...], Delivery]]:
     return out
 
 
+@profiles.PROFILE
 @given(scenarios())
 def test_p1_each_frame_new_once(sc: Scenario) -> None:
     store: set[tuple[str, datetime, int]] = set()  # the (vehicle, t_onboard, seq) storage key
@@ -34,6 +36,7 @@ def test_p1_each_frame_new_once(sc: Scenario) -> None:
     assert new == len(store) == sc.distinct
 
 
+@profiles.PROFILE
 @given(scenarios())
 def test_p2_gap_counts_equal_dropped(sc: Scenario) -> None:
     lost: dict[datetime, int] = defaultdict(int)

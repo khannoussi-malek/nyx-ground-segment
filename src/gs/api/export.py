@@ -38,7 +38,9 @@ def _bad(error: str, message: str) -> ApiError:
 
 def _names(request: Request, text: str | None) -> list[str]:
     """The requested parameters in mission-db order; all of them when `params` is omitted."""
-    known = mission(request).param_names
+    m = mission(request)
+    # each `<name>_raw` right after its parameter: raw is the repair path (A-R23-1, D-EXT-13)
+    known = [c for n in m.param_names for c in (n, f"{n}_raw") if c == n or c in m.raw_columns]
     if text is None:
         return list(known)
     asked = text.split(",")

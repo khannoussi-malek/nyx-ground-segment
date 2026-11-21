@@ -49,6 +49,7 @@ def render(
     violation: str | None,
     recoveries: Sequence[float],
     restores: tuple[Sequence[str], Sequence[str], bool] = ((), (), False),
+    i4: str = "NOT RUN (no watcher)",
 ) -> str:
     """`restores`: start-up repair lines, end repair lines, whether the end restore failed."""
     start, end, end_failed = restores
@@ -81,7 +82,7 @@ def render(
         f"# Chaos soak, seed {seed}, {minutes:g} min, started {started:%Y-%m-%d %H:%M:%S}Z\n\n"
         f"**{verdict}**{f' (stopped: {violation})' if violation else ''}\n\n"
         f"{not_clean}"
-        "I4 (no OK shown for old data) is the browser watcher's, not this run's.\n\n"
+        f"I4 (console watcher): {i4}\n\n"
         "| Invariant | Result | Samples | Skipped | First failure |\n|---|---|---|---|---|\n"
         f"{rows}\n"
         f"- Recovery after each action (I5): max {max(recoveries, default=0):.1f} s over "

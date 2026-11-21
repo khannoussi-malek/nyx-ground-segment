@@ -1,7 +1,7 @@
 """Chaos soak (D-EXT-15, design 11.5): both vehicles at 10 Hz, a seeded simulator-fault schedule
 and a seeded infrastructure-action schedule, operator traffic, invariants I1-I3 and I5-I8 sampled
 every 5 s and at the end. Stops at the first violation and prints seed, time and the action log.
-I4 (console never shows OK for old data) is the Playwright watcher's, not this script's.
+I4 (console never shows OK for old data) is the Playwright watcher's, chaos/watch.py.
 
     make chaos SEED=<n> MINUTES=<m>        (default 30)
     uv run python -m chaos.soak --seed <n> --minutes <m>   (against `make chaos`'s stack)
@@ -46,6 +46,7 @@ from chaos.operator import Operator
 from chaos.recompute import recompute_all
 from chaos.report import Tally, render
 from chaos.schedule import QUIET_S, VEHICLES, Action, Fault, fault_schedule, infra_schedule
+from chaos.watch import Watcher
 from gs.alarms.quality import FaultWindow, Quality
 from tests.support.env import REPO
 from tests.support.sim import post_fault
@@ -224,6 +225,7 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
     t0, total = time.monotonic(), minutes * 60
     thread = threading.Thread(target=infra_loop, args=(acts, t0, sh, out), daemon=True)
     op = Operator()
+    watcher = Watcher(out)
     fi, next_sample, next_ack, next_iso, minute = 0, SAMPLE_S, ACK_S, ISOLATE_S / 2, 0
     try:
         thread.start()
@@ -255,6 +257,7 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
     finally:
         sh.stop.set()
         thread.join(timeout=RECOVERY_S + 30)  # its action ends and undoes itself
+        i4 = watcher.finish()  # before the restore: it must watch the whole run
         end = restore_stack()  # whatever is still pending (idempotent, also after a PASS)
         for line in end.lines():
             print(f"restore at end: {line}", file=sys.stderr)
@@ -273,6 +276,7 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
             s.violation,
             sh.recoveries,
             (start.lines(), end.lines(), bool(end.failures)),
+            i4,
         )
     )
     if end.failures:
@@ -281,6 +285,7 @@ def run(seed: int, minutes: float, out_root: Path = OUT_ROOT) -> int:
     if s.violation:
         print_failure(seed, s, sh)
         return 1
+    print(f"I4: {i4}")
     print(f"chaos soak PASS seed={seed}: summary in {out / 'summary.md'}")
     return 0
 

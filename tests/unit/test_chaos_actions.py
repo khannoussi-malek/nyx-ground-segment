@@ -257,3 +257,35 @@ def test_operator_ack_survives_an_error_body(monkeypatch: pytest.MonkeyPatch) ->
     )
     op.ack_reds()
     assert op.failed == 1
+
+
+def test_i4_result_from_the_watchers_file(tmp_path: Path) -> None:
+    from chaos.watch import i4_result
+
+    out = tmp_path / "watch.json"
+    assert i4_result(out, 0).startswith("NOT RUN")  # the watcher never wrote its file
+    out.write_text('{"samples": 4000, "rows": 90000, "bad": []}')
+    assert i4_result(out, 0) == "PASS (4000 samples, 90000 OK rows)"
+    out.write_text('{"samples": 10, "rows": 0, "bad": []}')
+    assert i4_result(out, 0).startswith("NOT RUN")  # no OK row seen: nothing was judged
+    out.write_text('{"samples": 10, "rows": 50, "bad": ["t NYX-TA1 p OK at 3100 ms"]}')
+    assert i4_result(out, 1) == "FAIL (reported, not gating): t NYX-TA1 p OK at 3100 ms"
+
+
+def test_summary_reports_i4_without_gating() -> None:
+    from datetime import UTC, datetime
+
+    import chaos.report as report
+
+    text = report.render(
+        1,
+        1,
+        datetime.now(UTC),
+        report.Tally(),
+        {},
+        None,
+        None,
+        [],
+        i4="FAIL (reported, not gating): x",
+    )
+    assert "I4 (console watcher): FAIL (reported, not gating): x" in text and "**PASS**" in text

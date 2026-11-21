@@ -108,7 +108,7 @@ async def steal_tick(ctx: Ctx, conn: psycopg.AsyncConnection) -> list[str]:
         ctx.suspects.pop(v)
         # check and act in one statement: terminate only if that pid still holds the lock
         cur = await conn.execute(
-            "SELECT pg_terminate_backend(l.pid) FROM pg_locks l"
+            "SELECT pg_terminate_backend(l.pid) FROM pg_locks l"  # noqa: S608 identifier from a module constant, values bound
             f" WHERE {MATCH} AND l.granted AND l.pid = %s",
             ("tm:" + v, h[0]),
         )

@@ -111,7 +111,7 @@ async def run(s: SimSettings, stop: asyncio.Event) -> None:
     try:
         async with asyncio.TaskGroup() as tg:
             for v in s.vehicles:
-                rng = random.Random(f"{s.seed}:{v}")
+                rng = random.Random(f"{s.seed}:{v}")  # noqa: S311 simulated telemetry, not crypto
                 tg.create_task(
                     tick_loop(
                         v,

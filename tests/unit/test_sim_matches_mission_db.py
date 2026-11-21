@@ -6,7 +6,7 @@ from gs.simulator.frames import NOMINALS
 
 def test_nominals_match_mission_db() -> None:  # D-SIM-11, D-SIM-08
     db = load_dir(Path("mission"))
-    assert set(NOMINALS) == set(db.param_names)
+    assert set(NOMINALS) == set(db.raw_names)  # derived have no simulator nominal
     for p, (nominal, _) in NOMINALS.items():
         lim = next(c for c in db.limits[p].checks if isinstance(c, LimitCheck))
         assert lim.yellow_low is None or lim.yellow_low < nominal

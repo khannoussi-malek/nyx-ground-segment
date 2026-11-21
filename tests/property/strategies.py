@@ -150,6 +150,7 @@ def tunings() -> st.SearchStrategy[Tuning]:
 def mission_for(t: Tuning) -> MissionDb:
     """The shipped limits with this tuning applied, through the real mission-db loader."""
     doc: dict[str, Any] = yaml.safe_load((MISSION_DIR / "limits.yaml").read_bytes())
+    doc["limits"].pop("power_w", None)  # files() is the raw-only base
     d = doc["defaults"]
     doc["defaults"] = {"hysteresis_pct": d["hysteresis_pct"], "persistence": t.persistence}
     for entry in doc["limits"].values():
@@ -178,7 +179,10 @@ def _tune_check(c: dict[str, Any], t: Tuning) -> dict[str, Any]:
 @lru_cache(maxsize=1)
 def _bounds() -> dict[str, tuple[float, ...]]:
     out: dict[str, tuple[float, ...]] = {}
-    for p, e in load_dir(MISSION_DIR).limits.items():
+    db = load_dir(MISSION_DIR)
+    for p, e in db.limits.items():
+        if p not in db.raw_names:  # the runs feed the engine raw nominals only
+            continue
         for c in e.checks:
             if isinstance(c, LimitCheck):
                 b = (c.red_low, c.yellow_low, c.yellow_high, c.red_high)

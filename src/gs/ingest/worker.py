@@ -307,7 +307,10 @@ async def _process(
     stored = [(f, compute(b.mdb, f)) for f in inserted]
     for _, c in stored:  # counted once, for what this commit stored
         for p, why in c.nulls:
-            ctx.counters[f"calibration_{why}:{p}"] += 1  # out_of_range | nonfinite | error
+            if p in b.mdb.derived:  # missing | div0 | nonfinite | error (a bug is visible)
+                ctx.counters[f"derived_null:{p}:{why}"] += 1
+            else:
+                ctx.counters[f"calibration_{why}:{p}"] += 1  # out_of_range | nonfinite | error
     msgs = await _ui(conn, nvs, stored, outs)
     try:
         await publish_ui(ctx.redis, msgs)

@@ -37,7 +37,7 @@ from tests.support.env import until, vid
 from tests.support.http import api_settings, authed
 from tests.support.ingest import worker
 from tests.support.mission import MISSION_DIR
-from tests.support.missionfiles import edit, mission_copy, set_formula
+from tests.support.missionfiles import add_raw_parameter, edit, mission_copy, set_formula
 from tests.support.pg import admin_dsn, app_dsn, rows
 from tests.support.recompute import recompute_columns, recompute_keys
 from tests.support.redisx import aclient, client, drained
@@ -303,8 +303,7 @@ async def test_window_across_added_parameter(recording: Recording, tmp_path: Pat
     await archive(recording)
     col = "g4rp_added"
     m = mission_copy(tmp_path)
-    p = m / "parameters.yaml"
-    p.write_text(p.read_text() + f"  {col}: {{unit: V, type: float, description: added later}}\n")
+    add_raw_parameter(m, f"  {col}: {{unit: V, type: float, description: added later}}")
     with psycopg.connect(admin_dsn(recording.db), autocommit=True) as c:
         c.execute(f"alter table telemetry add column {col} double precision")  # noqa: S608
         try:

@@ -132,6 +132,10 @@ def n1_set() -> CompiledSet:
 def _noise_cases() -> list[tuple[str, float, str]]:
     cases = []
     for param, entry in DB.limits.items():
+        if (
+            param not in DB.raw_names
+        ):  # n1_set is raw-only; derived alarms are covered in integration
+            continue
         (lim,) = [c for c in entry.checks if isinstance(c, LimitCheck)]
         for bound in (lim.red_low, lim.yellow_low, lim.yellow_high, lim.red_high):
             if bound is not None:

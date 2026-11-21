@@ -44,8 +44,11 @@ def telemetry(db: str, v: str) -> list[dict[str, object]]:
 
 
 def alarms(db: str, v: str) -> list[tuple[object, ...]]:
-    q = "select kind, level, check_kind, value from alarm_events where vehicle=%s order by id"
-    return [tuple(r.values()) for r in rows(q, v, db=db)]
+    q = (  # the parameter's own alarm: its derived power_w alarms too
+        "select kind, level, check_kind, value from alarm_events"
+        " where vehicle=%s and param=%s order by id"
+    )
+    return [tuple(r.values()) for r in rows(q, v, P, db=db)]
 
 
 async def test_raw_and_eng_stored_limits_on_eng_and_out_of_table_red(tmp_path: Path) -> None:

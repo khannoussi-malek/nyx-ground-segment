@@ -8,9 +8,14 @@ MISSION_DIR = Path(__file__).resolve().parents[2] / "mission"
 
 
 def files(**over: bytes) -> dict[str, bytes]:
+    """The shipped files without the derived parameters (variants add their own, D-EXT-05)."""
     base = {
         n: (MISSION_DIR / f"{n}.yaml").read_bytes() for n in ("limits", "commands", "parameters")
     }
+    base["parameters"] = base["parameters"].split(b"derived:")[0]
+    base["limits"] = b"".join(
+        x for x in base["limits"].splitlines(keepends=True) if not x.startswith(b"  power_w:")
+    )
     return {**base, **over}
 
 

@@ -23,6 +23,7 @@ from gs.simulator.frames import make_frame
 from tests.support.alarms import Frame, run_engine
 from tests.support.env import REPO, vid
 from tests.support.gen import stale_files
+from tests.support.missionfiles import add_raw_parameter
 from tests.support.pg import app_dsn, owner_dsn, throwaway_db
 
 PARAM = "cabin_humidity_pct"
@@ -63,9 +64,8 @@ async def test_add_parameter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
     before = tree_digest(REPO, "src", "interfaces")
     m = tmp_path / "mission"
     shutil.copytree(REPO / "mission", m)
-    append(
-        m / "parameters.yaml",
-        f"  {PARAM}: {{unit: '%', type: float, description: Cabin relative humidity}}\n",
+    add_raw_parameter(
+        m, f"  {PARAM}: {{unit: '%', type: float, description: Cabin relative humidity}}"
     )
     append(
         m / "limits.yaml",
@@ -73,7 +73,7 @@ async def test_add_parameter(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) ->
         "yellow_high: 60.0, red_high: 70.0, hysteresis_pct: 5}]}\n",
     )
     db = load_dir(m)
-    assert db.param_names[-1] == PARAM
+    assert db.raw_names[-1] == PARAM
     vehicle, now = vid(), datetime.now(UTC)
     with throwaway_db() as name:
         monkeypatch.setenv("DATABASE_URL", owner_dsn(name))

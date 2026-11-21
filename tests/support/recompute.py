@@ -33,7 +33,8 @@ def _frame(row: dict[str, Any], mdb: MissionDb) -> FrameHeader:
     existed, where `_raw` is NULL)."""
     cmd = row["last_cmd_id"]
     raws = {n: row[f"{n}_raw"] for n in mdb.calibrations if row.get(f"{n}_raw") is not None}
-    return FrameHeader.model_validate(row | raws | {"last_cmd_id": UUID(cmd) if cmd else None})
+    sent = {k: v for k, v in row.items() if k not in mdb.derived}  # derived are recomputed
+    return FrameHeader.model_validate(sent | raws | {"last_cmd_id": UUID(cmd) if cmd else None})
 
 
 def recompute_keys(

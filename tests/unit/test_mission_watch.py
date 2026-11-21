@@ -56,8 +56,12 @@ def test_hazardous_downgrade_is_not_an_ingest_rule(tmp_path: Path) -> None:  # G
 
 def test_unmigrated_param_rejected(tmp_path: Path) -> None:
     m = mission_copy(tmp_path)
-    with (m / "parameters.yaml").open("a") as f:
-        f.write("  cabin_humidity_pct: {unit: pct, type: float}\n")
+    pf = m / "parameters.yaml"
+    pf.write_text(
+        pf.read_text().replace(
+            "derived:", "  cabin_humidity_pct: {unit: pct, type: float}\nderived:"
+        )
+    )
     cols = load_dir(MISSION_DIR).param_names
     with pytest.raises(
         MissionDbError, match="cabin_humidity_pct has no telemetry column: run make migrate"

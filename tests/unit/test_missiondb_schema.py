@@ -36,7 +36,10 @@ def rejected(file: str, **over: bytes) -> MissionDbError:
 
 def test_shipped_set_loads() -> None:
     db = load_dir(MISSION_DIR)
-    assert db.param_names == PARAMS and set(db.commands) == {"isolate_valve", "vent_cabin"}
+    assert db.param_names == (*PARAMS, "power_w") and set(db.commands) == {
+        "isolate_valve",
+        "vent_cabin",
+    }
     vent = db.commands["vent_cabin"]
     duration = vent.args["duration_s"]
     assert vent.hazardous and isinstance(duration, NumArg) and duration.max == 10

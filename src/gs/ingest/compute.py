@@ -1,5 +1,5 @@
 """Raw frame values -> engineering values (D-EXT-04): calibrate, pass uncalibrated through,
-derived parameters are NULL until D-EXT-05 lands. Pure; never raises into the frame path."""
+then `expr` derived parameters (D-EXT-05). Pure; never raises into the frame path."""
 
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -13,7 +13,9 @@ from gs.common.missiondb import MissionDb
 class Computed:
     values: Mapping[str, float | None]  # engineering, every param_names entry
     raws: Mapping[str, float | None]  # the frame's values, every raw name
-    nulls: tuple[tuple[str, str], ...]  # (param, reason): out_of_range | nonfinite | error
+    nulls: tuple[
+        tuple[str, str], ...
+    ]  # (param, reason): calibration or derived (missing, div0, ...)
 
 
 def _calibrated(table: calibration.Table, raw: float) -> tuple[float | None, str | None]:
@@ -37,5 +39,10 @@ def compute(mdb: MissionDb, frame: FrameHeader) -> Computed:
         values[name], why = _calibrated(table, raw)
         if why:
             nulls.append((name, why))
-    values.update(dict.fromkeys(mdb.derived_names))  # ponytail: derived evaluate in Task 6
+    for name, spec in mdb.derived.items():  # file order: a derived may use an earlier one
+        values[name] = None  # rate_of derived: NULL until its task lands
+        if spec.expr:
+            values[name], why = spec.expr.eval(values)
+            if why:  # NULL input, never the last value (R23 M4)
+                nulls.append((name, why))
     return Computed(values, raws, tuple(nulls))

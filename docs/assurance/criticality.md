@@ -22,10 +22,13 @@ of the test article, not of crew.
     implementation or an operational procedure), or in a category II function with none.
   - Category C: the same pattern one level down.
 - Reasoning: loss of the test article is a critical or major consequence, so the severity is II or III. The
-  compensating provisions are the test conductor's procedure (the two-step hazardous command, a typed vehicle ID,
-  a reason, an audit row) and the bench's own interlocks, which Nyx does not control.
+  compensating provisions in the Table D-1 sense are outside the software: the test conductor's written
+  procedure and the bench's own interlocks, which Nyx does not control. **Assumption, not confirmed:** no bench
+  ICD is on file (R26: not frozen), so the owner must confirm that such a procedure and interlocks exist. Nyx's own
+  two-step dialog, typed ID, reason and audit row are software mitigations (section 5) and do not count here.
 - **Candidate: C.** It becomes B if the system hazard analysis rates the vent as category II with no
-  compensating provision. The owner and the customer's safety team decide.
+  compensating provision. If no external provision is confirmed, the candidate becomes **category B**, which brings
+  MC/DC and the 100 % coverage slice (R25 F2(2-3)). The owner and the customer's safety team decide.
 - Coverage consequence (ECSS-E-ST-40C §5.8.3.5b, p. 64): for C, statement, decision and MC/DC coverage are
   "agreed with the customer" (AM). Proposed value (A-R25-3): 80 % overall, 100 % on the safety-critical slice
   of section 4.
@@ -48,17 +51,17 @@ MC/DC) apply. **To be confirmed by the owner / system hazard analysis.** Hazard 
 | `gs.commanding.args` (argument check) | H-1: a wrong or out-of-range argument reaches a hazardous command | Yes | It is the first gate before a command is written to `tc:`. |
 | `gs.commanding.decide` and `outcome` | H-4: a command shown as done when it only started, or as failed when it ran | Yes | They decide the state and outcome text the operator acts on. |
 | `gs.commanding.tracker` | H-4: timeouts and late evidence missed | Yes | It applies the 5 s and 15 s windows and writes the audit rows. |
-| `gs.api.commands` (confirm token, interlock, audit) | H-1: a hazardous command sent without the second step, twice, or by a replayed token | Yes | It is the only ground enforcement of the two-step rule (D-CMD-06) and the double-command interlock (D-CMD-07). |
+| `gs.api.commands` (confirm token, interlock, audit) | H-1, H-9: a hazardous command sent without the second step, twice, or by a replayed token | Yes | It is the only ground enforcement of the two-step rule (D-CMD-06) and the double-command interlock (D-CMD-07). |
 | `gs.alarms` (engine and checks) | H-2: a RED condition is missed or late | Yes | An unraised RED leaves the test conductor unaware of a limit violation. |
-| `gs.ingest` (sequence tracker, stale and frozen detection, ownership) | H-3, H-5: a false LOS, a hidden gap, lost or duplicated frames | No (candidate) | It feeds the alarm engine, but a fault shows as GAP, STALE or LOS rather than silently. Revisit if the hazard analysis relies on it. |
+| `gs.ingest` (sequence tracker, stale and frozen detection, ownership) | H-3, H-5, H-10: a false LOS, a hidden gap, lost or duplicated frames | No (candidate) | It feeds the alarm engine, but a fault shows as GAP, STALE or LOS rather than silently. Revisit if the hazard analysis relies on it. |
 | Limits and commands loading (`gs.common.missiondb`) | H-6: a wrong limit set or command definition applied | No (candidate) | Validated at load and hashed onto every alarm. Revisit with the alarm engine. |
-| `gs.archiver`, `gs.replay`, `gs.api` (reports, export, UI feeds) | H-7: a corrupt archive replayed as truth | No | They do not act on the vehicle and corruption is detected (D-ARC-03, D-ARC-11). |
+| `gs.archiver`, `gs.replay`, `gs.api` (reports, export, UI feeds) | H-7, H-8, H-11: a corrupt archive replayed as truth | No | They do not act on the vehicle and corruption is detected (D-ARC-03, D-ARC-11). |
 | `gs.simulator` | None on the vehicle | No | A test double, never connected to a real vehicle. |
 | UI (`ui/`) | H-4 (display of outcome), H-3 (staleness colour) | No (candidate) | It only shows what the safety-critical parts decided. Display tests are listed in hazards.md. |
 
-Everything not named is not safety-critical under this proposal.
+Components not named here were not assessed; the owner decides whether they are safety-critical.
 
-## 5. Compensating provisions already built
+## 5. Software controls inside Nyx (not compensating provisions in the Table D-1 sense)
 
 - Two-step hazardous command with a single-use, user-bound, argument-bound server token and a reason (D-CMD-06).
 - Double-command interlock (D-CMD-07) and append-only audit log (D-CMD-08).
@@ -69,4 +72,6 @@ Everything not named is not safety-critical under this proposal.
 
 1. Confirm ECSS category C (or B) and NASA class C.
 2. Confirm the safety-critical list in section 4, or let the system hazard analysis decide it.
-3. Agree the coverage value for category C with the customer, if there is one.
+3. Confirm with the bench ICD (or the test conductor) that a written procedure and bench interlocks exist outside Nyx;
+   without them the category is B.
+4. Agree the coverage value for category C with the customer, if there is one.

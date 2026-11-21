@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 from scripts.design_trace import REPO, cited, defined, render, uncited
+from tests.meta.test_requirements_trace import REF, Ref, missing
 
 DESIGN = REPO / "docs/design.md"
 INDEX = REPO / "docs/assurance/design-trace.md"
@@ -72,9 +73,6 @@ def test_every_hazard_cites_a_real_test() -> None:
     assert len(sections) >= 11
     for sec in sections:
         title = sec.splitlines()[0]
-        refs = re.findall(r"`((?:tests|ui|e2e)/[^`:\s]+)(?:::([^`]+))?`", sec)
+        refs = [Ref(r["path"], r["name"]) for r in REF.finditer(sec) if r["path"]]
         assert refs, f"{title}: no test cited"
-        for path, name in refs:
-            f = REPO / path
-            assert f.is_file(), f"{title}: {path} does not exist"
-            assert not name or name in f.read_text(), f"{title}: {name!r} not in {path}"
+        assert not (bad := missing(refs)), f"{title}: {bad}"

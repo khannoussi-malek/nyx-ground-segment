@@ -41,8 +41,8 @@ Severity is the effect on the test article or the test, not on crew. It is a can
 - Effect: the test conductor does not react to a limit violation.
 - Controls built: red needs no persistence count of its own (D-ALM-03); rate-of-change check (D-ALM-05, ALM-04);
   only RED alerts audibly and once (D-ALM-09, D-ALM-08, UI-05); engine state survives a worker kill (D-ALM-11,
-  ING-07); latency measured, p95 under 300 ms (ALM-05); every classification is a pure, property-tested function
-  (D-ALM-10, EXT-03).
+  ING-07); latency measured, p95 under 300 ms (ALM-05); every classification is a pure function (D-ALM-10).
+  Planned, not built here: EXT-03 property tests P3/P4 (branch ext03-property-chaos, not merged).
 - Tests: `tests/unit/test_alarm_lifecycle.py`, `tests/unit/test_checks_roc.py::test_leak_alarms_before_yellow`,
   `tests/integration/test_limits_reload.py`.
 - Gaps: none known to the author, but not analysed. The 300 ms figure is a requirement measured on the reference
@@ -115,8 +115,8 @@ Severity is the effect on the test article or the test, not on crew. It is a can
 - Controls built: REPLAY is purple and used for nothing else (D-UI-07); the replay page has a purple frame and a
   REPLAY banner that cannot be dismissed (D-UI-16); replay accepts no ACK and never sounds (D-REP-03); the live
   alarm list, beep and banners keep running beside it (D-REP-04); STALE and LOS run on replay time (D-REP-06).
-- Tests: `ui/src/components/replayPage.test.tsx::banner shows the live counter and cannot be dismissed`,
-  `ui/src/components/replayPage.test.tsx::replay alarms show without an ACK button`, `e2e/replay.spec.ts`.
+- Tests: `ui/src/components/replayPage.test.tsx` ("banner shows the live counter and cannot be dismissed"),
+  `ui/src/components/replayPage.test.tsx` ("replay alarms show without an ACK button"), `e2e/replay.spec.ts`.
 - Gaps: nothing stops a command from the console while the replay page is open (no inhibit); the export file
   (D-EXT-10) carries no banner of its own beyond its file name; the colour and banner were judged by inspection
   (INSP-01), not by a user test.
@@ -129,8 +129,8 @@ Severity is the effect on the test article or the test, not on crew. It is a can
   target (P-pf26); the vehicle is part of the token's args hash (D-CMD-06); the lock is per vehicle and
   command (D-CMD-07); for a hazardous command the dialog repeats the vehicle and the operator types its ID (D-UI-20,
   browser only).
-- Tests: `ui/src/components/commands.test.tsx::the vehicle is an explicit choice`, `e2e/hazardous-confirm.spec.ts`,
-  `tests/integration/test_commands_api.py::test_hazardous_lock_ignores_args`.
+- Tests: `ui/src/components/commands.test.tsx` ("the vehicle is an explicit choice"), `e2e/hazardous-confirm.spec.ts`,
+  `tests/integration/test_commands_api.py::test_hazardous_lock_ignores_args` (token args binding only; the per-vehicle lock itself has no two-vehicle test).
 - Gaps: a valid token on the wrong vehicle, picked by the operator, still goes through: the server cannot know what
   was meant (the typed ID is not checked server-side). No command authority: two operators can command one vehicle
   seconds apart (R24 F6, owner decision).
@@ -168,7 +168,7 @@ Severity is the effect on the test article or the test, not on crew. It is a can
 | Hazard | Requirements that control it |
 | --- | --- |
 | H-1 | CMD-03, CMD-05, CMD-04, CMD-01 |
-| H-2 | ALM-01, ALM-03, ALM-04, ALM-05, ALM-06, UI-05, EXT-03 |
+| H-2 | ALM-01, ALM-03, ALM-04, ALM-05, ALM-06, UI-05, EXT-03 (planned, no property test on this branch) |
 | H-3 | UI-02, ING-04, ING-05, UI-07 |
 | H-4 | CMD-01, CMD-02, CMD-04, UI-06 |
 | H-5 | ING-01, ING-02, ING-03, ING-04, ING-07, ING-08, ENG-02 |

@@ -15,7 +15,7 @@ export function paramMeta(m: MissionDb | null | undefined, id: string): Meta | u
 export const paramIds = (m: MissionDb): string[] => [...Object.keys(m.parameters), ...Object.keys(m.derived)];
 
 /** One row per value in the frame: mission-db order and metadata first, unknown ids after (sorted). */
-export function paramViews(values: Readonly<Record<string, number | null>>, m: MissionDb | null): ParamView[] {
+export function paramViews(values: Readonly<Record<string, number | null>>, m: MissionDb | null, mode?: string | null): ParamView[] {
   if (!m) return sortedEntries(values).map(([id, value]) => ({ id, value }));
   // own keys only: a legal id like "constructor" must not resolve through Object.prototype
   const own = Object.hasOwn;
@@ -24,7 +24,9 @@ export function paramViews(values: Readonly<Record<string, number | null>>, m: M
   return [
     ...known.map((id): ParamView => {
       const meta = paramMeta(m, id)!;
-      const checks = own(m.limits, id) ? m.limits[id].checks : [];
+      const entry = own(m.limits, id) ? m.limits[id] : undefined;
+      // the limits of the vehicle's current mode set, else the default ones (a mode with its own set is judged by it)
+      const checks = (mode != null && entry && own(entry.checks_by_mode ?? {}, mode) ? entry.checks_by_mode[mode] : entry?.checks) ?? [];
       const limits: Limits | undefined = checks.find((c) => c.type === "limit");
       return {
         id,

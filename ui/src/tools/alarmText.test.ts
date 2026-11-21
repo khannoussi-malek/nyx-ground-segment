@@ -40,6 +40,13 @@ test("without the mission db, a unit or a matching bound the text still says wha
   expect(alarmText(roc({ level: "RED_RISING", severity: "RED" }), MDB)).toBe("RED · RATE RISING −0.40 kPa/s (limit 0.15)"); // falls back to the only roc check
 });
 
+test("a calibration_range alarm says out of calibration range with the raw value and range, never the raw count in engineering units", () => {
+  const m = { ...MDB, parameters: { ...MDB.parameters, cabin_pressure_kpa: { unit: "kPa", type: "float", description: "", calibration: { table: [[10, 90], [90, 110]] } } } } as unknown as MissionDb;
+  const a = alarmView({ level: "RED_LOW", severity: "RED", trigger_check: "calibration_range", value: 2 });
+  expect(alarmText(a, m)).toBe("RED · OUT OF CALIBRATION RANGE LOW · raw 2.00 (range 10 to 90)");
+  expect(alarmText({ ...a, level: "RED_HIGH · SAFE limits", value: 95 }, m)).toBe("RED · OUT OF CALIBRATION RANGE HIGH · raw 95.00 (range 10 to 90) · SAFE limits");
+});
+
 test("hash prefixes are 8 hex digits", () =>
   expect(hashText(alarmView({ limits_sha256: "3f9a1c2e77aa", set_sha256: "5d07b8a1ffee" }))).toBe("limits 3f9a1c2e · set 5d07b8a1"));
 

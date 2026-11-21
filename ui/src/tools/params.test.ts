@@ -10,14 +10,15 @@ const mission = {
   },
   derived: { power_w: { unit: "W", description: "Bus power" } },
   limits: {
-    power_w: { checks: [{ type: "limit", yellow_high: 250, red_high: 300 }] },
+    power_w: { checks: [{ type: "limit", yellow_high: 250, red_high: 300 }], checks_by_mode: {} },
     cabin_pressure_kpa: {
       checks: [
         { type: "roc", limit_per_s: 0.15, window_s: 1, direction: "falling", severity: "YELLOW" },
         { type: "limit", red_low: 95, yellow_low: 98, yellow_high: 104, red_high: 106 },
       ],
+      checks_by_mode: { SAFE: [{ type: "limit", red_low: 90, yellow_low: 95, yellow_high: 104, red_high: 108 }] },
     },
-    bus_current_a: { checks: [{ type: "roc", limit_per_s: 1, window_s: 1, direction: "rising", severity: "YELLOW" }] },
+    bus_current_a: { checks: [{ type: "roc", limit_per_s: 1, window_s: 1, direction: "rising", severity: "YELLOW" }], checks_by_mode: {} },
   },
 } as unknown as MissionDb;
 
@@ -65,4 +66,11 @@ test("a derived parameter shows like a raw one: unit, description, gauge, after 
   expect(v.map((p) => p.id)).toEqual(["bus_current_a", "power_w", "other"]);
   expect(v[1]).toMatchObject({ unit: "W", label: "Bus power", value: 120 });
   expect(v[1].limits).toMatchObject({ yellow_high: 250, red_high: 300 });
+});
+
+test("the gauge draws the limits of the vehicle's mode set: SAFE bounds in SAFE, the default ones in TEST", () => {
+  const [safe] = paramViews({ cabin_pressure_kpa: 93 }, mission, "SAFE");
+  expect(safe.limits).toMatchObject({ red_low: 90, yellow_low: 95, red_high: 108 });
+  expect(paramViews({ cabin_pressure_kpa: 93 }, mission, "TEST")[0].limits).toMatchObject({ red_low: 95, red_high: 106 });
+  expect(paramViews({ cabin_pressure_kpa: 93 }, mission)[0].limits).toMatchObject({ red_low: 95 });
 });

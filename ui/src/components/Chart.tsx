@@ -345,7 +345,7 @@ export function ChartPanel({ store, mission, value, onChange }: {
 }) {
   const vehicles = useSyncExternalStore(store.subscribe, store.vehicles, store.vehicles);
   const vehicle = vehicles.includes(value.vehicle) ? value.vehicle : (vehicles[0] ?? "");
-  const params = paramViews(store.vehicle(vehicle)?.values ?? {}, mission);
+  const params = paramViews(store.vehicle(vehicle)?.values ?? {}, mission, store.vehicle(vehicle)?.mode);
   const param = params.some((x) => x.id === value.param) ? value.param : (params[0]?.id ?? "");
   const check = mission && Object.hasOwn(mission.limits, param) ? mission.limits[param].checks.find((c) => c.type === "limit") : undefined;
   const unit = paramMeta(mission, param)?.unit;

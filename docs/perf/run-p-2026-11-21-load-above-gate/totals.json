@@ -1,0 +1,22 @@
+{
+  "cpu_pct": {
+    "ingest-1": {
+      "mean": 24.865766666666666,
+      "max": 30.55
+    },
+    "ingest-2": {
+      "mean": 24.822599999999998,
+      "max": 29.78
+    }
+  },
+  "redis_used_memory": {
+    "before": 77215824,
+    "after": 104763096,
+    "per_vehicle_hour": 165283632.0
+  },
+  "ingest_ms": {
+    "p50": 8.792,
+    "p95": 18.033
+  },
+  "frames_stored": 60005
+}

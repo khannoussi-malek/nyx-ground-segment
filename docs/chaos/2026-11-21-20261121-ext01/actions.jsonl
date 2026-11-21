@@ -1,0 +1,73 @@
+{"time": "2026-11-21T12:30:30.729091+00:00", "fault": "duplicate", "vehicle": "NYX-TA1", "params": {"count": 2}, "status": 204}
+{"time": "2026-11-21T12:31:05.142930+00:00", "fault": "pause", "vehicle": "NYX-TA2", "params": {"duration_s": 6}, "status": 204}
+{"time": "2026-11-21T12:31:36.181745+00:00", "fault": "hold_exec", "vehicle": "NYX-TA2", "params": {"duration_s": 16}, "status": 204}
+{"time": "2026-11-21T12:31:59.060279+00:00", "action": "api_restart", "target": "", "duration_s": 0.0, "start": "2026-11-21 12:31:56.606366+00:00", "end": "2026-11-21 12:31:57.787011+00:00", "recovered_s": 1.2732215420037392}
+{"time": "2026-11-21T12:32:10.779358+00:00", "fault": "overheat", "vehicle": "NYX-TA2", "params": {"duration_s": 34.8}, "status": 204}
+{"time": "2026-11-21T12:32:35.295370+00:00", "fault": "malformed", "vehicle": "NYX-TA2", "params": {"kind": "json"}, "status": 204}
+{"time": "2026-11-21T12:33:01.698875+00:00", "fault": "seq_jump", "vehicle": "NYX-TA1", "params": {}, "status": 204}
+{"time": "2026-11-21T12:33:26.427243+00:00", "fault": "leak", "vehicle": "NYX-TA1", "params": {"duration_s": 40.7}, "status": 204}
+{"time": "2026-11-21T12:33:49.932977+00:00", "fault": "dropout", "vehicle": "NYX-TA2", "params": {"duration_s": 7.1}, "status": 204}
+{"time": "2026-11-21T12:34:10.133980+00:00", "action": "partition_redis", "target": "ingest-1", "duration_s": 20.8, "start": "2026-11-21 12:33:46.278158+00:00", "end": "2026-11-21 12:34:07.591514+00:00", "recovered_s": 2.542380625003716}
+{"time": "2026-11-21T12:34:13.936266+00:00", "fault": "freeze", "vehicle": "NYX-TA1", "params": {"duration_s": 8.3}, "status": 204}
+{"time": "2026-11-21T12:34:47.997276+00:00", "fault": "overheat", "vehicle": "NYX-TA2", "params": {"duration_s": 35.5}, "status": 204}
+{"time": "2026-11-21T12:35:15.825767+00:00", "fault": "dropout", "vehicle": "NYX-TA2", "params": {"duration_s": 6.1}, "status": 204}
+{"time": "2026-11-21T12:35:39.691956+00:00", "fault": "pause", "vehicle": "NYX-TA2", "params": {"duration_s": 6}, "status": 204}
+{"time": "2026-11-21T12:36:02.176209+00:00", "fault": "duplicate", "vehicle": "NYX-TA2", "params": {"count": 3}, "status": 204}
+{"time": "2026-11-21T12:36:02.743763+00:00", "action": "partition_db", "target": "ingest-1", "duration_s": 25.1, "start": "2026-11-21 12:35:33.585998+00:00", "end": "2026-11-21 12:35:59.148985+00:00", "recovered_s": 3.594654874999833}
+{"time": "2026-11-21T12:36:36.960258+00:00", "fault": "seq_jump", "vehicle": "NYX-TA1", "params": {}, "status": 204}
+{"time": "2026-11-21T12:37:02.552340+00:00", "fault": "freeze", "vehicle": "NYX-TA1", "params": {"duration_s": 3.9}, "status": 204}
+{"time": "2026-11-21T12:37:33.875303+00:00", "action": "broker_restart", "target": "", "duration_s": 10.0, "start": "2026-11-21 12:37:20.098251+00:00", "end": "2026-11-21 12:37:31.475937+00:00", "recovered_s": 2.3992877499986207}
+{"time": "2026-11-21T12:37:36.765622+00:00", "fault": "hold_exec", "vehicle": "NYX-TA1", "params": {"duration_s": 16}, "status": 204}
+{"time": "2026-11-21T12:38:12.962852+00:00", "fault": "leak", "vehicle": "NYX-TA1", "params": {"duration_s": 42.3}, "status": 204}
+{"time": "2026-11-21T12:38:53.033633+00:00", "fault": "malformed", "vehicle": "NYX-TA1", "params": {"kind": "schema"}, "status": 204}
+{"time": "2026-11-21T12:39:04.231827+00:00", "action": "sim_restart", "target": "", "duration_s": 0.0, "start": "2026-11-21 12:39:00.326395+00:00", "end": "2026-11-21 12:39:01.852005+00:00", "recovered_s": 2.37967991700134}
+{"time": "2026-11-21T12:39:14.736489+00:00", "fault": "hold_exec", "vehicle": "NYX-TA2", "params": {"duration_s": 16}, "status": 204}
+{"time": "2026-11-21T12:39:51.098887+00:00", "fault": "dropout", "vehicle": "NYX-TA2", "params": {"duration_s": 6.7}, "status": 204}
+{"time": "2026-11-21T12:40:24.529118+00:00", "fault": "freeze", "vehicle": "NYX-TA1", "params": {"duration_s": 5.6}, "status": 204}
+{"time": "2026-11-21T12:41:00.363525+00:00", "fault": "malformed", "vehicle": "NYX-TA1", "params": {"kind": "json"}, "status": 204}
+{"time": "2026-11-21T12:41:20.512334+00:00", "action": "worker_hang", "target": "ingest-2", "duration_s": 35.0, "start": "2026-11-21 12:40:42.461437+00:00", "end": "2026-11-21 12:41:18.039151+00:00", "recovered_s": 2.473036374998628}
+{"time": "2026-11-21T12:41:39.675377+00:00", "fault": "leak", "vehicle": "NYX-TA1", "params": {"duration_s": 34.0}, "status": 204}
+{"time": "2026-11-21T12:42:10.721162+00:00", "fault": "seq_jump", "vehicle": "NYX-TA1", "params": {}, "status": 204}
+{"time": "2026-11-21T12:42:36.368100+00:00", "fault": "overheat", "vehicle": "NYX-TA1", "params": {"duration_s": 37.3}, "status": 204}
+{"time": "2026-11-21T12:42:48.837417+00:00", "action": "worker_kill", "target": "ingest-2", "duration_s": 28.3, "start": "2026-11-21 12:42:16.123213+00:00", "end": "2026-11-21 12:42:46.440359+00:00", "recovered_s": 2.3969991660051164}
+{"time": "2026-11-21T12:43:04.655776+00:00", "fault": "duplicate", "vehicle": "NYX-TA2", "params": {"count": 1}, "status": 204}
+{"time": "2026-11-21T12:43:25.141899+00:00", "fault": "pause", "vehicle": "NYX-TA2", "params": {"duration_s": 6}, "status": 204}
+{"time": "2026-11-21T12:43:58.598141+00:00", "fault": "overheat", "vehicle": "NYX-TA2", "params": {"duration_s": 41.7}, "status": 204}
+{"time": "2026-11-21T12:44:33.166804+00:00", "fault": "pause", "vehicle": "NYX-TA1", "params": {"duration_s": 6}, "status": 204}
+{"time": "2026-11-21T12:44:34.559362+00:00", "action": "pg_readonly", "target": "", "duration_s": 10.0, "start": "2026-11-21 12:44:16.371280+00:00", "end": "2026-11-21 12:44:26.401456+00:00", "recovered_s": 8.157840125000803}
+{"time": "2026-11-21T12:45:01.679348+00:00", "fault": "malformed", "vehicle": "NYX-TA2", "params": {"kind": "schema"}, "status": 204}
+{"time": "2026-11-21T12:45:29.132340+00:00", "fault": "leak", "vehicle": "NYX-TA2", "params": {"duration_s": 44.0}, "status": 204}
+{"time": "2026-11-21T12:46:03.249118+00:00", "action": "sim_restart", "target": "", "duration_s": 0.0, "start": "2026-11-21 12:45:59.533209+00:00", "end": "2026-11-21 12:46:00.866523+00:00", "recovered_s": 2.3825147500028834}
+{"time": "2026-11-21T12:46:06.812705+00:00", "fault": "seq_jump", "vehicle": "NYX-TA2", "params": {}, "status": 204}
+{"time": "2026-11-21T12:46:42.534278+00:00", "fault": "hold_exec", "vehicle": "NYX-TA1", "params": {"duration_s": 16}, "status": 204}
+{"time": "2026-11-21T12:47:21.151644+00:00", "fault": "duplicate", "vehicle": "NYX-TA1", "params": {"count": 1}, "status": 204}
+{"time": "2026-11-21T12:47:56.565832+00:00", "fault": "freeze", "vehicle": "NYX-TA1", "params": {"duration_s": 5.9}, "status": 204}
+{"time": "2026-11-21T12:48:14.882440+00:00", "action": "worker_kill", "target": "ingest-1", "duration_s": 24.5, "start": "2026-11-21 12:47:45.939810+00:00", "end": "2026-11-21 12:48:12.416650+00:00", "recovered_s": 2.465736416001164}
+{"time": "2026-11-21T12:48:34.141507+00:00", "fault": "dropout", "vehicle": "NYX-TA1", "params": {"duration_s": 5.2}, "status": 204}
+{"time": "2026-11-21T12:49:04.484400+00:00", "fault": "hold_exec", "vehicle": "NYX-TA1", "params": {"duration_s": 16}, "status": 204}
+{"time": "2026-11-21T12:49:29.828691+00:00", "action": "broker_restart", "target": "", "duration_s": 10.0, "start": "2026-11-21 12:49:16.101838+00:00", "end": "2026-11-21 12:49:27.419171+00:00", "recovered_s": 2.4094599170057336}
+{"time": "2026-11-21T12:49:37.270068+00:00", "fault": "freeze", "vehicle": "NYX-TA2", "params": {"duration_s": 8.4}, "status": 204}
+{"time": "2026-11-21T12:50:06.408228+00:00", "fault": "overheat", "vehicle": "NYX-TA1", "params": {"duration_s": 36.4}, "status": 204}
+{"time": "2026-11-21T12:50:41.462903+00:00", "fault": "dropout", "vehicle": "NYX-TA2", "params": {"duration_s": 3.7}, "status": 204}
+{"time": "2026-11-21T12:51:20.655588+00:00", "action": "pg_readonly", "target": "", "duration_s": 10.0, "start": "2026-11-21 12:51:02.415123+00:00", "end": "2026-11-21 12:51:12.440330+00:00", "recovered_s": 8.215147667004203}
+{"time": "2026-11-21T12:51:21.266589+00:00", "fault": "malformed", "vehicle": "NYX-TA1", "params": {"kind": "schema"}, "status": 204}
+{"time": "2026-11-21T12:51:54.766682+00:00", "fault": "pause", "vehicle": "NYX-TA1", "params": {"duration_s": 6}, "status": 204}
+{"time": "2026-11-21T12:52:24.089481+00:00", "fault": "seq_jump", "vehicle": "NYX-TA1", "params": {}, "status": 204}
+{"time": "2026-11-21T12:53:03.717933+00:00", "fault": "duplicate", "vehicle": "NYX-TA1", "params": {"count": 3}, "status": 204}
+{"time": "2026-11-21T12:53:29.012853+00:00", "action": "partition_redis", "target": "ingest-1", "duration_s": 23.3, "start": "2026-11-21 12:53:00.328190+00:00", "end": "2026-11-21 12:53:24.187831+00:00", "recovered_s": 4.824923666994437}
+{"time": "2026-11-21T12:53:30.947074+00:00", "fault": "leak", "vehicle": "NYX-TA1", "params": {"duration_s": 42.0}, "status": 204}
+{"time": "2026-11-21T12:53:54.274966+00:00", "fault": "pause", "vehicle": "NYX-TA2", "params": {"duration_s": 6}, "status": 204}
+{"time": "2026-11-21T12:54:15.268216+00:00", "fault": "malformed", "vehicle": "NYX-TA2", "params": {"kind": "schema"}, "status": 204}
+{"time": "2026-11-21T12:54:39.556850+00:00", "fault": "seq_jump", "vehicle": "NYX-TA2", "params": {}, "status": 204}
+{"time": "2026-11-21T12:55:03.029521+00:00", "fault": "overheat", "vehicle": "NYX-TA1", "params": {"duration_s": 40.5}, "status": 204}
+{"time": "2026-11-21T12:55:27.462561+00:00", "action": "worker_hang", "target": "ingest-1", "duration_s": 35.0, "start": "2026-11-21 12:54:49.449281+00:00", "end": "2026-11-21 12:55:25.024409+00:00", "recovered_s": 2.438070333999349}
+{"time": "2026-11-21T12:55:43.016369+00:00", "fault": "duplicate", "vehicle": "NYX-TA2", "params": {"count": 2}, "status": 204}
+{"time": "2026-11-21T12:56:07.869598+00:00", "fault": "dropout", "vehicle": "NYX-TA2", "params": {"duration_s": 2.6}, "status": 204}
+{"time": "2026-11-21T12:56:37.259618+00:00", "action": "api_restart", "target": "", "duration_s": 0.0, "start": "2026-11-21 12:56:34.747154+00:00", "end": "2026-11-21 12:56:35.959681+00:00", "recovered_s": 1.299870999995619}
+{"time": "2026-11-21T12:56:41.375965+00:00", "fault": "freeze", "vehicle": "NYX-TA1", "params": {"duration_s": 6.1}, "status": 204}
+{"time": "2026-11-21T12:57:12.796308+00:00", "fault": "leak", "vehicle": "NYX-TA1", "params": {"duration_s": 40.8}, "status": 204}
+{"time": "2026-11-21T12:57:46.921747+00:00", "fault": "hold_exec", "vehicle": "NYX-TA1", "params": {"duration_s": 16}, "status": 204}
+{"time": "2026-11-21T12:58:18.523355+00:00", "fault": "seq_jump", "vehicle": "NYX-TA1", "params": {}, "status": 204}
+{"time": "2026-11-21T12:58:53.879107+00:00", "fault": "freeze", "vehicle": "NYX-TA2", "params": {"duration_s": 9.4}, "status": 204}
+{"time": "2026-11-21T12:58:56.114812+00:00", "action": "partition_db", "target": "ingest-2", "duration_s": 24.8, "start": "2026-11-21 12:58:25.981447+00:00", "end": "2026-11-21 12:58:51.323597+00:00", "recovered_s": 4.791112582999631}
+{"time": "2026-11-21T12:59:16.796321+00:00", "fault": "duplicate", "vehicle": "NYX-TA1", "params": {"count": 1}, "status": 204}

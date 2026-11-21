@@ -36,8 +36,8 @@ async def start_session(body: SessionStart, request: Request, user: User) -> Ses
         try:
             async with connect(request) as conn, conn.transaction():
                 cur = await conn.execute(
-                    "INSERT INTO test_session (vehicle, name, conductor) VALUES (%s, %s, %s)"
-                    f" RETURNING {_COLS}",  # noqa: S608
+                    "INSERT INTO test_session (vehicle, name, conductor) VALUES (%s, %s, %s)"  # noqa: S608 identifier from a module constant, values bound
+                    f" RETURNING {_COLS}",
                     (body.vehicle, body.name, user),
                 )
                 row = await cur.fetchone()
@@ -62,8 +62,8 @@ async def stop_session(session_id: int, request: Request, user: User) -> Session
     with db_503(request):
         async with connect(request) as conn, conn.transaction():
             cur = await conn.execute(
-                "UPDATE test_session SET ended_at = clock_timestamp(), ended_by = %s"
-                f" WHERE id = %s AND ended_at IS NULL RETURNING {_COLS}",  # noqa: S608
+                "UPDATE test_session SET ended_at = clock_timestamp(), ended_by = %s"  # noqa: S608 identifier from a module constant, values bound
+                f" WHERE id = %s AND ended_at IS NULL RETURNING {_COLS}",
                 (user, session_id),
             )
             row = await cur.fetchone()
@@ -83,7 +83,7 @@ async def list_sessions(request: Request, user: User) -> list[SessionView]:
     with db_503(request):
         async with connect(request) as conn:
             cur = await conn.execute(
-                f"SELECT {_COLS} FROM test_session ORDER BY started_at DESC, id DESC"  # noqa: S608
+                f"SELECT {_COLS} FROM test_session ORDER BY started_at DESC, id DESC"  # noqa: S608 identifier from a module constant, values bound
             )
             return [_view(r) for r in await cur.fetchall()]
 

@@ -53,7 +53,7 @@ async def release(conn: psycopg.AsyncConnection, vehicle: str) -> None:
 async def waiting(conn: psycopg.AsyncConnection, vehicle: str, consumer: str) -> bool:
     """`consumer`'s session waits on the vehicle's lock (not granted)."""
     cur = await conn.execute(
-        "SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_stat_activity a USING (pid)"
+        "SELECT EXISTS (SELECT 1 FROM pg_locks l JOIN pg_stat_activity a USING (pid)"  # noqa: S608 identifier from a module constant, values bound
         f" WHERE {MATCH} AND NOT l.granted AND a.application_name = %s)",
         (_key(vehicle), consumer),
     )
@@ -64,7 +64,7 @@ async def waiting(conn: psycopg.AsyncConnection, vehicle: str, consumer: str) ->
 async def holder(conn: psycopg.AsyncConnection, vehicle: str) -> tuple[int, str] | None:
     """(pid, application_name) of the session holding the vehicle's lock."""
     cur = await conn.execute(
-        "SELECT l.pid, a.application_name FROM pg_locks l JOIN pg_stat_activity a USING (pid)"
+        "SELECT l.pid, a.application_name FROM pg_locks l JOIN pg_stat_activity a USING (pid)"  # noqa: S608 identifier from a module constant, values bound
         f" WHERE {MATCH} AND l.granted",
         (_key(vehicle),),
     )

@@ -87,7 +87,7 @@ async def recorded_alarm_rows(
 ) -> list[dict[str, Any]]:
     return await _rows(
         conn,
-        _HISTORY + "SELECT * FROM positioned WHERE t >= %(a)s AND t < %(b)s"
+        _HISTORY + "SELECT * FROM positioned WHERE t >= %(a)s AND t < %(b)s"  # noqa: S608 concatenates only the constant _HISTORY SQL fragment, values bound
         " ORDER BY t, coalesce(trigger_seq, after_seq), id",
         {"vehicle": vehicle, "a": t_from, "b": t_to},
     )
@@ -98,7 +98,7 @@ async def initial_alarms(
 ) -> list[AlarmView]:
     rows = await _rows(
         conn,
-        _HISTORY
+        _HISTORY  # noqa: S608 concatenates only the constant _HISTORY SQL fragment, values bound
         + """, before_start AS (
           SELECT * FROM positioned WHERE t < %(a)s
         ), latest AS (

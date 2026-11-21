@@ -42,7 +42,7 @@ async def _copy_table(conn: psycopg.AsyncConnection[Any], table: str) -> bytes:
     out = io.BytesIO()
     async with conn.cursor() as cur:
         async with cur.copy(
-            f"COPY (SELECT * FROM {table} ORDER BY {ORDER_BY[table]}) TO STDOUT"
+            f"COPY (SELECT * FROM {table} ORDER BY {ORDER_BY[table]}) TO STDOUT"  # noqa: S608 interpolates table (a key of TABLES) and ORDER_BY[table], both constants; no value
             " (FORMAT csv, HEADER)"
         ) as cp:
             async for block in cp:

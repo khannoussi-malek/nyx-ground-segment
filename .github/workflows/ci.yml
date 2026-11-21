@@ -6,6 +6,9 @@ on:
     tags: ["v*"]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   lint:
     runs-on: ubuntu-latest
@@ -30,6 +33,10 @@ jobs:
       - run: cd ui && npx tsc --noEmit
       - run: cd ui && npm test
       - run: uv run ruff check
+      # network steps (vulnerability databases); run locally as in docs/assurance/security.md
+      - run: uv export --frozen --no-emit-project --no-hashes -o "$RUNNER_TEMP/req.txt" && uv run pip-audit --no-deps --disable-pip -r "$RUNNER_TEMP/req.txt"
+      - run: cd ui && npm audit --audit-level=high
+      - run: cd e2e && npm audit --audit-level=high
       - run: uv run python scripts/stream_schema_notice.py
       - run: uv run python scripts/check_commits.py origin/main
       - run: 'test -d ui/src && ! grep -rn "toLocale" ui/src --include=*.ts --include=*.tsx'
@@ -57,8 +64,13 @@ jobs:
       - run: docker compose up -d --wait redis db minio
       - run: docker compose run --rm minio-init
       - run: docker compose run --rm --build migrate
-      - run: uv run pytest --cov=gs --cov-fail-under=80 --cov-report=json:coverage.json
-      - run: uv run pytest --no-cov -m after_coverage tests/meta/test_except_coverage.py
+      - run: uv run pytest --cov=gs --cov-fail-under=80 --cov-report=term --cov-report=json:coverage.json --junitxml=junit-test.xml
+      - run: uv run pytest --no-cov -m after_coverage tests/meta/test_except_coverage.py --junitxml=junit-after-coverage.xml
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: junit-test
+          path: junit-*.xml
 
   e2e:
     needs: [lint, test]
@@ -76,11 +88,18 @@ jobs:
           cache-dependency-path: e2e/package-lock.json
       - run: uv sync --frozen
       - run: make up && make down && make up
-      - run: uv run pytest tests/system -v
+      - run: uv run pytest tests/system -v --junitxml=junit-system.xml
       - run: uv run python scripts/check_acl_log.py
       - run: make up # system tests stop app containers
       - run: cd e2e && npm ci && npx playwright install --with-deps chromium && npx playwright test
       - run: uv run python scripts/check_acl_log.py # the browser flow must not trip ACLs either
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: results-e2e
+          path: |
+            junit-system.xml
+            e2e/playwright-results.json
       - if: failure()
         run: docker compose logs > compose.log
       - if: failure()
@@ -92,3 +111,55 @@ jobs:
             compose.log
       - if: always()
         run: make down
+
+  matrix:
+    # as-run verification matrix (R25 F4): fails when a requirement's named test is absent from the run
+    needs: [test, e2e]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # no floating major tag upstream
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - run: uv sync --frozen
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "{junit-test,results-e2e}"
+          path: results
+          merge-multiple: true
+      - run: uv run python -m scripts.verification_matrix --junit results/junit-*.xml --playwright results/e2e/playwright-results.json --out verification-matrix.md
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: verification-matrix
+          path: verification-matrix.md
+
+  release-record:
+    # v* tags only (R25 F6): tag, commit, image IDs of a local rebuild, lockfile hashes, open NCRs, the matrix
+    needs: [lint, test, e2e, matrix]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.3.3 # no floating major tag upstream
+        with:
+          version: "0.12.18"
+          enable-cache: true
+      - run: make env
+      - run: docker compose build
+      - run: |
+          for i in $(docker compose config --images); do
+            docker image inspect "$i" >/dev/null 2>&1 || docker pull -q "$i" >/dev/null
+            echo "$i $(docker image inspect --format '{{.Id}} {{join .RepoDigests ","}}' "$i")"
+          done > images.txt
+      - uses: actions/download-artifact@v8
+        with:
+          name: verification-matrix
+      - run: uv sync --frozen
+      - run: uv run --frozen python -m scripts.release_record --tag "$GITHUB_REF_NAME" --commit "$GITHUB_SHA" --images images.txt --matrix verification-matrix.md --out release-record.md
+      - uses: actions/upload-artifact@v7
+        with:
+          name: release-record-${{ github.ref_name }}
+          path: release-record.md

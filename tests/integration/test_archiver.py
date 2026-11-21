@@ -1110,9 +1110,9 @@ async def test_delete_and_merge_need_an_autocommit_connection() -> None:
         row = await archive_hour(archiver_ctx(), c, v, H)
     assert row is not None
     async with await psycopg.AsyncConnection.connect(app_dsn("gs")) as plain:
-        with pytest.raises(AssertionError, match="autocommit"):
+        with pytest.raises(RuntimeError, match="autocommit"):
             await delete_hot(archiver_ctx(), plain, row, hour_bounds(v, H))
-        with pytest.raises(AssertionError, match="autocommit"):
+        with pytest.raises(RuntimeError, match="autocommit"):
             await merge_late(archiver_ctx(), plain, row)
     assert stored_in(v, H) == 10
 

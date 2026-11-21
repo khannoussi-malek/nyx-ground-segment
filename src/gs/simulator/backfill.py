@@ -140,7 +140,7 @@ async def backfill(
         tg.create_task(send_loop(buf, xadd, stop))
         try:
             await tick_loop(
-                vehicle, buf, random.Random(f"{seed}:{vehicle}"), asyncio.Event(),
+                vehicle, buf, random.Random(f"{seed}:{vehicle}"), asyncio.Event(),  # noqa: S311 simulated telemetry, not crypto
                 monotonic=lambda: tick_us / 1e6,
                 sleep=sleep,
                 now=lambda: t_from + timedelta(microseconds=tick_us),

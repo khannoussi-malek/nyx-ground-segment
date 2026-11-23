@@ -68,9 +68,19 @@ _FORBIDDEN = [
     "True", "None", "1j", "1e999", "__import__('os')", "(x := 1)", "[a for a in b]", "a.abs()",
     "abs.__call__(a)", "a; b", "a b", "", "(", "a +", "1 2",
 ]  # fmt: skip
-_JUNK = st.text(
-    alphabet=st.characters(blacklist_categories=("L", "N", "Cs")), min_size=1, max_size=40
-).filter(lambda s: s != "_")  # no letter or digit: never an in-grammar expression
+
+
+def _no_name_char(s: str) -> bool:
+    """No character of `s` can be part of a Python name: not `_`, `‿`, `℘` or a combining mark,
+    which are no letter or digit but still make names (`-_` is minus the input `_`)."""
+    return not any(("a" + c).isidentifier() for c in s)
+
+
+_JUNK = st.text(  # no letter, digit or other name character: never an in-grammar expression
+    alphabet=st.characters(blacklist_categories=("L", "N", "Cs")).filter(_no_name_char),
+    min_size=1,
+    max_size=40,
+)
 
 
 @st.composite
@@ -87,6 +97,13 @@ def _outside(draw: st.DrawFn) -> str:
         # 64-node limit is crossed (height 2); a chain of sums trips the depth limit first
         | st.integers(257, 400).map(lambda n: "a" * n)  # past the length limit
     )
+
+
+@pytest.mark.parametrize("text", ["-_", "_", "__", "-\u203f", "\u2118", "+\u0301"])
+def test_junk_never_holds_a_name_char(text: str) -> None:
+    """Nightly 2026-11-22 drew `-_` as junk: it is minus the input `_`, inside the grammar."""
+    assert not _no_name_char(text)
+    assert _no_name_char("+-*/() ,;'\"")
 
 
 @profiles.PROFILE

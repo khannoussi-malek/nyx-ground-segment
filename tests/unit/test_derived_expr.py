@@ -51,6 +51,7 @@ def test_load_accepted() -> None:
     assert compile_expr("sqrt(a*a + b*b)").names == ("a", "b")
     assert compile_expr("max(a, abs(b))").names == ("a", "b")
     assert compile_expr("a + a * c + a").names == ("a", "c")
+    assert compile_expr("-_").names == ("_",)  # nightly 2026-11-22: in the grammar, not junk
     assert issubclass(ExprError, ValueError)
     assert isinstance(compile_expr("1"), Expr)
 

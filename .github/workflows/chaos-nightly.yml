@@ -18,7 +18,7 @@ permissions:
 jobs:
   chaos:
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120 # properties up to 70 + soak 30 + setup
     steps:
       - uses: actions/checkout@v7
       - uses: astral-sh/setup-uv@v10.3.3 # no floating major tag upstream
@@ -38,7 +38,7 @@ jobs:
       - run: cd e2e && npm ci && npx playwright install --with-deps chromium
       # I1-I3 and I5-I8 are what makes the night green; I4 is in summary.md for information (EX-27)
       - name: Property suite, nightly profile
-        timeout-minutes: 40
+        timeout-minutes: 70 # 10 000 examples each: 34-42 min on 2026-11-22/23, by seed
         env:
           HYPOTHESIS_PROFILE: nightly
           HYPOTHESIS_SEED: ${{ inputs.seed }}
